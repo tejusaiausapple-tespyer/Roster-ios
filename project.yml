@@ -21,6 +21,22 @@ packages:
     minVersion: "11.0.0"
     maxVersion: "13.0.0"
 
+schemes:
+  RosterStaff:
+    build:
+      targets:
+        RosterStaff: all
+        RosterStaffTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: true
+      targets:
+        - RosterStaffTests
+    archive:
+      config: Release
+
 targets:
   RosterStaff:
     type: application
@@ -52,3 +68,15 @@ targets:
         SUPPORTS_MACCATALYST: YES     # Enable Mac Catalyst (runs natively on macOS)
         DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+
+  RosterStaffTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: RosterStaffTests
+    dependencies:
+      - target: RosterStaff
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.surainvestments.roster.tests
+        GENERATE_INFOPLIST_FILE: YES
