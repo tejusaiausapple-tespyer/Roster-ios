@@ -96,7 +96,8 @@ RosterStaff/
 |------|---------|
 | `App/RosterStaffApp.swift` | `@main` entry point, configures Firebase, injects `RosterRepository` + `AuthViewModel` |
 | `App/AppDelegate.swift` | UIKit app delegate for push notification registration |
-| `App/RootView.swift` | Auth state router — shows Login, DeviceAuth gate, ProfileCompletion, or main content based on auth state |
+| `App/RootView.swift` | Auth state router — renders the screen chosen by `AppRoute` |
+| `App/AppRoute.swift` | Pure routing decision (unit-tested): setup → restoring → login → profileLoading → forcedPasswordChange → profileCompletion → deviceAuthGate → manager/staff main. Gates apply to BOTH roles |
 
 ### Auth Features (in `Features/Auth/`)
 | File | Purpose |

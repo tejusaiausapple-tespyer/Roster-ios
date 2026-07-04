@@ -369,7 +369,7 @@ struct LoginView: View {
             }
             return // cancelled / failed passkey assertion
         }
-        guard let savedPassword = PasskeyStore.password() else {
+        guard let savedPassword = await PasskeyStore.readPassword(reason: "Sign in to Sura Roster") else {
             PasskeyStore.clear()
             email = savedEmail
             return

@@ -11,7 +11,7 @@ struct RootView: View {
     var body: some View {
         content
             .background(Theme.background.ignoresSafeArea())
-            .animation(.easeInOut(duration: 0.28), value: stateKey)
+            .animation(.easeInOut(duration: 0.28), value: route)
             .onAppear { auth.bind(repository: repo) }
             .onChange(of: scenePhase) { _, newPhase in
                 switch newPhase {
@@ -32,42 +32,42 @@ struct RootView: View {
             }
     }
 
-    // A key that changes whenever the presented screen should change (drives animation).
-    private var stateKey: String {
-        if !FirebaseBootstrap.hasConfigFile { return "setup" }
-        if auth.isRestoring { return "restoring" }
-        if auth.uid == nil { return "login" }
-        guard let user = repo.currentUser else { return "profileLoading" }
-        if user.role == .manager { return "manager" }
-        if user.mustChangePassword { return "changePassword" }
-        if user.needsProfileCompletion { return "profile" }
-        if auth.deviceAuthEnabled && !auth.deviceAuthVerified { return "gate" }
-        return "main"
+    /// The single routing decision — pure and unit-tested in AppRouteTests.
+    /// Gates (forced password change, device auth) apply to both roles.
+    private var route: AppRoute {
+        AppRoute.determine(
+            hasFirebaseConfig: FirebaseBootstrap.hasConfigFile,
+            isRestoring: auth.isRestoring,
+            uid: auth.uid,
+            user: repo.currentUser,
+            deviceAuthEnabled: auth.deviceAuthEnabled,
+            deviceAuthVerified: auth.deviceAuthVerified
+        )
     }
 
     @ViewBuilder
     private var content: some View {
-        if !FirebaseBootstrap.hasConfigFile {
+        switch route {
+        case .setup:
             SetupRequiredView()
-        } else if auth.isRestoring {
+        case .restoring, .profileLoading:
             SplashView()
-        } else if auth.uid == nil {
+        case .login:
             LoginView()
-        } else if let user = repo.currentUser {
-            switch true {
-            case user.role == .manager:
-                ManagerMainView()
-            case user.mustChangePassword:
-                ChangePasswordView(isForced: true)
-            case user.needsProfileCompletion:
+        case .forcedPasswordChange:
+            ChangePasswordView(isForced: true)
+        case .profileCompletion:
+            if let user = repo.currentUser {
                 ProfileCompletionView(user: user)
-            case auth.deviceAuthEnabled && !auth.deviceAuthVerified:
-                DeviceAuthGateView()
-            default:
-                MainTabView()
+            } else {
+                SplashView()
             }
-        } else {
-            SplashView()
+        case .deviceAuthGate:
+            DeviceAuthGateView()
+        case .managerMain:
+            ManagerMainView()
+        case .staffMain:
+            MainTabView()
         }
     }
 }
