@@ -268,11 +268,15 @@ The manager can trigger notifications to staff via the Worker API:
 
 ```swift
 WorkerAPIClient.shared.sendNotification(
-    event: "shift_published",     // or "timesheet_approved", "timesheet_rejected"
+    event: "roster-published",    // or "timesheet-approved", "timesheet-rejected"
     shiftIds: ["shift1", "shift2"],
     timesheetId: "ts123"
 )
 ```
+
+Event names are hyphenated and must match the Worker's `NOTIFICATION_EVENTS`
+registry. `RosterRepository` sends `timesheet-approved` / `timesheet-rejected`
+on approval decisions and `roster-published` from `publishAllDrafts`.
 
 This calls `POST /api/send-notification` on the Cloudflare Worker, which handles push delivery (when enabled).
 

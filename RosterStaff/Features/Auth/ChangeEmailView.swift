@@ -94,12 +94,26 @@ struct ChangeEmailView: View {
             // 2. Send email verification to new email (updates once user clicks link)
             try await currentUser.sendEmailVerification(beforeUpdatingEmail: newEmail)
             
-            // 3. Optimistically update Firestore User document
+            // 3. Sync the Firestore user document. Two separate writes on
+            //    purpose: the deployed rules allow staff to self-update
+            //    `email`, but `emailChangeRequired` is NOT in the self-update
+            //    allowlist — combining them made the whole update fail with
+            //    permission-denied for staff. The flag clear is best-effort
+            //    (works for managers; for staff it needs the rules allowlist
+            //    to include 'emailChangeRequired', otherwise the manager can
+            //    clear it via "Cancel request").
+            //    NOTE: the email write is optimistic — Auth only changes after
+            //    the verification link is clicked. This mirrors how the web
+            //    app keeps Firestore in sync and is the only sync mechanism
+            //    for self-service changes.
             let db = Firestore.firestore()
             let isoFormatter = ISO8601DateFormatter()
             let updatedAt = isoFormatter.string(from: Date())
             try await db.collection("users").document(currentUser.uid).updateData([
                 "email": newEmail,
+                "updatedAt": updatedAt
+            ])
+            try? await db.collection("users").document(currentUser.uid).updateData([
                 "emailChangeRequired": false,
                 "updatedAt": updatedAt
             ])
