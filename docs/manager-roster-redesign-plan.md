@@ -1,6 +1,6 @@
 # Plan — Manager Roster Tab Redesign (iPad & macOS, 2026 Liquid Glass)
 
-> Status: PROPOSED — awaiting go-ahead on the iOS 26 availability strategy (see §3).
+> Status: **COMPLETED** (shipped with Option A availability gating — see `ManagerRosterView` and the Theme glass helpers). Kept for historical reference; the checklist in §7 is done.
 > Scope: `Features/Manager/Roster/ManagerRosterView.swift` (+ small additions to `DesignSystem`). No data-layer changes. iPhone/compact design is preserved (user is happy with it).
 > Author: AI agent, 2026-07-03.
 

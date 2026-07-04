@@ -231,7 +231,7 @@ The `RosterRepository` detects manager role and removes `staffId` filters from F
 
 ---
 
-## Planned Manager Features (Not Yet Implemented)
+## Additional Implemented Manager Tabs
 
 ### 5. Staff (`Features/Manager/Staff/ManagerStaffView.swift`)
 Staff directory with **editing**. Adaptive card grid, `.searchable`, segmented status filters. Tapping a card opens `ManagerStaffDetailSheet` (a Form). **Editing is per-field**: each field (Full name, Phone, Employment type) is locked with a **pencil** to unlock and a **checkmark** to save *just that field* → `repo.updateStaffFields(staffId:, [key: value])` writes only the changed key (+ `updatedAt`). No bulk "save all". Requires Firestore rules allowing manager writes to user docs.
@@ -258,7 +258,7 @@ These tabs still show `ManagerPlaceholderView`:
 | Tenure & Hours | Staff tenure tracking, total hours per employee |
 | Wage | Wage calculation based on hours × rate, exportable payroll data |
 
-Also not yet wired: **editing** staff records from the Staff tab, and the Dashboard "Quick Actions" buttons.
+Also not yet wired: the Dashboard "Quick Actions" buttons (New Shift / New Task / Staff Directory are visual only). Staff record editing IS implemented — see §5 above.
 
 ---
 

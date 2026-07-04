@@ -127,6 +127,7 @@ xcodegen generate
 | [`docs/manager-guide.md`](docs/manager-guide.md) | Manager-side feature documentation |
 | [`docs/architecture.md`](docs/architecture.md) | How staff and manager sides connect |
 | [`docs/WHEN_DEVELOPER_ACCOUNT_READY.md`](docs/WHEN_DEVELOPER_ACCOUNT_READY.md) | Push notification setup checklist |
+| [`docs/smoke-test.md`](docs/smoke-test.md) | Manual regression checklist — run before merging any change |
 
 ---
 
@@ -143,19 +144,22 @@ xcodegen generate
 - Timesheet history with filters
 - Calendar integration (EventKit + ICS fallback)
 - Manager dashboard with live metrics
-- Manager shift CRUD (create, edit, delete, publish)
-- Manager timesheet approval/rejection
+- Manager shift CRUD (create, edit, delete, publish) with iPad/Mac week-grid, drag move/copy, bulk delete
+- Manager timesheet approval/rejection (week-based review)
+- Manager staff directory with per-field editing, email-change requests, address re-entry requests
+- Manager availability overview (staff × 7-day matrix)
+- Manager weekly reports (hours, labour cost, per-staff breakdown)
 - Device authentication gate (Face ID / Touch ID / passcode)
 - Forced password change flow
 - Profile completion enforcement
-- iPad adaptive layout (split view)
+- iPad/Mac adaptive layouts (sidebar + width-driven grids, Liquid Glass on iOS 26+)
 
 ### 🚧 Planned
 - Push notifications (waiting for Apple Developer account)
-- Manager task management UI
-- Manager staff directory
-- Manager reports/analytics
-- Passkey authentication flow
+- Manager task management UI (placeholder tab)
+- Manager tenure & hours view (placeholder tab)
+- Manager wage/payroll view (placeholder tab)
+- Passkey authentication flow (service code exists; registration not wired)
 
 ---
 
