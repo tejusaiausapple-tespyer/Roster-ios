@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /Users/sura/Desktop/RosterStaff/RosterStaff/DesignSystem/Components && cat Buttons.swift GlassCard.swift WeekSelector.swift StatusPill.swift Banner.swift Toast.swift StatTile.swift Skeleton.swift EmptyStateView.swift SectionHeader.swift CameraPicker.swift ScreenTitlePill.swift; cat ../../Resources/Info.plist ../../Resources/RosterStaff.entitlements)",
+      "Bash(git init *)",
+      "Bash(git add *)"
+    ]
+  }
+}

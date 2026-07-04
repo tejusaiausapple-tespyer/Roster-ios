@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Keychain Sharing — REQUIRED for Firebase Authentication on macOS / Mac
+	  Catalyst. FirebaseAuth persists the signed-in session to the keychain, and
+	  macOS rejects keychain writes without a keychain access group, surfacing:
+	    "An error occurred when accessing the keychain."
+	  This also covers the app's own KeychainHelper / BiometricCredentialStore /
+	  DeviceAuthService items. `$(AppIdentifierPrefix)` resolves to the signing
+	  team prefix, so this works on iOS and Mac Catalyst with a personal or paid
+	  team (Keychain Sharing does NOT require a paid membership).
+	-->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)com.surainvestments.roster</string>
+		<string>$(AppIdentifierPrefix)maccatalyst.com.surainvestments.roster</string>
+	</array>
+
+
+	<!--
+	  Associated Domains — required for Apple passkeys (webcredentials scoped to
+	  sura-roster.com). DISABLED for now: this capability requires a paid Apple
+	  Developer account, and enabling it breaks signing on a free/personal team.
+	  Re-enable when passkeys are implemented and a paid account is ready:
+	    <key>com.apple.developer.associated-domains</key>
+	    <array>
+	      <string>webcredentials:sura-roster.com</string>
+	    </array>
+	  Also host apple-app-site-association at
+	  https://sura-roster.com/.well-known/apple-app-site-association with a
+	  `webcredentials` section listing <TeamID>.com.surainvestments.roster.
+	-->
+
+	<!--
+	  Push Notifications are temporarily DISABLED (a free/personal Apple team does
+	  not support the aps-environment capability). To RE-ENABLE once a paid Apple
+	  Developer account is ready:
+	  1. Add:
+	         <key>aps-environment</key>
+	         <string>development</string>   <!-- or "production" for App Store -->
+	  2. In Info.plist, re-add:
+	         <key>UIBackgroundModes</key>
+	         <array><string>remote-notification</string></array>
+	  3. Enable the Push Notifications capability for the App ID in the Apple
+	     Developer portal, then re-run `xcodegen generate`.
+	-->
+</dict>
+</plist>

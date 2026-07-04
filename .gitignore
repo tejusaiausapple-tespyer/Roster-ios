@@ -1,0 +1,24 @@
+# Xcode / build
+build/
+DerivedData/
+*.xcodeproj
+*.xcworkspace
+!default.xcworkspace
+xcuserdata/
+*.xcuserstate
+
+# XcodeGen output is regenerated from project.yml
+RosterStaff.xcodeproj/
+
+# Swift Package Manager
+.swiftpm/
+.build/
+.spm/
+Packages/
+Package.resolved
+
+# Firebase config — never commit real credentials
+RosterStaff/Resources/GoogleService-Info.plist
+
+# macOS
+.DS_Store

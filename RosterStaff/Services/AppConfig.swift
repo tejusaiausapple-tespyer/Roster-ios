@@ -1,0 +1,21 @@
+import Foundation
+
+/// App-wide configuration constants.
+enum AppConfig {
+    /// Base URL of the Cloudflare Worker API (same backend as the web app).
+    /// The web app calls these as same-origin `/api/...`; the native app must
+    /// use the absolute production origin.
+    static let apiBaseURL = URL(string: "https://sura-roster.com")!
+
+    /// URL of the web app, surfaced to managers who mistakenly sign in here.
+    static let webAppURL = URL(string: "https://sura-roster.com")!
+
+    /// After this idle interval in the background, re-require the device-auth gate.
+    /// Mirrors the web app's 2-minute re-lock behaviour.
+    static let deviceAuthBackgroundRelock: TimeInterval = 2 * 60
+
+    /// The relying-party identifier (domain) for Apple passkeys. Must match the
+    /// `webcredentials` entry in the app's Associated Domains entitlement AND the
+    /// `apple-app-site-association` file hosted at that domain.
+    static let passkeyRelyingParty = "sura-roster.com"
+}
