@@ -14,9 +14,11 @@
 │  (MainTabView)           │    (ManagerMainView)                  │
 │  - HomeView              │    - ManagerDashboardView             │
 │  - RosterView            │    - ManagerRosterView                │
-│  - TasksView             │    - ManagerTimesheetsView            │
-│  - HistoryView           │    - ManagerAccountView               │
-│  - AccountView           │                                       │
+│    (→ HistoryView)       │    - ManagerTimesheetsView            │
+│  - TasksView             │    - ManagerStaffView                 │
+│  - AvailabilityView      │    - ManagerAvailabilityView          │
+│  - AccountView           │    - ManagerReportsView               │
+│                          │    - ManagerAccountView               │
 ├──────────────────────────┴──────────────────────────────────────┤
 │                    Shared Layer                                   │
 │  AuthViewModel • RosterRepository • Models • DesignSystem        │
@@ -47,21 +49,26 @@ When `start(uid:)` is called, the repository reads the user document to determin
 ```
 RosterRepository.start(uid:)
     │
-    ├── Read users/{uid} → get AppUser
+    ├── SHARED listeners (both roles, attached immediately):
+    │   ├── Listen: users/{uid} (own profile; role read from here)
+    │   ├── Listen: tasks WHERE active == true
+    │   ├── Listen: task_completions WHERE date IN shift window (−28…+56 days)
+    │   │           (no per-user filter — both roles see all completions in window)
+    │   └── Listen: settings/app (companyName)
     │
-    ├── If role == .staff:
-    │   ├── Listen: shifts WHERE staffId == uid
-    │   ├── Listen: timesheets WHERE staffId == uid
-    │   ├── Listen: messages WHERE recipientId == uid
-    │   ├── Listen: tasks (all active)
-    │   └── Listen: taskCompletions WHERE completedBy == uid
-    │
-    └── If role == .manager:
-        ├── Listen: shifts (ALL)
-        ├── Listen: timesheets (ALL)
-        ├── Listen: users (ALL) → populates allUsers
-        ├── Listen: tasks (all active)
-        └── Listen: taskCompletions (ALL)
+    └── ROLE listeners (attached once the user doc arrives):
+        │
+        ├── If role == .staff:
+        │   ├── Listen: shifts WHERE staffId == uid AND status == "published"
+        │   │           AND date IN shift window (−28…+56 days)
+        │   ├── Listen: timesheets WHERE staffId == uid
+        │   │           (client-side filtered to submittedAt ≥ 5 years back)
+        │   └── Listen: messages WHERE recipientId == uid AND sentAt ≥ 30 days back
+        │
+        └── If role == .manager:
+            ├── Listen: shifts WHERE date IN shift window (−28…+56 days) — all staff, all statuses
+            ├── Listen: timesheets WHERE submittedAt ≥ 90 days back — all staff
+            └── Listen: users (ALL) → populates allUsers
 ```
 
 ### Shared Properties (both roles use)

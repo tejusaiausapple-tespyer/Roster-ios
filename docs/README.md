@@ -13,6 +13,8 @@ This directory contains all project documentation for the RosterStaff iOS app.
 | [`manager-guide.md`](manager-guide.md) | Developers | Manager-side feature documentation — admin screens and approval flows |
 | [`architecture.md`](architecture.md) | Developers | How staff and manager sides connect — shared services, data flow, real-time sync |
 | [`WHEN_DEVELOPER_ACCOUNT_READY.md`](WHEN_DEVELOPER_ACCOUNT_READY.md) | Setup | Push notification enablement checklist (waiting for Apple Developer account) |
+| [`smoke-test.md`](smoke-test.md) | QA | Manual regression checklist — run before merging any milestone/change |
+| [`manager-roster-redesign-plan.md`](manager-roster-redesign-plan.md) | Archive | Completed 2026 roster redesign plan (historical reference) |
 
 ---
 

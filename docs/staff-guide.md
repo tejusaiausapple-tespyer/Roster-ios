@@ -25,11 +25,14 @@ Staff users see a 5-tab interface:
 
 | Tab | View | Icon | Purpose |
 |-----|------|------|---------|
-| Home | `HomeView` | `house.fill` | Dashboard with upcoming shifts, action items, hours summary |
+| Home | `HomeView` | `house` | Dashboard with upcoming shifts, action items, hours summary |
 | Roster | `RosterView` | `calendar` | Full week-by-week shift schedule |
-| Tasks | `TasksView` | `checklist` | Daily/weekly task completion with photos |
-| History | `HistoryView` | `clock.arrow.circlepath` | Past timesheet records with filters |
-| Account | `AccountView` | `person.crop.circle.fill` | Profile, settings, logout |
+| Tasks | `TasksView` | `list.bullet.clipboard` | Daily/weekly task completion with photos |
+| Availability | `AvailabilityView` | `calendar.badge.clock` | Weekly availability management |
+| Account | `AccountView` | `person.crop.circle` | Profile, settings, logout |
+
+> **History is not a tab.** `HistoryView` is pushed from the Roster tab via the
+> "View Shift History" card (and deep links route `history` paths to the Roster tab).
 
 ---
 
@@ -132,7 +135,7 @@ Staff users see a 5-tab interface:
 **Key interactions:**
 - Tap "Complete" → marks task as completed in Firestore
 - Camera button → opens `CameraPicker` for photo evidence
-- Photo saved locally via `TaskPhotoCache` and URL stored in `taskCompletions`
+- Photo saved locally via `TaskPhotoCache` and URL stored in `task_completions`
 - Tap completed task → `TaskCompletionDetailSheet` with full details and photo
 
 **Task types:**
@@ -142,11 +145,13 @@ Staff users see a 5-tab interface:
 
 **Data model:**
 - `RosterTask` — the task definition (from `tasks` collection)
-- `TaskCompletion` — completion record (in `taskCompletions` collection, ID format: `{taskId}_{date}`)
+- `TaskCompletion` — completion record (in `task_completions` collection, ID format: `{taskId}_{date}`)
 
 ---
 
 ### 6. History (`Features/History/HistoryView.swift`)
+
+**Entry point:** pushed from the Roster tab's "View Shift History" card (not a tab bar item).
 
 **What it shows:**
 - All past timesheets grouped by month
@@ -208,18 +213,24 @@ Staff users see a 5-tab interface:
 ```
 App Launch
     │
+    ├── Missing GoogleService-Info.plist → SetupRequiredView (developer setup screen)
+    │
     ├── No auth → LoginView
     │       ├── Email + Password login
-    │       ├── Biometric quick-login (if previously enabled)
+    │       │     (login rejects locked/inactive accounts with an error and signs out)
+    │       ├── Passkey or biometric quick-login (if previously enabled;
+    │       │     refused if last manual login was > 7 days ago)
     │       └── Forgot password → Firebase password reset email
     │
-    └── Authenticated → Check conditions:
-            ├── needsSetup == true → SetupRequiredView (contact manager)
-            ├── status == .locked → ManagerBlockedView
+    └── Authenticated → RootView checks, in order:
+            ├── role == .manager → ManagerMainView (skips the gates below — see audit)
             ├── mustChangePassword → ChangePasswordView (forced)
-            ├── needsProfileCompletion → ProfileCompletionView
-            ├── DeviceAuth enabled & locked → DeviceAuthGateView
+            ├── needsProfileCompletion (incl. profileUpdateRequired) → ProfileCompletionView
+            ├── DeviceAuth enabled & not verified → DeviceAuthGateView
             └── All clear → MainTabView (staff tabs)
+
+Mid-session: if the account becomes locked/inactive, RootView force-signs-out
+with a message shown on the login screen. (`ManagerBlockedView` is legacy/unused.)
 ```
 
 ---

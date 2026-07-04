@@ -6,7 +6,7 @@
 
 ## Last Updated
 
-2026-07-03 by AI agent (full documentation rewrite).
+2026-07-05 by AI agent (accuracy pass: corrected collection names, staff tab bar, password rules, listener descriptions).
 
 ---
 
@@ -47,9 +47,9 @@ RosterStaffApp (entry point)
     ├── LoginView (unauthenticated)
     ├── MainTabView (staff role)
     │   ├── HomeView
-    │   ├── RosterView
+    │   ├── RosterView (→ pushes HistoryView via "View Shift History")
     │   ├── TasksView
-    │   ├── HistoryView
+    │   ├── AvailabilityView
     │   └── AccountView
     └── ManagerMainView (manager role)
         ├── ManagerDashboardView
@@ -106,8 +106,8 @@ RosterStaff/
 | `ChangeEmailView.swift` | Email change with reauthentication |
 | `ProfileCompletionView.swift` | Enforced profile completion (DOB, address, phone) |
 | `DeviceAuthGateView.swift` | Biometric/passcode lock screen |
-| `SetupRequiredView.swift` | Shown when user needs manager setup |
-| `ManagerBlockedView.swift` | Shown when account is locked |
+| `SetupRequiredView.swift` | Shown when `GoogleService-Info.plist` is missing from the bundle (developer setup screen) |
+| `ManagerBlockedView.swift` | **Unused/legacy** — managers now get the native `ManagerMainView`; locked accounts are signed out at login instead |
 
 ### Models (all in `Models/`)
 | File | Key Types |
@@ -163,8 +163,8 @@ RosterStaff/
 ### Data Layer (RosterRepository)
 - **Pattern**: `@MainActor @Observable` class injected via SwiftUI `.environment()`
 - **Listeners**: Real-time Firestore `onSnapshot` for shifts, timesheets, messages, tasks, task completions, user profile, app settings
-- **Role Awareness**: Manager gets ALL shifts/timesheets/users; Staff gets only own data
-- **Key Collections**: `shifts`, `timesheets`, `users`, `messages`, `tasks`, `taskCompletions`, `appSettings`
+- **Role Awareness**: Manager gets all-staff data (shifts windowed to the ±shift window, timesheets windowed to `submittedAt` ≥ 90 days back, users unwindowed); Staff gets only own data. Tasks + task completions listeners are shared by both roles (all active tasks; all completions in the shift date window — no per-user filter).
+- **Key Collections**: `shifts`, `timesheets`, `users`, `messages`, `tasks`, `task_completions`, `settings` (doc `app`)
 - **Write Operations**: Submit/resubmit timesheets, report absence, update profile, save availability, complete tasks, manager CRUD for shifts/timesheets
 
 ### API Layer (WorkerAPIClient)
@@ -183,8 +183,8 @@ RosterStaff/
 | `timesheets` | Auto-generated | Both | shiftId, staffId, actualStart, actualEnd, actualBreakMinutes, workedHours, status, managerNotes |
 | `messages` | Auto-generated | Both | senderId, recipientId, body, sentAt, expiresAt, read |
 | `tasks` | Auto-generated | Both | title, description, frequency, date, dayOfWeek, active, managerPhotoUrl |
-| `taskCompletions` | `{taskId}_{date}` | Both | taskId, date, completed, completedAt, completedBy, staffPhotoUrl |
-| `appSettings` | `general` | Both | companyName |
+| `task_completions` | `{taskId}_{date}` | Both | taskId, date, completed, completedAt, completedBy, staffPhotoUrl |
+| `settings` | `app` | Both | companyName |
 
 ---
 
@@ -199,9 +199,19 @@ RosterStaff/
 | Week start | Monday |
 | Timezone | Australia/Adelaide |
 | Timesheet submittable | After shift end time (`submittableAfter` or computed from rostered end) |
-| Password requirements | 8+ chars, 1 uppercase, 1 lowercase, 1 digit, 1 special char |
+| Password requirements | 8+ chars, 1 uppercase, 1 digit (a symbol is *recommended* in the UI checklist but not required — see `BusinessRules.passwordErrors`) |
 | Staff can report absence | Before shift becomes submittable AND no approved timesheet exists |
 | Staff can submit hours | After shift end AND shift is published AND no approved/absent timesheet |
+
+---
+
+## Behaviors To Know (undocumented elsewhere)
+
+- **7-day forced manual login**: quick sign-in (Face ID / passkey) is refused if the last *manual* password login was more than 7 days ago (`roster_last_manual_login_date` in UserDefaults, checked in `LoginView`; also reset by `VerifyPasswordSheet`).
+- **`AuthViewModel.temporaryPassword`**: the plaintext password is held in memory after a manual login so the Account tab can enable Face ID without re-prompting. It is cleared when Face ID is enabled or on logout.
+- **Background re-lock**: with device auth enabled, returning from ≥2 minutes in the background re-requires biometric unlock (`AppConfig.deviceAuthBackgroundRelock`).
+- **Timesheet doc id == shift id** for staff-created timesheets (1:1); manager operations reference `timesheet.id` directly.
+- **Timesheet writes set `submittedAt` (server timestamp)** — the manager's 90-day windowed listener depends on this field existing on every timesheet.
 
 ---
 
