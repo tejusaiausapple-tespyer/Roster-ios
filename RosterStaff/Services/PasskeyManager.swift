@@ -1,6 +1,8 @@
 import Foundation
 import AuthenticationServices
 import UIKit
+import Security
+import LocalAuthentication
 
 /// Apple passkey (platform `ASAuthorizationPlatformPublicKeyCredential`) manager.
 ///
@@ -158,14 +160,21 @@ extension Data {
 }
 
 /// Local persistence for a registered passkey: the credential id + email in
-/// `UserDefaults`, and the Firebase password in a device-only Keychain item.
-/// The passkey assertion ceremony is the gate that protects retrieval — this
-/// mirrors the web app's local, non-server-verified device-auth model, adapted
-/// to actually sign the user into Firebase afterwards.
+/// `UserDefaults`, and the Firebase password in a **biometric-gated** Keychain
+/// item (`.biometryCurrentSet`, device-only) — the same protection class as
+/// `BiometricCredentialStore`. The passkey assertion proves presence, but the
+/// password itself is additionally protected at the Keychain level so it can
+/// never be read without a biometric match, even if the assertion step is
+/// bypassed by other code.
 enum PasskeyStore {
     private static let emailKey = "roster_passkey_email"
     private static let credentialKey = "roster_passkey_credential_id"
-    private static let passwordKeychainKey = "roster_passkey_password"
+    /// Pre-hardening item location (plain KeychainHelper). Migrated + removed
+    /// on first read; never written to anymore.
+    private static let legacyPasswordKeychainKey = "roster_passkey_password"
+
+    private static let service = "com.sura.roster.staff.passkeylogin"
+    private static let account = "primary"
 
     static var isRegistered: Bool {
         UserDefaults.standard.string(forKey: credentialKey) != nil
@@ -175,18 +184,81 @@ enum PasskeyStore {
     static var credentialID: String? { UserDefaults.standard.string(forKey: credentialKey) }
 
     static func save(email: String, credentialID: String, password: String) {
+        guard storeProtectedPassword(password) else { return }
         UserDefaults.standard.set(email, forKey: emailKey)
         UserDefaults.standard.set(credentialID, forKey: credentialKey)
-        KeychainHelper.set(password, for: passwordKeychainKey)
+        KeychainHelper.delete(legacyPasswordKeychainKey)
     }
 
-    static func password() -> String? {
-        KeychainHelper.get(passwordKeychainKey)
+    /// Read the stored password behind a biometric prompt. Falls back to a
+    /// one-time migration of the legacy unprotected item if present.
+    /// Returns nil on cancel / failure / absence.
+    static func readPassword(reason: String) async -> String? {
+        let context = LAContext()
+        context.localizedReason = reason
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationContext as String: context,
+        ]
+        let protected: String? = await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                var result: AnyObject?
+                let status = SecItemCopyMatching(query as CFDictionary, &result)
+                if status == errSecSuccess, let data = result as? Data {
+                    continuation.resume(returning: String(data: data, encoding: .utf8))
+                } else {
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
+        if let protected { return protected }
+
+        // Legacy migration: move any unprotected item into the gated store.
+        if let legacy = KeychainHelper.get(legacyPasswordKeychainKey) {
+            if storeProtectedPassword(legacy) {
+                KeychainHelper.delete(legacyPasswordKeychainKey)
+            }
+            return legacy
+        }
+        return nil
     }
 
     static func clear() {
         UserDefaults.standard.removeObject(forKey: emailKey)
         UserDefaults.standard.removeObject(forKey: credentialKey)
-        KeychainHelper.delete(passwordKeychainKey)
+        KeychainHelper.delete(legacyPasswordKeychainKey)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    /// Write the password behind `.biometryCurrentSet` (auto-invalidated when
+    /// enrolled biometrics change), never synced off-device.
+    private static func storeProtectedPassword(_ password: String) -> Bool {
+        guard let access = SecAccessControlCreateWithFlags(
+            nil,
+            kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            .biometryCurrentSet,
+            nil
+        ) else { return false }
+
+        let base: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        SecItemDelete(base as CFDictionary)
+
+        var attributes = base
+        attributes[kSecValueData as String] = Data(password.utf8)
+        attributes[kSecAttrAccessControl as String] = access
+        return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
     }
 }

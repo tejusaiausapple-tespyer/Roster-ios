@@ -142,6 +142,10 @@ final class AuthViewModel {
         switch phase {
         case .background:
             backgroundedAt = Date()
+            // Don't keep the plaintext login password in memory once the app
+            // leaves the foreground. (It exists only to let the Account tab
+            // enable Face ID without re-prompting in the same session.)
+            temporaryPassword = nil
         case .active:
             if let backgroundedAt,
                Date().timeIntervalSince(backgroundedAt) >= AppConfig.deviceAuthBackgroundRelock,
