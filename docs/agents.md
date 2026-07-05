@@ -47,7 +47,12 @@ RosterStaffApp (entry point)
     ├── LoginView (unauthenticated)
     ├── MainTabView (staff role)
     │   ├── HomeView
-    │   ├── RosterView (→ pushes HistoryView via "View Shift History")
+    │   ├── RosterView (→ pushes HistoryView via "View Shift History").
+    │   │     GOTCHA: the `.task(id: router.pendingSubmitShiftId/…AbsentShiftId)`
+    │   │     deep-link handlers and the SubmitHours/ReportAbsence sheets MUST
+    │   │     stay attached to the NavigationStack itself, not its root content
+    │   │     — a pushed HistoryView marks the root disappeared, so tasks/sheets
+    │   │     on it never fire (broke Resubmit-after-rejection; fixed 2026-07-05)
     │   ├── TasksView
     │   ├── AvailabilityView
     │   └── AccountView

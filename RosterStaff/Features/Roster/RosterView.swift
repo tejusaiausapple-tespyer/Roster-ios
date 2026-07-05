@@ -71,13 +71,6 @@ struct RosterView: View {
                 }
             }
             .refreshable { await repo.refreshFromServer() }
-            .sheet(item: $submitShift) { shift in
-                SubmitHoursSheet(shift: shift, existing: repo.timesheet(forShift: shift.id),
-                                 clock: repo.clockSession)
-            }
-            .sheet(item: $absentShift) { shift in
-                ReportAbsenceSheet(shift: shift, existing: repo.timesheet(forShift: shift.id))
-            }
             .sheet(item: $shareURL) { url in ShareSheet(items: [url]) }
             .confirmationDialog("Undo absence report?",
                                 isPresented: Binding(get: { undoTarget != nil }, set: { if !$0 { undoTarget = nil } }),
@@ -90,9 +83,18 @@ struct RosterView: View {
                 Text("This removes your absence report so you can submit hours instead.")
             }
             .toast($toastMessage)
-            .task(id: router.pendingSubmitShiftId) { await handlePendingSubmit() }
-            .task(id: router.pendingAbsentShiftId) { await handlePendingAbsent() }
         }
+        // Attached to the stack (not its root content) so deep links still fire
+        // and the sheets still present while History is pushed on top.
+        .sheet(item: $submitShift) { shift in
+            SubmitHoursSheet(shift: shift, existing: repo.timesheet(forShift: shift.id),
+                             clock: repo.clockSession)
+        }
+        .sheet(item: $absentShift) { shift in
+            ReportAbsenceSheet(shift: shift, existing: repo.timesheet(forShift: shift.id))
+        }
+        .task(id: router.pendingSubmitShiftId) { await handlePendingSubmit() }
+        .task(id: router.pendingAbsentShiftId) { await handlePendingAbsent() }
     }
 
     // MARK: Header (stats + week selector)

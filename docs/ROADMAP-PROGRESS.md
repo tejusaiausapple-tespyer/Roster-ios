@@ -106,6 +106,16 @@
         `availability-week-lock` in ~/Desktop/Roster-old — Sura must deploy
         the Worker + PWA for enforcement to go live). PWA got the same
         publish modal, toolbar lock pill, and staff-page lockout.
+  - [x] FIX (2026-07-05, Sura's repro): **Resubmit after rejection showed no
+        form** — every Resubmit entry point (History swipe, Home card) routes
+        via `router.pendingSubmitShiftId` to RosterView's `.task(id:)`, but
+        that task and the submit/absence sheets were attached to the stack's
+        root content, which SwiftUI marks disappeared while HistoryView is
+        pushed — so nothing fired and staff were stranded on History. Moved
+        both `.task(id:)` deep-link handlers and the SubmitHours/ReportAbsence
+        sheets onto the NavigationStack itself; the sheet now presents even
+        over History. VERIFY: reject a timesheet, then resubmit from both the
+        History swipe action and the Home card.
   - [x] UX (2026-07-05): iPad sidebar — Sura preferred the ORIGINAL plain
         list, so the grouped/branded redesign was reverted (both platforms);
         kept: profile footer pinned at the sidebar bottom that opens the
