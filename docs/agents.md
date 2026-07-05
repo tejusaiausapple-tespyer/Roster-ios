@@ -125,6 +125,7 @@ RosterStaff/
 | `RosterFormat.swift` | Formatting helpers for dates, times, hours display |
 | `FirestoreValue.swift` | `FS` enum — safe Firestore document field extraction |
 | `AppSettings.swift` | `AppSettings` — company name from Firestore |
+| `RosterLocation.swift` | `RosterLocation` — manager-defined work location (suburb + AU state + auto capital city). Stored as an array on `settings/locations`; `shifts.location` stays a plain string (`"Suburb, STATE"`) for PWA compatibility |
 
 ### Services (all in `Services/`)
 | File | Purpose |
@@ -213,6 +214,9 @@ RosterStaff/
 - **Background re-lock**: with device auth enabled, returning from ≥2 minutes in the background re-requires biometric unlock (`AppConfig.deviceAuthBackgroundRelock`).
 - **Timesheet doc id == shift id** for staff-created timesheets (1:1); manager operations reference `timesheet.id` directly.
 - **Timesheet writes set `submittedAt` (server timestamp)** — the manager's 90-day windowed listener depends on this field existing on every timesheet.
+- **`saveShift` MUST write `shiftStartAt` + `submittableAfter` (Timestamps)** — the deployed Firestore rules refuse staff timesheet create/update unless the shift doc has `submittableAfter is timestamp`, and the Worker's shift-start/hours-reminder crons key off both fields. Recomputed on every save.
+- **Notification event names use hyphens** (from the Worker registry): `roster-published`, `timesheet-submitted/-approved/-rejected/-absent`, `timesheet-reminder`, `message-task`, `shift-start-6h/-30m`. The repo sends: submit/absence (staff), approve/reject/publish-week (manager).
+- **Deployed Firestore rules reference copy**: `docs/reference/firestore.rules.deployed` (the web repo's `firestore.rules` is stale — trust the reference copy).
 
 ---
 

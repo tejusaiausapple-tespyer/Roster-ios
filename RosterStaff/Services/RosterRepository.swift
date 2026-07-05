@@ -20,6 +20,8 @@ final class RosterRepository {
     var tasks: [RosterTask] = []
     var taskCompletions: [TaskCompletion] = []
     var allUsers: [AppUser] = []
+    /// Manager-defined work locations (settings/locations).
+    var locations: [RosterLocation] = []
 
     var isLoading = true
     var loadError: String?
@@ -89,6 +91,17 @@ final class RosterRepository {
             db.collection("settings").document("app").addSnapshotListener { [weak self] snap, _ in
                 guard let self else { return }
                 if let data = snap?.data() { self.appSettings = AppSettings(data: data) }
+            }
+        )
+
+        // settings/locations — manager-defined work locations
+        listeners.append(
+            db.collection("settings").document("locations").addSnapshotListener { [weak self] snap, _ in
+                guard let self else { return }
+                let items = snap?.data()?["items"] as? [[String: Any]] ?? []
+                self.locations = items
+                    .compactMap { RosterLocation(dict: $0) }
+                    .sorted { $0.displayName < $1.displayName }
             }
         )
     }
@@ -201,6 +214,7 @@ final class RosterRepository {
         roleListeners.removeAll()
         activeUID = nil
         currentUser = nil
+        locations = []
         shifts = []
         timesheets = []
         messages = []
@@ -222,22 +236,37 @@ final class RosterRepository {
         markArrived(label)
     }
 
-    /// Force a server refresh (pull-to-refresh). Firestore listeners then reconcile.
+    /// Force a server refresh (pull-to-refresh). Firestore listeners then
+    /// reconcile. Queries mirror the active role's listeners exactly — a
+    /// manager refresh previously used the staff-shaped queries and fetched
+    /// nothing relevant.
     func refreshFromServer() async {
         guard let uid = activeUID else { return }
         let range = BusinessRules.staffShiftDateRange()
         do {
-            async let _user = db.collection("users").document(uid).getDocument(source: .server)
-            async let _shifts = db.collection("shifts")
-                .whereField("staffId", isEqualTo: uid)
-                .whereField("status", isEqualTo: "published")
-                .whereField("date", isGreaterThanOrEqualTo: range.start)
-                .whereField("date", isLessThanOrEqualTo: range.end)
-                .getDocuments(source: .server)
-            async let _timesheets = db.collection("timesheets")
-                .whereField("staffId", isEqualTo: uid)
-                .getDocuments(source: .server)
-            _ = try await (_user, _shifts, _timesheets)
+            if currentRole == .manager {
+                async let _user = db.collection("users").document(uid).getDocument(source: .server)
+                async let _shifts = db.collection("shifts")
+                    .whereField("date", isGreaterThanOrEqualTo: range.start)
+                    .whereField("date", isLessThanOrEqualTo: range.end)
+                    .getDocuments(source: .server)
+                async let _timesheets = db.collection("timesheets")
+                    .whereField("submittedAt", isGreaterThanOrEqualTo: BusinessRules.managerTimesheetCutoff())
+                    .getDocuments(source: .server)
+                _ = try await (_user, _shifts, _timesheets)
+            } else {
+                async let _user = db.collection("users").document(uid).getDocument(source: .server)
+                async let _shifts = db.collection("shifts")
+                    .whereField("staffId", isEqualTo: uid)
+                    .whereField("status", isEqualTo: "published")
+                    .whereField("date", isGreaterThanOrEqualTo: range.start)
+                    .whereField("date", isLessThanOrEqualTo: range.end)
+                    .getDocuments(source: .server)
+                async let _timesheets = db.collection("timesheets")
+                    .whereField("staffId", isEqualTo: uid)
+                    .getDocuments(source: .server)
+                _ = try await (_user, _shifts, _timesheets)
+            }
         } catch {
             // Listeners keep serving cached data; surface nothing on a failed manual refresh.
         }
@@ -419,9 +448,11 @@ final class RosterRepository {
 
     func markMessagesRead(_ ids: [String]) async {
         guard !ids.isEmpty else { return }
+        let batch = db.batch()
         for id in ids {
-            try? await db.collection("messages").document(id).updateData(["read": true])
+            batch.updateData(["read": true], forDocument: db.collection("messages").document(id))
         }
+        try? await batch.commit()
     }
 
     /// Complete a task for a given date, uploading the compressed photo to Firebase Storage and saving a local cache copy.
@@ -472,6 +503,28 @@ final class RosterRepository {
         return image
     }
 
+    /// Save a manager-defined work location (arrayUnion — idempotent for
+    /// identical entries). Managers only; the settings write rule enforces it.
+    func addLocation(_ location: RosterLocation) async throws {
+        try await db.collection("settings").document("locations")
+            .setData(["items": FieldValue.arrayUnion([location.asDictionary])], merge: true)
+    }
+
+    /// Replace the full saved-locations list (edit/delete from the Account
+    /// tab's Locations manager). Existing shifts keep their stored location
+    /// string — edits only affect future selections.
+    func setLocations(_ locations: [RosterLocation]) async throws {
+        try await db.collection("settings").document("locations")
+            .setData(["items": locations.map { $0.asDictionary }])
+    }
+
+    /// Save company/business details onto settings/app (merged — preserves
+    /// any PWA-managed keys on the same document).
+    func saveCompanyDetails(_ settings: AppSettings) async throws {
+        try await db.collection("settings").document("app")
+            .setData(settings.asDictionary, merge: true)
+    }
+
     /// Add or update a shift in Firestore (calculating scheduledHours dynamically).
     func saveShift(
         id: String?,
@@ -497,7 +550,7 @@ final class RosterRepository {
         let diffSecs = endDateTime.timeIntervalSince(startDateTime)
         let diffHours = diffSecs / 3600.0
         let scheduledHours = max(0.0, diffHours - (Double(breakMinutes) / 60.0))
-        
+
         let data: [String: Any] = [
             "staffId": staffId,
             "date": date,
@@ -509,15 +562,34 @@ final class RosterRepository {
             "department": department ?? "",
             "notes": notes ?? "",
             "status": status.rawValue,
+            // REQUIRED by Firestore rules and the Worker crons: staff can only
+            // create/update a timesheet when the shift has `submittableAfter`
+            // as a timestamp (isSubmittableStaffShift), and the shift-start
+            // reminder crons key off `shiftStartAt`. The web app writes and
+            // backfills both; the native app must too. Recomputed on every
+            // save so date/time edits stay consistent.
+            "shiftStartAt": Timestamp(date: startDateTime),
+            "submittableAfter": Timestamp(date: endDateTime),
             "updatedAt": FieldValue.serverTimestamp()
         ]
         
         try await docRef.setData(data, merge: true)
     }
 
-    /// Delete a shift from Firestore.
+    /// Delete a shift and any timesheets attached to it (one atomic batch),
+    /// so deletions no longer strand orphaned timesheets that inflate the
+    /// Dashboard pending count while being invisible in week views.
+    /// (Manager timesheet deletes are permitted by the deployed rules.)
     func deleteShift(id: String) async throws {
-        try await db.collection("shifts").document(id).delete()
+        let attached = try await db.collection("timesheets")
+            .whereField("shiftId", isEqualTo: id)
+            .getDocuments()
+        let batch = db.batch()
+        batch.deleteDocument(db.collection("shifts").document(id))
+        for doc in attached.documents {
+            batch.deleteDocument(doc.reference)
+        }
+        try await batch.commit()
     }
 
     /// Publish all draft shifts for a given date range (firstKey to lastKey) in a batch transaction.
@@ -529,12 +601,16 @@ final class RosterRepository {
             .getDocuments()
             
         guard !snap.documents.isEmpty else { return }
-        
+
         let batch = db.batch()
         for doc in snap.documents {
             batch.updateData(["status": ShiftStatus.published.rawValue], forDocument: doc.reference)
         }
         try await batch.commit()
+        // Notify affected staff their roster is out (event name from the
+        // Worker's registry; recipient resolution happens server-side).
+        await WorkerAPIClient.shared.sendNotification(event: "roster-published",
+                                                      shiftIds: snap.documents.map { $0.documentID })
     }
 
     /// Approve a pending timesheet — sets status = .approved, managerNotes, approvedBy, and approvedAt.
@@ -548,8 +624,9 @@ final class RosterRepository {
             "approvedAt": nowISO(),
             "updatedAt": nowISO()
         ]
-        
+
         try await db.collection("timesheets").document(id).updateData(data)
+        await WorkerAPIClient.shared.sendNotification(event: "timesheet-approved", timesheetId: id)
     }
 
     /// Reject a timesheet — sets status = .rejected, managerNotes, and rejectedReason.
@@ -560,7 +637,8 @@ final class RosterRepository {
             "managerNotes": managerNotes ?? "",
             "updatedAt": nowISO()
         ]
-        
+
         try await db.collection("timesheets").document(id).updateData(data)
+        await WorkerAPIClient.shared.sendNotification(event: "timesheet-rejected", timesheetId: id)
     }
 }

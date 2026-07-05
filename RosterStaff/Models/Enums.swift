@@ -46,6 +46,30 @@ enum TimesheetStatus: String, Codable {
     case absent
 }
 
+/// Manager-facing lifecycle status for a shift on the Dashboard.
+/// Derived by `BusinessRules.managerShiftStatus` from the schedule + timesheet.
+enum ManagerShiftStatus: Equatable {
+    case scheduled          // shift has not started yet
+    case inProgress         // now is within the scheduled window
+    case pendingSubmission  // shift ended, staff has not submitted hours
+    case awaitingApproval   // timesheet submitted, waiting on the manager
+    case approved           // manager approved — shift complete
+    case rejected           // manager rejected — staff must resubmit
+    case absence            // staff reported (or manager confirmed) an absence
+
+    var title: String {
+        switch self {
+        case .scheduled: return "Scheduled"
+        case .inProgress: return "In Progress"
+        case .pendingSubmission: return "Pending"
+        case .awaitingApproval: return "Awaiting Approval"
+        case .approved: return "Approved"
+        case .rejected: return "Rejected"
+        case .absence: return "Absent"
+        }
+    }
+}
+
 /// Staff-facing display status for a shift card. Combines shift + timesheet state.
 /// Mirrors `getStaffShiftDisplayStatus` in src/lib/utils.ts.
 enum StaffShiftDisplayStatus: String {

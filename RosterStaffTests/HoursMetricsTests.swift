@@ -19,9 +19,11 @@ final class HoursMetricsTests: XCTestCase {
         let approvedLastMonth = TestSupport.timesheet(
             id: "s-may", shiftId: "s-may", status: "approved", workedHours: 3)
         // Approved timesheet whose shift is NOT in the loaded shift list
-        // (e.g. the shift left the ±28/56-day listener window).
+        // (the shift left the ±28/56-day listener window). Bucketing falls
+        // back to submittedAt — here a same-year, different-month date.
         let approvedOrphan = TestSupport.timesheet(
-            id: "s-old", shiftId: "s-old", status: "approved", workedHours: 2)
+            id: "s-old", shiftId: "s-old", status: "approved", workedHours: 2,
+            submittedAt: TestSupport.instant("2026-04-10", "18:00"))
         let pending = TestSupport.timesheet(
             id: "s-pend", shiftId: "s-week", status: "pending", workedHours: 4)
         let rejected = TestSupport.timesheet(
@@ -36,7 +38,7 @@ final class HoursMetricsTests: XCTestCase {
 
         XCTAssertEqual(m.week, 5, "only the shift in the current Mon-start week")
         XCTAssertEqual(m.month, 5, "June only")
-        XCTAssertEqual(m.year, 8, "June 5h + May 3h; orphan skipped (see known-bug test)")
+        XCTAssertEqual(m.year, 10, "June 5h + May 3h + April orphan 2h via submittedAt fallback")
         XCTAssertEqual(m.all, 10, "all approved hours incl. the orphan")
     }
 
@@ -55,21 +57,33 @@ final class HoursMetricsTests: XCTestCase {
         XCTAssertEqual(m.pendingCount, 0)
     }
 
-    /// KNOWN BUG (roadmap Milestone 4): approved timesheets whose shifts have
-    /// left the staff shift listener window (−28…+56 days) are missing from
-    /// the year/month/week buckets, because bucketing needs the shift's date
-    /// and the shift is no longer loaded. "This year" therefore undercounts
-    /// after ~a month of history. This test asserts the DESIRED behavior and
-    /// is marked as an expected failure; when Milestone 4 fixes the bucketing
-    /// strategy, XCTExpectFailure will flag it for removal.
-    func testYearIncludesOrphanApprovedHours_knownBug() throws {
-        let (shifts, timesheets) = makeFixtures()
-        // Give the orphan a same-year shift date via submittedAt context is not
-        // possible today — the current implementation has no fallback at all.
-        let m = HoursMetrics.compute(timesheets: timesheets, shifts: shifts, now: now)
+    /// Milestone 4 fix: approved timesheets whose shifts left the listener
+    /// window bucket via their submittedAt fallback (shift date preferred
+    /// when available).
+    func testOrphanFallbackBucketing() {
+        let orphanSameMonth = TestSupport.timesheet(
+            id: "o1", shiftId: "o1", status: "approved", workedHours: 3,
+            submittedAt: TestSupport.instant("2026-06-01", "17:30")) // this week + month
+        let orphanNoDate = TestSupport.timesheet(
+            id: "o2", shiftId: "o2", status: "approved", workedHours: 4) // no shift, no submittedAt
 
-        XCTExpectFailure("Milestone 4: orphan approved hours (2h) should count toward the year bucket") {
-            XCTAssertEqual(m.year, 10)
-        }
+        let m = HoursMetrics.compute(timesheets: [orphanSameMonth, orphanNoDate], shifts: [], now: now)
+        XCTAssertEqual(m.week, 3)
+        XCTAssertEqual(m.month, 3)
+        XCTAssertEqual(m.year, 3)
+        XCTAssertEqual(m.all, 7, "undateable hours still count in the all-time total")
+    }
+
+    /// Shift date wins over submittedAt when both exist (late submissions
+    /// must bucket to the week the shift was worked).
+    func testShiftDatePreferredOverSubmittedAt() {
+        let shift = TestSupport.shift(id: "s1", date: "2026-05-05") // May
+        let ts = TestSupport.timesheet(
+            id: "s1", shiftId: "s1", status: "approved", workedHours: 6,
+            submittedAt: TestSupport.instant("2026-06-02", "10:00")) // submitted in June
+
+        let m = HoursMetrics.compute(timesheets: [ts], shifts: [shift], now: now)
+        XCTAssertEqual(m.month, 0, "buckets to May (shift date), not June (submission)")
+        XCTAssertEqual(m.year, 6)
     }
 }

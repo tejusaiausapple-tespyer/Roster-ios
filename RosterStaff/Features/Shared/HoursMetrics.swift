@@ -25,8 +25,17 @@ struct HoursMetrics {
             switch ts.status {
             case .approved:
                 metrics.all += ts.workedHours
-                guard let dateKey = shiftDateByShiftId[ts.shiftId],
-                      let date = RosterFormat.parseISODate(dateKey) else { continue }
+                // Bucket by shift date when the shift is loaded; otherwise fall
+                // back to the submission time. Staff shifts are only kept for a
+                // −28…+56-day window, so older approved timesheets have no
+                // matching shift — without the fallback they'd silently drop
+                // out of the week/month/year buckets ("this year" undercount).
+                // submittedAt is minutes-to-days after the shift, so the
+                // approximation is exact for year, near-exact for month/week.
+                let date: Date? = shiftDateByShiftId[ts.shiftId]
+                    .flatMap { RosterFormat.parseISODate($0) }
+                    ?? ts.submittedAt
+                guard let date else { continue }
                 let comps = cal.dateComponents([.year, .month], from: date)
                 if comps.year == nowComps.year {
                     metrics.year += ts.workedHours

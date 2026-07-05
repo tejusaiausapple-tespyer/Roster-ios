@@ -45,6 +45,16 @@ struct AvailabilityView: View {
                 ToolbarItem(placement: .principal) {
                     ScreenTitlePill(title: "Availability", icon: "calendar.badge.clock")
                 }
+                if !isLocked {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        ToolbarSaveButton(
+                            isEnabled: isDirty || saveAsDefault,
+                            isWorking: isWorking
+                        ) {
+                            if saveAsDefault { showSaveDefaultConfirm = true } else { Task { await save() } }
+                        }
+                    }
+                }
             }
             .sheet(item: $editingDay) { day in
                 DayEditSheet(weekday: day, dateKey: dateKey(for: day), day: binding(for: day))
@@ -184,6 +194,9 @@ struct AvailabilityView: View {
 
     // MARK: Footer
 
+    // Save now lives as a pill in the navigation bar (enabled only when
+    // there are unsaved changes) — the footer keeps the recurring toggle
+    // and reset options.
     private var footer: some View {
         VStack(spacing: 12) {
             Card {
@@ -199,14 +212,6 @@ struct AvailabilityView: View {
                 }
                 .tint(Theme.brand)
             }
-
-            Button {
-                if saveAsDefault { showSaveDefaultConfirm = true } else { Task { await save() } }
-            } label: {
-                if isWorking { ProgressView().tint(.white) } else { Text("Save availability") }
-            }
-            .buttonStyle(PrimaryButtonStyle())
-            .disabled(isWorking || (!isDirty && !saveAsDefault))
 
             if hasCustomWeek {
                 Button {

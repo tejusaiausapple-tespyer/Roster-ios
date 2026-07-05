@@ -29,6 +29,7 @@ struct ManagerAccountView: View {
             List {
                 photoSection
                 detailsSection
+                businessSection
                 if UIDevice.current.userInterfaceIdiom == .phone {
                     managementSection
                 }
@@ -142,6 +143,14 @@ struct ManagerAccountView: View {
                 Text(user?.fullName ?? "—")
                     .font(.system(size: 24, weight: .bold))
                     .foregroundStyle(Theme.textPrimary)
+
+                if let user {
+                    HStack(spacing: 8) {
+                        tag("Manager", tint: Theme.brand)
+                        tag(user.status.rawValue.capitalized,
+                            tint: user.status == .active ? Theme.accent : Theme.error)
+                    }
+                }
             }
             .frame(maxWidth: .infinity)
             .listRowBackground(Color.clear)
@@ -199,16 +208,6 @@ struct ManagerAccountView: View {
                     }
                 }
                 
-                if let user {
-                    Divider().overlay(Theme.separator)
-                    
-                    HStack(spacing: 8) {
-                        tag("Manager", tint: Theme.brand)
-                        tag(user.status.rawValue.capitalized,
-                            tint: user.status == .active ? Theme.accent : Theme.error)
-                    }
-                    .padding(.top, 2)
-                }
             }
             .padding(.vertical, 4)
         }
@@ -220,6 +219,21 @@ struct ManagerAccountView: View {
             .foregroundStyle(tint)
             .padding(.horizontal, 9).padding(.vertical, 4)
             .background(Capsule().fill(tint.opacity(0.14)))
+    }
+
+    private var businessSection: some View {
+        Section("Business") {
+            NavigationLink {
+                ManagerCompanyDetailsView()
+            } label: {
+                Label("Company details", systemImage: "building.2")
+            }
+            NavigationLink {
+                ManagerLocationsView()
+            } label: {
+                Label("Locations", systemImage: "mappin.and.ellipse")
+            }
+        }
     }
 
     private var managementSection: some View {

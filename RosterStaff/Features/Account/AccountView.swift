@@ -174,6 +174,17 @@ struct AccountView: View {
                 Text(user?.fullName ?? "—")
                     .font(.system(size: 24, weight: .bold))
                     .foregroundStyle(Theme.textPrimary)
+
+                if let user {
+                    HStack(spacing: 8) {
+                        tag(user.role == .staff ? "Staff" : "Manager", tint: Theme.brand)
+                        tag(user.status.rawValue.capitalized,
+                            tint: user.status == .active ? Theme.accent : Theme.error)
+                        if let type = user.employmentType {
+                            tag(type.label, tint: Theme.textSecondary)
+                        }
+                    }
+                }
             }
             .frame(maxWidth: .infinity)
             .listRowBackground(Color.clear)
@@ -232,19 +243,6 @@ struct AccountView: View {
                     }
                 }
                 
-                if let user {
-                    Divider().overlay(Theme.separator)
-                    
-                    HStack(spacing: 8) {
-                        tag(user.role == .staff ? "Staff" : "Manager", tint: Theme.brand)
-                        tag(user.status.rawValue.capitalized,
-                            tint: user.status == .active ? Theme.accent : Theme.error)
-                        if let type = user.employmentType {
-                            tag(type.label, tint: Theme.textSecondary)
-                        }
-                    }
-                    .padding(.top, 2)
-                }
             }
             .padding(.vertical, 4)
         }

@@ -36,6 +36,7 @@ struct HomeView: View {
                     SkeletonCard()
                     SkeletonCard()
                 } else {
+                    companyHeader
                     todaySection
                     hoursSection
                     upcomingSection
@@ -95,6 +96,21 @@ struct HomeView: View {
             }
         }
         .accessibilityLabel("Notifications, \(repo.unreadMessageCount) unread")
+    }
+
+    // MARK: Company
+
+    @ViewBuilder
+    private var companyHeader: some View {
+        if !repo.appSettings.companyName.isEmpty {
+            Text(repo.appSettings.companyName)
+                .font(.caption.weight(.bold))
+                .tracking(1.2)
+                .textCase(.uppercase)
+                .foregroundStyle(Theme.brand)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityAddTraits(.isHeader)
+        }
     }
 
     // MARK: Today

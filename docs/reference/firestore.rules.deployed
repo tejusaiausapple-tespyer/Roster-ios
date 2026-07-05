@@ -1,0 +1,233 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// REFERENCE COPY — deployed Firestore rules, exported from the Firebase
+// console by Sura on 2026-07-05. NOT deployed from this repo.
+//
+// The web repo's firestore.rules is STALE vs this deployed version. Diffs:
+//   1. isValidSelfUserUpdate allowedKeys additionally includes 'email'
+//   2. notificationTokens platforms additionally allow 'ios-native',
+//      'android-native'
+//   3. NEW: tasks collection (read: any authenticated; write: manager)
+//   4. NEW: task_completions collection (read: any authenticated;
+//      create/update: self-attributed completions; delete/write: manager)
+//
+// Keep this file updated whenever console rules change. The authoritative
+// deploy source should eventually move back into the web repo.
+// ═══════════════════════════════════════════════════════════════════════════
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isManager() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        getUserData().role == 'manager' &&
+        getUserData().status == 'active';
+    }
+
+    function isValidSelfUserUpdate() {
+      let changedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      let allowedKeys = [
+        'fullName',
+        'email',
+        'phone',
+        'dob',
+        'address',
+        'emergencyContact',
+        'theme',
+        'profileUpdateRequired',
+        'updatedAt'
+      ];
+      return changedKeys.hasOnly(allowedKeys);
+    }
+
+    function isSubmittableStaffShift(timesheetData) {
+      return timesheetData.shiftId is string &&
+        exists(/databases/$(database)/documents/shifts/$(timesheetData.shiftId)) &&
+        get(/databases/$(database)/documents/shifts/$(timesheetData.shiftId)).data.staffId == request.auth.uid &&
+        get(/databases/$(database)/documents/shifts/$(timesheetData.shiftId)).data.status == 'published' &&
+        get(/databases/$(database)/documents/shifts/$(timesheetData.shiftId)).data.submittableAfter is timestamp &&
+        request.time >= get(/databases/$(database)/documents/shifts/$(timesheetData.shiftId)).data.submittableAfter;
+    }
+
+    function isStaffTimesheetCreate(timesheetId) {
+      return request.resource.data.staffId == request.auth.uid &&
+        request.resource.data.shiftId == timesheetId &&
+        request.resource.data.id == timesheetId &&
+        isSubmittableStaffShift(request.resource.data) &&
+        (
+          request.resource.data.status == 'pending' ||
+          request.resource.data.status == 'draft' ||
+          (request.resource.data.status == 'absent_reported' && request.resource.data.workedHours == 0)
+        ) &&
+        request.resource.data.submittedAt == request.time &&
+        !request.resource.data.keys().hasAny(['approvedBy', 'approvedAt', 'managerNotes']);
+    }
+
+    function isValidNotificationTokenData() {
+      return request.resource.data.keys().hasOnly([
+        'token',
+        'platform',
+        'userAgent',
+        'createdAt',
+        'updatedAt',
+        'enabled'
+      ]) &&
+        request.resource.data.token is string &&
+        request.resource.data.platform in ['ios-pwa', 'android-pwa', 'macos-pwa', 'macos-browser', 'desktop', 'ios-native', 'android-native'] &&
+        request.resource.data.userAgent is string &&
+        request.resource.data.enabled is bool;
+    }
+
+    function isValidNotificationTokenCreate() {
+      return isValidNotificationTokenData() &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.updatedAt == request.time;
+    }
+
+    function isValidNotificationTokenUpdate() {
+      return isValidNotificationTokenData() &&
+        request.resource.data.token == resource.data.token &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.updatedAt == request.time;
+    }
+
+    match /users/{userId} {
+      allow read: if isManager() || (isAuthenticated() && request.auth.uid == userId);
+      allow create: if isManager();
+      allow update: if isManager() || (
+        isAuthenticated() &&
+        request.auth.uid == userId &&
+        isValidSelfUserUpdate()
+      );
+      allow delete: if isManager() &&
+        resource.data.needsSetup == true &&
+        resource.data.email == '';
+
+      match /notificationTokens/{tokenId} {
+        allow read: if isAuthenticated() && request.auth.uid == userId;
+        allow create: if isAuthenticated() &&
+          request.auth.uid == userId &&
+          isValidNotificationTokenCreate();
+        allow update: if isAuthenticated() &&
+          request.auth.uid == userId &&
+          isValidNotificationTokenUpdate();
+        allow delete: if isAuthenticated() && request.auth.uid == userId;
+      }
+    }
+
+    match /shifts/{shiftId} {
+      allow read: if isManager() || (
+        isAuthenticated() &&
+        resource.data.status == 'published' &&
+        resource.data.staffId == request.auth.uid
+      );
+      allow write: if isManager();
+    }
+
+    match /timesheets/{timesheetId} {
+      allow read: if isManager() || (
+        isAuthenticated() &&
+        resource.data.staffId == request.auth.uid
+      );
+
+      allow create: if isAuthenticated() && (
+        isManager() ||
+        isStaffTimesheetCreate(timesheetId)
+      );
+
+      allow update: if isAuthenticated() && (
+        isManager() || (
+          resource.data.staffId == request.auth.uid &&
+          request.resource.data.staffId == request.auth.uid &&
+          request.resource.data.shiftId == resource.data.shiftId &&
+          isSubmittableStaffShift(request.resource.data) &&
+          (resource.data.status == 'pending' || resource.data.status == 'rejected' || resource.data.status == 'draft' || resource.data.status == 'absent_reported') &&
+          (request.resource.data.status != 'absent_reported' || request.resource.data.workedHours == 0) &&
+          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['submittedAt']) ||
+           request.resource.data.submittedAt == request.time) &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['approvedBy', 'approvedAt', 'managerNotes']) &&
+          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
+           request.resource.data.status == 'pending' ||
+           request.resource.data.status == 'draft' ||
+           (request.resource.data.status == 'absent_reported' && request.resource.data.workedHours == 0)) &&
+          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['rejectedReason']) ||
+           !('rejectedReason' in request.resource.data) ||
+           request.resource.data.rejectedReason == null ||
+           request.resource.data.rejectedReason == '')
+        )
+      );
+
+      allow delete: if isManager() || (
+        isAuthenticated() &&
+        resource.data.staffId == request.auth.uid &&
+        resource.data.status == 'absent_reported'
+      );
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isManager();
+      allow create: if isManager();
+      allow update, delete: if isManager();
+    }
+
+    match /importBatches/{batchId} {
+      allow read, write: if isManager();
+    }
+
+    match /wages/{wageId} {
+      allow read: if isManager();
+      allow write: if isManager();
+    }
+
+    match /settings/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isManager();
+    }
+
+    match /masterSheets/{sheetId} {
+      allow read, write: if isManager();
+      match /chunks/{chunkId} {
+        allow read, write: if isManager();
+      }
+    }
+
+    match /messages/{messageId} {
+      function isValidMessageData() {
+        return request.resource.data.body is string &&
+          request.resource.data.body.size() > 0 &&
+          request.resource.data.body.size() <= 500;
+      }
+
+      allow read: if isManager();
+      allow create, update: if isManager() && isValidMessageData();
+      allow delete: if isManager();
+      allow read: if isAuthenticated() && resource.data.recipientId == request.auth.uid;
+      allow update: if isAuthenticated() &&
+        resource.data.recipientId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']) &&
+        request.resource.data.read == true;
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isAuthenticated();
+      allow write: if isManager();
+    }
+
+    match /task_completions/{completionId} {
+      allow read: if isAuthenticated();
+      allow write: if isManager();
+      allow create, update: if isAuthenticated() &&
+        request.resource.data.completedBy == request.auth.uid &&
+        (request.resource.data.staffPhotoUrl == null || request.resource.data.staffPhotoUrl is string);
+      allow delete: if isManager();
+    }
+  }
+}
