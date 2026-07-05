@@ -30,9 +30,12 @@
   - PasskeyStore password → biometric-gated Keychain item (+ legacy migration)
   - `temporaryPassword` cleared on background
   - Firestore rules reviewed against deployed copy (see reference file)
-- [ ] **M4 — Data integrity** — ✅ CODE COMPLETE on branch
-      `milestone-4-data-integrity` (commit ef1c2a6), ⏳ AWAITING Sura's device
-      verification, THEN merge to main. Verify steps are in the checklist below.
+- [x] **M4 — Data integrity** (merged to main 2026-07-05, device-verified;
+      merge d45a344 also includes the iOS 26 glass hit-testing fix and the
+      owner-requested manager-portal updates: locations manager + company
+      details w/ ABN/ACN/+61/structured address, role dropdown, break default
+      0, dashboard lifecycle statuses, quick actions, nav-bar Save pill,
+      profile header pills)
   - [x] CRITICAL: `saveShift` writes `shiftStartAt` + `submittableAfter`
         Timestamps (deployed rules require them for staff timesheet writes;
         Worker crons need them for reminders)
@@ -44,14 +47,18 @@
   - [x] Manager notifications: `timesheet-approved`, `timesheet-rejected`,
         `roster-published` (hyphenated names from Worker registry)
   - [x] `markMessagesRead` batched
-- [ ] **M5 — Error handling & user feedback** (NOT STARTED — next up)
-  - Replace all `// Handle error` silent catches in ManagerRosterView
-    (copyLastWeek, publish, delete, move/copy) with Toast feedback
-  - In-flight guard on copyLastWeek (double-tap duplicates the week!)
-  - ManagerTimesheetDetailSheet approve/reject: surface errors, keep sheet open
-  - Render `repo.loadError` somewhere for managers (Banner on Dashboard)
-  - Also: send `roster-published` on single-shift publish (publishSingleShift
-    in ManagerRosterView) — parity gap noted in M4
+- [ ] **M5 — Error handling & user feedback** — ✅ CODE COMPLETE on branch
+      `milestone-5-error-handling`, ⏳ awaiting Sura's device verification
+  - [x] All `// Handle error` silent catches in ManagerRosterView replaced
+        with Toast feedback (copy/publish/delete/move/copy/bulk-delete, with
+        partial-failure counts on bulk delete)
+  - [x] In-flight guard + "Copying…" label on Copy Last Week (double-tap
+        previously duplicated the whole week); empty-week info toast
+  - [x] ManagerTimesheetDetailSheet: approve failure → toast, sheet stays
+        open; reject failure → inline banner inside the reason sheet (typed
+        input preserved)
+  - [x] repo.loadError rendered as a Banner on the Manager Dashboard
+  - [x] roster-published notification on single-shift publish (parity)
 - [ ] **M6 — Domain robustness** (PARTIALLY DONE via `manager-portal-updates`
       branch, 2026-07-05, per Sura's product answers)
   - [x] Shift editor: seeded locations REMOVED → manager-created locations

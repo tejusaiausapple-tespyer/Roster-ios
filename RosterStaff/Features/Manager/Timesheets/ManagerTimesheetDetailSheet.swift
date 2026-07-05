@@ -12,6 +12,8 @@ struct ManagerTimesheetDetailSheet: View {
     @State private var showRejectionDialog = false
     @State private var rejectedReason: String = ""
     @State private var isSubmitting = false
+    @State private var toast: ToastMessage?
+    @State private var rejectError: String?
 
     init(timesheet: Timesheet, shift: Shift?, isEmbedded: Bool = false) {
         self.timesheet = timesheet
@@ -95,6 +97,7 @@ struct ManagerTimesheetDetailSheet: View {
             .sheet(isPresented: $showRejectionDialog) {
                 rejectionDialogSheet
             }
+            .toast($toast)
         }
     }
     
@@ -392,6 +395,10 @@ struct ManagerTimesheetDetailSheet: View {
                 Text("Specify a reason for rejecting this timesheet. The staff member will see this message and must resubmit their actual times.")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
+
+                if let rejectError {
+                    Banner(kind: .error, title: rejectError)
+                }
                 
                 TextField("E.g. Hours worked don't match store clock-in sheet", text: $rejectedReason)
                     .padding(12)
@@ -434,20 +441,24 @@ struct ManagerTimesheetDetailSheet: View {
     private func approve() {
         isSubmitting = true
         Task {
+            defer { isSubmitting = false }
             do {
                 try await repo.approveTimesheet(id: timesheet.id, managerNotes: managerNotes.isEmpty ? nil : managerNotes)
                 Haptics.success()
-                isSubmitting = false
                 dismiss()
             } catch {
-                isSubmitting = false
+                // Keep the sheet open so nothing the manager typed is lost.
+                toast = ToastMessage(kind: .error, text: "Approve failed. \(error.localizedDescription)")
+                Haptics.error()
             }
         }
     }
-    
+
     private func reject() {
         isSubmitting = true
+        rejectError = nil
         Task {
+            defer { isSubmitting = false }
             do {
                 try await repo.rejectTimesheet(
                     id: timesheet.id,
@@ -455,11 +466,13 @@ struct ManagerTimesheetDetailSheet: View {
                     managerNotes: managerNotes.isEmpty ? nil : managerNotes
                 )
                 Haptics.success()
-                isSubmitting = false
                 showRejectionDialog = false
                 dismiss()
             } catch {
-                isSubmitting = false
+                // Shown inside the rejection sheet (a toast underneath would
+                // be hidden by it); the typed reason is preserved.
+                rejectError = "Reject failed. \(error.localizedDescription)"
+                Haptics.error()
             }
         }
     }

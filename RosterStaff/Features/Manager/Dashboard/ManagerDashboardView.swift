@@ -98,6 +98,15 @@ struct ManagerDashboardView: View {
                 
                 ScrollView {
                     VStack(spacing: 20) {
+                        // Data-layer errors (listener failures) were previously
+                        // silent — the dashboard is the manager's landing screen,
+                        // so surface them here.
+                        if let loadError = repo.loadError {
+                            Banner(kind: .error,
+                                   title: "Some data failed to load",
+                                   message: loadError)
+                        }
+
                         // Hero Header Card
                         headerCard
                         

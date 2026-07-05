@@ -18,6 +18,10 @@ struct ManagerRosterView: View {
     @State private var selectedDayKey = RosterCalendar.todayKey()
     @State private var activeSheet: ActiveSheet? = nil
     @State private var showNoStaffAlert = false
+    @State private var toast: ToastMessage?
+    /// In-flight guard: a second tap on Copy Last Week would duplicate the
+    /// entire week's shifts.
+    @State private var isCopyingWeek = false
 
     /// A single sheet source of truth. Using two separate `.sheet` modifiers on
     /// one view causes SwiftUI to present unreliably (slow / sometimes never,
@@ -308,6 +312,7 @@ struct ManagerRosterView: View {
         } message: {
             Text("No staff members are available. Please add staff before creating shifts.")
         }
+        .toast($toast)
     }
 
     // MARK: - iPad / macOS Week-Grid Layout
@@ -505,8 +510,9 @@ struct ManagerRosterView: View {
     private var moreMenu: some View {
         Menu {
             Button(action: copyLastWeek) {
-                Label("Copy Last Week", systemImage: "doc.on.doc")
+                Label(isCopyingWeek ? "Copying…" : "Copy Last Week", systemImage: "doc.on.doc")
             }
+            .disabled(isCopyingWeek)
             Button(action: publishWeeklyDrafts) {
                 Label("Publish Week (\(weeklyDraftsCount))", systemImage: "paperplane")
             }
@@ -1090,7 +1096,10 @@ struct ManagerRosterView: View {
     // MARK: - Actions
 
     private func copyLastWeek() {
+        guard !isCopyingWeek else { return }
+        isCopyingWeek = true
         Task {
+            defer { isCopyingWeek = false }
             do {
                 let lastWeekMonday = RosterCalendar.addDays(-7, to: monday)
                 let lastWeekDays = RosterCalendar.weekDays(for: lastWeekMonday)
@@ -1104,6 +1113,10 @@ struct ManagerRosterView: View {
                     .getDocuments()
 
                 let lastWeekShifts = snap.documents.compactMap { Shift(id: $0.documentID, data: $0.data()) }
+                guard !lastWeekShifts.isEmpty else {
+                    toast = ToastMessage(kind: .info, text: "No shifts last week to copy")
+                    return
+                }
 
                 for oldShift in lastWeekShifts {
                     guard let oldDate = RosterCalendar.dateFromKey(oldShift.date) else { continue }
@@ -1123,21 +1136,27 @@ struct ManagerRosterView: View {
                         status: .draft
                     )
                 }
+                toast = ToastMessage(kind: .success,
+                                     text: "Copied \(lastWeekShifts.count) shift\(lastWeekShifts.count == 1 ? "" : "s") as drafts")
                 Haptics.success()
             } catch {
-                // Handle error
+                toast = ToastMessage(kind: .error, text: "Copy failed. \(error.localizedDescription)")
+                Haptics.error()
             }
         }
     }
 
     private func publishWeeklyDrafts() {
         guard let first = weekKeys.first, let last = weekKeys.last else { return }
+        let count = weeklyDraftsCount
         Task {
             do {
                 try await repo.publishAllDrafts(from: first, to: last)
+                toast = ToastMessage(kind: .success, text: "Published \(count) shift\(count == 1 ? "" : "s")")
                 Haptics.success()
             } catch {
-                // Handle error
+                toast = ToastMessage(kind: .error, text: "Publish failed. \(error.localizedDescription)")
+                Haptics.error()
             }
         }
     }
@@ -1157,9 +1176,14 @@ struct ManagerRosterView: View {
                     notes: shift.notes,
                     status: .published
                 )
+                // Same notification the batch publish sends (parity).
+                await WorkerAPIClient.shared.sendNotification(event: "roster-published",
+                                                              shiftIds: [shift.id])
+                toast = ToastMessage(kind: .success, text: "Shift published")
                 Haptics.success()
             } catch {
-                // Handle error
+                toast = ToastMessage(kind: .error, text: "Publish failed. \(error.localizedDescription)")
+                Haptics.error()
             }
         }
     }
@@ -1170,7 +1194,8 @@ struct ManagerRosterView: View {
                 try await repo.deleteShift(id: shift.id)
                 Haptics.light()
             } catch {
-                // Handle error
+                toast = ToastMessage(kind: .error, text: "Delete failed. \(error.localizedDescription)")
+                Haptics.error()
             }
         }
     }
@@ -1199,10 +1224,19 @@ struct ManagerRosterView: View {
             : allWeekShifts.filter { $0.staffId == request.staffId }
 
         Task {
+            var failures = 0
             for shift in targets {
-                try? await repo.deleteShift(id: shift.id)
+                do { try await repo.deleteShift(id: shift.id) } catch { failures += 1 }
             }
-            Haptics.success()
+            if failures > 0 {
+                toast = ToastMessage(kind: .error,
+                                     text: "Deleted \(targets.count - failures) of \(targets.count) shifts — \(failures) failed")
+                Haptics.error()
+            } else {
+                toast = ToastMessage(kind: .success,
+                                     text: "Deleted \(targets.count) shift\(targets.count == 1 ? "" : "s")")
+                Haptics.success()
+            }
         }
         bulkDeleteRequest = nil
     }
@@ -1235,7 +1269,8 @@ struct ManagerRosterView: View {
                 )
                 Haptics.success()
             } catch {
-                // Handle error
+                toast = ToastMessage(kind: .error, text: "Move failed. \(error.localizedDescription)")
+                Haptics.error()
             }
         }
     }
@@ -1257,7 +1292,8 @@ struct ManagerRosterView: View {
                 )
                 Haptics.success()
             } catch {
-                // Handle error
+                toast = ToastMessage(kind: .error, text: "Copy failed. \(error.localizedDescription)")
+                Haptics.error()
             }
         }
     }
