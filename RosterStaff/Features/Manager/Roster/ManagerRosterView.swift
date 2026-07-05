@@ -22,6 +22,7 @@ struct ManagerRosterView: View {
     /// In-flight guard: a second tap on Copy Last Week would duplicate the
     /// entire week's shifts.
     @State private var isCopyingWeek = false
+    @State private var showPublishDialog = false
 
     /// A single sheet source of truth. Using two separate `.sheet` modifiers on
     /// one view causes SwiftUI to present unreliably (slow / sometimes never,
@@ -295,6 +296,17 @@ struct ManagerRosterView: View {
                     Text("This permanently deletes \(req.label) for the week of \(dateRangeString). This cannot be undone.")
                 }
             }
+            .confirmationDialog(
+                "Publish Roster",
+                isPresented: $showPublishDialog,
+                titleVisibility: .visible
+            ) {
+                Button("Publish Only") { publishWeeklyDrafts(lockWeek: false) }
+                Button("Publish & Lock Availability") { publishWeeklyDrafts(lockWeek: true) }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Publish \(weeklyDraftsCount) draft shift\(weeklyDraftsCount == 1 ? "" : "s")? \"Publish & Lock\" also freezes staff availability for this week so the published roster can't drift out of sync. You can unlock later from the ⋯ menu.")
+            }
         }
         // Sheet is attached to the NavigationStack (a stable view) rather than
         // the GeometryReader, and kept separate from the confirmationDialogs, so
@@ -513,10 +525,15 @@ struct ManagerRosterView: View {
                 Label(isCopyingWeek ? "Copying…" : "Copy Last Week", systemImage: "doc.on.doc")
             }
             .disabled(isCopyingWeek)
-            Button(action: publishWeeklyDrafts) {
+            Button { showPublishDialog = true } label: {
                 Label("Publish Week (\(weeklyDraftsCount))", systemImage: "paperplane")
             }
             .disabled(weeklyDraftsCount == 0)
+            Divider()
+            Button(action: toggleWeekAvailabilityLock) {
+                Label(isWeekAvailabilityLocked ? "Unlock Staff Availability" : "Lock Staff Availability",
+                      systemImage: isWeekAvailabilityLocked ? "lock.open" : "lock")
+            }
         } label: {
             Image(systemName: "ellipsis")
                 .font(.headline.weight(.bold))
@@ -1146,13 +1163,40 @@ struct ManagerRosterView: View {
         }
     }
 
-    private func publishWeeklyDrafts() {
+    /// Monday key of the displayed week — the availability-lock unit.
+    private var displayedWeekKey: String { weekKeys.first ?? RosterCalendar.weekStartKey(Date()) }
+
+    private var isWeekAvailabilityLocked: Bool {
+        repo.lockedAvailabilityWeeks.contains(displayedWeekKey)
+    }
+
+    private func toggleWeekAvailabilityLock() {
+        let locking = !isWeekAvailabilityLocked
+        Task {
+            do {
+                try await repo.setAvailabilityWeekLock(weekKey: displayedWeekKey, locked: locking)
+                toast = ToastMessage(kind: .success,
+                                     text: locking ? "Staff availability locked for this week"
+                                                   : "Staff availability unlocked")
+                Haptics.success()
+            } catch {
+                toast = ToastMessage(kind: .error, text: "Lock update failed. \(error.localizedDescription)")
+                Haptics.error()
+            }
+        }
+    }
+
+    private func publishWeeklyDrafts(lockWeek: Bool) {
         guard let first = weekKeys.first, let last = weekKeys.last else { return }
         let count = weeklyDraftsCount
         Task {
             do {
                 try await repo.publishAllDrafts(from: first, to: last)
-                toast = ToastMessage(kind: .success, text: "Published \(count) shift\(count == 1 ? "" : "s")")
+                if lockWeek {
+                    try await repo.setAvailabilityWeekLock(weekKey: first, locked: true)
+                }
+                toast = ToastMessage(kind: .success,
+                                     text: "Published \(count) shift\(count == 1 ? "" : "s")\(lockWeek ? " — availability locked" : "")")
                 Haptics.success()
             } catch {
                 toast = ToastMessage(kind: .error, text: "Publish failed. \(error.localizedDescription)")

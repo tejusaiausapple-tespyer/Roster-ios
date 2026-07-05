@@ -22,6 +22,10 @@ final class RosterRepository {
     var allUsers: [AppUser] = []
     /// Manager-defined work locations (settings/locations).
     var locations: [RosterLocation] = []
+    /// Roster weeks whose staff availability a manager has locked
+    /// (settings/availabilityLocks → `weeks` map of weekStartKey → true).
+    /// Written by "Publish & Lock"; enforced server-side by the Worker.
+    var lockedAvailabilityWeeks: Set<String> = []
     // Wages module (manager-only — the `wages` collection is unreadable by
     // staff under the deployed rules, keeping earnings lines invisible to them)
     var wageAwards: [WageAward] = []
@@ -112,6 +116,17 @@ final class RosterRepository {
                 self.locations = items
                     .compactMap { RosterLocation(dict: $0) }
                     .sorted { $0.displayName < $1.displayName }
+            }
+        )
+
+        // settings/availabilityLocks — manager-locked availability weeks
+        listeners.append(
+            db.collection("settings").document("availabilityLocks").addSnapshotListener { [weak self] snap, _ in
+                guard let self else { return }
+                let weeks = snap?.data()?["weeks"] as? [String: Any] ?? [:]
+                self.lockedAvailabilityWeeks = Set(weeks.compactMap { key, value in
+                    (value as? Bool) == true ? key : nil
+                })
             }
         )
     }
@@ -241,6 +256,7 @@ final class RosterRepository {
         activeUID = nil
         currentUser = nil
         locations = []
+        lockedAvailabilityWeeks = []
         shifts = []
         timesheets = []
         messages = []
@@ -768,6 +784,21 @@ final class RosterRepository {
         // Worker's registry; recipient resolution happens server-side).
         await WorkerAPIClient.shared.sendNotification(event: "roster-published",
                                                       shiftIds: drafts.map { $0.documentID })
+    }
+
+    /// Lock or unlock staff availability for a roster week (manager only —
+    /// the settings write rule enforces it). Locked weeks are enforced
+    /// server-side by the Worker's availability endpoint on both platforms.
+    func setAvailabilityWeekLock(weekKey: String, locked: Bool) async throws {
+        let ref = db.collection("settings").document("availabilityLocks")
+        if locked {
+            try await ref.setData(["weeks": [weekKey: true]], merge: true)
+        } else {
+            // Ensure the doc exists before the field delete (updateData on a
+            // missing doc throws NOT_FOUND).
+            try await ref.setData([:], merge: true)
+            try await ref.updateData(["weeks.\(weekKey)": FieldValue.delete()])
+        }
     }
 
     /// Approve a pending timesheet — sets status = .approved, managerNotes, approvedBy, and approvedAt.

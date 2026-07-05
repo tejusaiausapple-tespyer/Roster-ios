@@ -105,6 +105,19 @@ final class BusinessRulesTests: XCTestCase {
         XCTAssertFalse(BusinessRules.isWeekLockedForStaff(weekStartKey: "2026-06-08", at: now), "next week editable")
     }
 
+    func testManagerAvailabilityWeekLock() {
+        let now = TestSupport.instant("2026-06-03", "12:00") // Wed of week 2026-06-01
+        let locked: Set<String> = ["2026-06-08"]
+        XCTAssertTrue(BusinessRules.isWeekLockedForStaff(weekStartKey: "2026-06-08", managerLockedWeeks: locked, at: now),
+                      "manager-locked future week is locked")
+        XCTAssertFalse(BusinessRules.isWeekLockedForStaff(weekStartKey: "2026-06-15", managerLockedWeeks: locked, at: now),
+                       "other future weeks stay editable")
+        XCTAssertTrue(BusinessRules.isWeekLockedForStaff(weekStartKey: "2026-06-01", managerLockedWeeks: [], at: now),
+                      "current week still locked with no manager locks")
+        XCTAssertFalse(BusinessRules.isWeekLockedForStaff(weekStartKey: "2026-06-08", managerLockedWeeks: [], at: now),
+                       "unlocked future week editable")
+    }
+
     func testRecurringWeekKeysSpanHorizon() {
         let now = TestSupport.instant("2026-06-01", "12:00") // Monday
         let keys = BusinessRules.recurringWeekKeys(fromMonday: now, at: now)

@@ -21,7 +21,15 @@ struct AvailabilityView: View {
     private var boundsMax: Int { BusinessRules.availabilityMaxWeekOffset }
     private var monday: Date { RosterCalendar.addWeeks(weekOffset, to: RosterCalendar.weekStart(now)) }
     private var weekKey: String { RosterCalendar.dayFormatter.string(from: monday) }
-    private var isLocked: Bool { BusinessRules.isWeekLockedForStaff(weekStartKey: weekKey, at: now) }
+    private var isManagerLocked: Bool {
+        repo.lockedAvailabilityWeeks.contains(weekKey)
+            && !BusinessRules.isWeekLockedForStaff(weekStartKey: weekKey, at: now)
+    }
+    private var isLocked: Bool {
+        BusinessRules.isWeekLockedForStaff(weekStartKey: weekKey,
+                                           managerLockedWeeks: repo.lockedAvailabilityWeeks,
+                                           at: now)
+    }
     private var isDirty: Bool { form != original }
     private var hasCustomWeek: Bool { repo.currentUser?.weeklyAvailability[weekKey] != nil }
 
@@ -29,7 +37,11 @@ struct AvailabilityView: View {
         NavigationStack {
             TabScroll {
                 weekNav
-                if isLocked {
+                if isManagerLocked {
+                    Banner(kind: .info,
+                           title: "Locked by your manager",
+                           message: "The roster for this week has been published and locked. Contact your manager to change availability.")
+                } else if isLocked {
                     Banner(kind: .info,
                            title: "This week is locked",
                            message: "You can only change availability for upcoming weeks. Navigate forward to edit.")
@@ -103,7 +115,7 @@ struct AvailabilityView: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Theme.textPrimary)
                     HStack(spacing: 6) {
-                        weekBadge(isLocked ? "Locked" : (weekOffset == 0 ? "Current" : "Upcoming"),
+                        weekBadge(isManagerLocked ? "Locked by manager" : (isLocked ? "Locked" : (weekOffset == 0 ? "Current" : "Upcoming")),
                                   tint: isLocked ? Theme.textTertiary : Theme.brand)
                         weekBadge(hasCustomWeek ? "Custom" : "Default",
                                   tint: hasCustomWeek ? Theme.accent : Theme.textTertiary)
@@ -267,7 +279,9 @@ struct AvailabilityView: View {
         defer { isWorking = false }
         var weekly = me.weeklyAvailability
         let keys = saveAsDefault ? BusinessRules.recurringWeekKeys(fromMonday: monday, at: now) : [weekKey]
-        for key in keys where !BusinessRules.isWeekLockedForStaff(weekStartKey: key, at: now) {
+        for key in keys where !BusinessRules.isWeekLockedForStaff(weekStartKey: key,
+                                                                  managerLockedWeeks: repo.lockedAvailabilityWeeks,
+                                                                  at: now) {
             weekly[key] = form
         }
         do {
@@ -293,7 +307,8 @@ struct AvailabilityView: View {
         guard let me = repo.currentUser else { return }
         let currentWeekKey = RosterCalendar.weekStartKey(now)
         var weekly = me.weeklyAvailability
-        for key in weekly.keys where key > weekKey && key > currentWeekKey {
+        for key in weekly.keys where key > weekKey && key > currentWeekKey
+            && !repo.lockedAvailabilityWeeks.contains(key) {
             weekly.removeValue(forKey: key)
         }
         await performReset(weekly, message: "Following weeks reset")

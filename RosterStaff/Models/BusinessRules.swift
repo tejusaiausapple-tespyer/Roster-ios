@@ -113,6 +113,18 @@ enum BusinessRules {
         weekStartKey <= RosterCalendar.weekStartKey(now)
     }
 
+    /// Full staff lock decision (mirrors isAvailabilityWeekLockedForStaff):
+    /// past/current weeks are always locked, and future weeks are locked when
+    /// a manager has published & locked that roster week.
+    static func isWeekLockedForStaff(
+        weekStartKey: String,
+        managerLockedWeeks: Set<String>,
+        at now: Date = Date()
+    ) -> Bool {
+        isWeekLockedForStaff(weekStartKey: weekStartKey, at: now)
+            || managerLockedWeeks.contains(weekStartKey)
+    }
+
     /// Mirrors buildRecurringWeekKeys — every unlocked Monday key from `fromMonday`
     /// through the availability horizon.
     static func recurringWeekKeys(fromMonday: Date, at now: Date = Date()) -> [String] {
