@@ -328,7 +328,11 @@ struct TaskCompletionDetailSheet: View {
                                             .font(.footnote)
                                             .foregroundStyle(Theme.textSecondary)
                                         Spacer()
-                                        Text(repository.currentUser?.fullName ?? comp.completedBy ?? "Staff")
+                                        // Resolve the actual completer, not whoever is viewing.
+                                        Text(repository.allUsers.first(where: { $0.id == comp.completedBy })?.fullName
+                                             ?? (comp.completedBy == repository.currentUser?.id
+                                                 ? repository.currentUser?.fullName : nil)
+                                             ?? "Staff")
                                             .font(.body.weight(.semibold))
                                             .foregroundStyle(Theme.textPrimary)
                                     }

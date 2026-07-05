@@ -291,7 +291,9 @@ struct ManagerTimesheetDetailSheet: View {
                             .font(.subheadline.weight(.bold))
                             .foregroundStyle(Theme.textPrimary)
                         if let appAt = timesheet.approvedAt {
-                            Text("Approved on \(appAt)")
+                            // approvedAt is an ISO-8601 string; render it as a
+                            // readable date-time instead of the raw value.
+                            Text("Approved on \(FS.isoFormatter.date(from: appAt).map { RosterFormat.dateTime($0) } ?? appAt)")
                                 .font(.caption2)
                                 .foregroundStyle(Theme.textSecondary)
                         }

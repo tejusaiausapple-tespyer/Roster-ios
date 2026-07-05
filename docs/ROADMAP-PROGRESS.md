@@ -95,6 +95,23 @@
         backfilled `shiftStartAt`/`submittableAfter`). Single-shift publish
         moved to new `repo.publishShift` (same fields; previously a full
         `saveShift` rewrite without `publishedAt`).
+  - [x] FEATURE (2026-07-05, owner request): **Availability week locking** —
+        Publish Week now offers "Publish Only" / "Publish & Lock
+        Availability"; ⋯ menu locks/unlocks the displayed week. Lock state:
+        `settings/availabilityLocks` `weeks` map (manager-write under
+        existing rules; no rules change). Staff AvailabilityView shows
+        locked weeks read-only ("Locked by your manager" banner); recurring
+        saves/resets skip locked weeks. SERVER enforcement added to the
+        Worker's `/api/staff/availability` (web repo, branch
+        `availability-week-lock` in ~/Desktop/Roster-old — Sura must deploy
+        the Worker + PWA for enforcement to go live). PWA got the same
+        publish modal, toolbar lock pill, and staff-page lockout.
+  - [x] UX (2026-07-05): iPad manager sidebar rebuilt — branded company
+        header, grouped sections (Scheduling/People/Operations/Settings,
+        `ManagerSidebarSection`), tinted icon chips w/ fill-on-select,
+        profile footer → Account. PWA sidebar mirrors the same grouping.
+        Also fixed: "Approved on" raw ISO string (M7 item),
+        TaskCompletionDetailSheet wrong "Completed By" (M7 item).
 - [ ] **M6 — Domain robustness** (PARTIALLY DONE via `manager-portal-updates`
       branch, 2026-07-05, per Sura's product answers)
   - [x] Shift editor: seeded locations REMOVED → manager-created locations
