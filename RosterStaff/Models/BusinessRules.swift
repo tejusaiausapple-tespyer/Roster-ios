@@ -160,6 +160,26 @@ enum BusinessRules {
         return ts.status == .rejected
     }
 
+    // MARK: - Manager dashboard shift lifecycle
+
+    /// Real-time lifecycle status of a shift from the manager's perspective.
+    /// A timesheet decides the state once one exists; otherwise the schedule
+    /// does (scheduled → in progress → pending submission).
+    static func managerShiftStatus(shift: Shift, timesheet: Timesheet?, at now: Date = Date()) -> ManagerShiftStatus {
+        if let ts = timesheet {
+            switch ts.status {
+            case .approved: return .approved
+            case .pending: return .awaitingApproval
+            case .rejected: return .rejected
+            case .absentReported, .absent: return .absence
+            case .draft: break // not submitted yet — fall through to schedule
+            }
+        }
+        if now < shift.startDateTime { return .scheduled }
+        if now < shift.endDateTime { return .inProgress }
+        return .pendingSubmission
+    }
+
     // MARK: - Password validation (mirrors validatePassword, required rules only)
 
     /// Returns an array of unmet *required* password rules (empty == valid).

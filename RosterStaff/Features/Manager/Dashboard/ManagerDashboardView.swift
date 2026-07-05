@@ -30,11 +30,27 @@ struct ManagerDashboardView: View {
             .sorted { $0.rosteredStart < $1.rosteredStart }
     }
 
-    /// Scheduled to be running right now (start ≤ now < end, Adelaide time).
-    /// Placeholder until the Staff Portal gains a "Start Shift" action that
-    /// records actual start times.
-    private func isInProgress(_ shift: Shift, at now: Date = Date()) -> Bool {
-        now >= shift.startDateTime && now < shift.endDateTime
+    /// Lifecycle status per shift (Scheduled → In Progress → Pending →
+    /// Awaiting Approval → Approved), derived by BusinessRules from the
+    /// schedule + timesheet. "In Progress" is schedule-based for now — a
+    /// future Staff Portal "Start Shift" action will track actual starts.
+    private func lifecycleStatus(for shift: Shift) -> ManagerShiftStatus {
+        BusinessRules.managerShiftStatus(
+            shift: shift,
+            timesheet: repo.timesheets.first(where: { $0.shiftId == shift.id })
+        )
+    }
+
+    private func tint(for status: ManagerShiftStatus) -> Color {
+        switch status {
+        case .scheduled: return Theme.textTertiary
+        case .inProgress: return Theme.brand
+        case .pendingSubmission: return Theme.warning
+        case .awaitingApproval: return Theme.style(for: .scheduled).tint // blue
+        case .approved: return Theme.accent
+        case .rejected: return Theme.error
+        case .absence: return Theme.style(for: StaffShiftDisplayStatus.absentReported).tint
+        }
     }
     
     private var activeStaffCount: Int {
@@ -137,7 +153,7 @@ struct ManagerDashboardView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("SURA INVESTMENTS PTY LTD")
+                    Text(repo.appSettings.companyName)
                         .font(.caption.weight(.bold))
                         .foregroundStyle(Theme.brand)
                         .textCase(.uppercase)
@@ -301,16 +317,15 @@ struct ManagerDashboardView: View {
                 VStack(spacing: 0) {
                     ForEach(Array(todaysShifts.enumerated()), id: \.element.id) { index, shift in
                         let staffMember = repo.allUsers.first(where: { $0.id == shift.staffId })
-                        let hasTimesheet = repo.timesheets.contains(where: { $0.shiftId == shift.id })
-                        let inProgress = isInProgress(shift)
+                        let status = lifecycleStatus(for: shift)
 
                         rosterRow(
                             name: staffMember?.fullName ?? "Staff Member",
                             role: shift.department ?? "General",
                             time: "\(shift.rosteredStart) - \(shift.rosteredEnd)",
-                            status: inProgress ? "In Progress" : (hasTimesheet ? "Submitted" : "Scheduled"),
-                            isClockedIn: hasTimesheet,
-                            inProgress: inProgress
+                            status: status.title,
+                            tint: tint(for: status),
+                            inProgress: status == .inProgress
                         )
 
                         if index < todaysShifts.count - 1 {
@@ -327,13 +342,9 @@ struct ManagerDashboardView: View {
     }
     
     private func rosterRow(name: String, role: String, time: String, status: String,
-                           isClockedIn: Bool, inProgress: Bool = false) -> some View {
-        // In-progress (scheduled to be running right now) takes visual
-        // priority: brand highlight + pulsing-style dot. Otherwise green for
-        // a submitted timesheet, grey for merely scheduled.
-        let tint: Color = inProgress ? Theme.brand : (isClockedIn ? Theme.accent : Theme.textTertiary)
-
-        return HStack(spacing: 12) {
+                           tint: Color, inProgress: Bool = false) -> some View {
+        // The in-progress shift takes visual priority: brand bar + tinted row.
+        HStack(spacing: 12) {
             Circle()
                 .fill(tint)
                 .frame(width: 8, height: 8)

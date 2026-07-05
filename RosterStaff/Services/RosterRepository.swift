@@ -510,6 +510,21 @@ final class RosterRepository {
             .setData(["items": FieldValue.arrayUnion([location.asDictionary])], merge: true)
     }
 
+    /// Replace the full saved-locations list (edit/delete from the Account
+    /// tab's Locations manager). Existing shifts keep their stored location
+    /// string — edits only affect future selections.
+    func setLocations(_ locations: [RosterLocation]) async throws {
+        try await db.collection("settings").document("locations")
+            .setData(["items": locations.map { $0.asDictionary }])
+    }
+
+    /// Save company/business details onto settings/app (merged — preserves
+    /// any PWA-managed keys on the same document).
+    func saveCompanyDetails(_ settings: AppSettings) async throws {
+        try await db.collection("settings").document("app")
+            .setData(settings.asDictionary, merge: true)
+    }
+
     /// Add or update a shift in Firestore (calculating scheduledHours dynamically).
     func saveShift(
         id: String?,

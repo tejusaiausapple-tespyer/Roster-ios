@@ -96,6 +96,10 @@
   - GitHub Actions: xcodegen → build → test on PRs (web repo has a CI to copy
     patterns from). pbxproj is gitignored so no drift check needed.
 - [ ] **M11 — Manager Tasks / Tenure / Wage tabs** (NOT STARTED; placeholders)
+  - FUTURE (owner request 2026-07-05): **Payslip feature** — staff-visible
+    payslips rendering the business details from `settings/app` (company
+    name, address, ABN, contact — already captured via Account → Company
+    Details). Slot alongside the Wage tab work.
 - [ ] **M12 — App Store & push** (BLOCKED on paid Apple Developer account;
       checklist in docs/WHEN_DEVELOPER_ACCOUNT_READY.md)
   - ALSO: verify NSCameraUsageDescription in Info.plist (TasksView uses the

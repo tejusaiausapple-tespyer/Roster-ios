@@ -29,6 +29,7 @@ struct ManagerAccountView: View {
             List {
                 photoSection
                 detailsSection
+                businessSection
                 if UIDevice.current.userInterfaceIdiom == .phone {
                     managementSection
                 }
@@ -220,6 +221,21 @@ struct ManagerAccountView: View {
             .foregroundStyle(tint)
             .padding(.horizontal, 9).padding(.vertical, 4)
             .background(Capsule().fill(tint.opacity(0.14)))
+    }
+
+    private var businessSection: some View {
+        Section("Business") {
+            NavigationLink {
+                ManagerCompanyDetailsView()
+            } label: {
+                Label("Company details", systemImage: "building.2")
+            }
+            NavigationLink {
+                ManagerLocationsView()
+            } label: {
+                Label("Locations", systemImage: "mappin.and.ellipse")
+            }
+        }
     }
 
     private var managementSection: some View {

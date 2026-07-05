@@ -184,6 +184,29 @@ final class BusinessRulesTests: XCTestCase {
         XCTAssertTrue(shift.isSubmittable(at: TestSupport.instant("2026-06-02", "20:01")))
     }
 
+    // MARK: - Manager dashboard lifecycle
+
+    func testManagerShiftStatusSchedule() {
+        let shift = TestSupport.shift(date: shiftDay) // 09:00–17:00
+        XCTAssertEqual(BusinessRules.managerShiftStatus(shift: shift, timesheet: nil,
+                                                        at: TestSupport.instant(shiftDay, "08:00")), .scheduled)
+        XCTAssertEqual(BusinessRules.managerShiftStatus(shift: shift, timesheet: nil,
+                                                        at: TestSupport.instant(shiftDay, "12:00")), .inProgress)
+        XCTAssertEqual(BusinessRules.managerShiftStatus(shift: shift, timesheet: nil,
+                                                        at: TestSupport.instant(shiftDay, "17:01")), .pendingSubmission)
+    }
+
+    func testManagerShiftStatusTimesheetWins() {
+        let shift = TestSupport.shift(date: shiftDay)
+        let at = TestSupport.instant(shiftDay, "18:00")
+        XCTAssertEqual(BusinessRules.managerShiftStatus(shift: shift, timesheet: TestSupport.timesheet(status: "pending"), at: at), .awaitingApproval)
+        XCTAssertEqual(BusinessRules.managerShiftStatus(shift: shift, timesheet: TestSupport.timesheet(status: "approved"), at: at), .approved)
+        XCTAssertEqual(BusinessRules.managerShiftStatus(shift: shift, timesheet: TestSupport.timesheet(status: "rejected"), at: at), .rejected)
+        XCTAssertEqual(BusinessRules.managerShiftStatus(shift: shift, timesheet: TestSupport.timesheet(status: "absent_reported"), at: at), .absence)
+        // A draft is not a submission — schedule decides.
+        XCTAssertEqual(BusinessRules.managerShiftStatus(shift: shift, timesheet: TestSupport.timesheet(status: "draft"), at: at), .pendingSubmission)
+    }
+
     // MARK: - Password rules (actual required set: length, uppercase, digit)
 
     func testPasswordErrorsAllMissing() {

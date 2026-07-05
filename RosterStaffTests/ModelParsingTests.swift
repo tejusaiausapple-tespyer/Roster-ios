@@ -139,6 +139,26 @@ final class ModelParsingTests: XCTestCase {
         XCTAssertEqual(message.bodyLines, ["First line", "Second", "Third"])
     }
 
+    // MARK: - AppSettings (company details)
+
+    func testAppSettingsParsingAndRoundTrip() {
+        let settings = AppSettings(data: [
+            "companyName": "Sura Investments Pty Ltd",
+            "businessAddress": "1 Example St, Adelaide SA",
+            "abn": "12345678901",
+        ])
+        XCTAssertEqual(settings.companyName, "Sura Investments Pty Ltd")
+        XCTAssertEqual(settings.abn, "12345678901")
+        XCTAssertEqual(settings.contactPhone, "", "missing fields default empty")
+
+        let restored = AppSettings(data: settings.asDictionary)
+        XCTAssertEqual(restored, settings)
+    }
+
+    func testAppSettingsFallbackName() {
+        XCTAssertEqual(AppSettings(data: [:]).companyName, "Sura Roster")
+    }
+
     // MARK: - RosterLocation
 
     func testLocationCapitalMapping() {
