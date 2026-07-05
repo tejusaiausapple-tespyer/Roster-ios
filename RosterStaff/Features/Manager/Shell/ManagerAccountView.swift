@@ -143,6 +143,14 @@ struct ManagerAccountView: View {
                 Text(user?.fullName ?? "—")
                     .font(.system(size: 24, weight: .bold))
                     .foregroundStyle(Theme.textPrimary)
+
+                if let user {
+                    HStack(spacing: 8) {
+                        tag("Manager", tint: Theme.brand)
+                        tag(user.status.rawValue.capitalized,
+                            tint: user.status == .active ? Theme.accent : Theme.error)
+                    }
+                }
             }
             .frame(maxWidth: .infinity)
             .listRowBackground(Color.clear)
@@ -200,16 +208,6 @@ struct ManagerAccountView: View {
                     }
                 }
                 
-                if let user {
-                    Divider().overlay(Theme.separator)
-                    
-                    HStack(spacing: 8) {
-                        tag("Manager", tint: Theme.brand)
-                        tag(user.status.rawValue.capitalized,
-                            tint: user.status == .active ? Theme.accent : Theme.error)
-                    }
-                    .padding(.top, 2)
-                }
             }
             .padding(.vertical, 4)
         }
