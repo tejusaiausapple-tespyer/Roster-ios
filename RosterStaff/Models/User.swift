@@ -24,6 +24,9 @@ struct AppUser: Identifiable, Equatable {
     var availability: UserAvailability?
     var weeklyAvailability: [String: UserAvailability]
     var hourlyRate: Double?
+    /// Superannuation percentage for this employee (e.g. 12.0), manager-set.
+    /// Used by upcoming payroll calculations.
+    var superRate: Double?
     var profileUpdateRequired: Bool
     /// Set by a manager to prompt the staff member to change their own sign-in
     /// email (staff completes the change via Firebase's verified flow).
@@ -74,6 +77,7 @@ struct AppUser: Identifiable, Equatable {
         }
         self.weeklyAvailability = weekly
         self.hourlyRate = (data["hourlyRate"] as? NSNumber)?.doubleValue
+        self.superRate = (data["superRate"] as? NSNumber)?.doubleValue
         self.profileUpdateRequired = FS.bool(data, "profileUpdateRequired")
         self.emailChangeRequired = FS.bool(data, "emailChangeRequired")
     }

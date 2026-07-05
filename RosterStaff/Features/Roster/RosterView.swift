@@ -72,7 +72,8 @@ struct RosterView: View {
             }
             .refreshable { await repo.refreshFromServer() }
             .sheet(item: $submitShift) { shift in
-                SubmitHoursSheet(shift: shift, existing: repo.timesheet(forShift: shift.id))
+                SubmitHoursSheet(shift: shift, existing: repo.timesheet(forShift: shift.id),
+                                 clock: repo.clockSession)
             }
             .sheet(item: $absentShift) { shift in
                 ReportAbsenceSheet(shift: shift, existing: repo.timesheet(forShift: shift.id))
@@ -295,7 +296,8 @@ struct RosterView: View {
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             if canSubmit {
                 Button { submitShift = shift } label: {
-                    Label(ts?.status == .rejected ? "Resubmit" : "Submit", systemImage: "square.and.pencil")
+                    Label(ts?.status == .rejected ? "Resubmit" : (ts != nil ? "Edit" : "Submit"),
+                          systemImage: "square.and.pencil")
                 }.tint(Theme.brand)
             }
             if canAbsence {

@@ -9,7 +9,7 @@
 **Repo:** https://github.com/tejusaiausapple-tespyer/Roster-ios.git
 **Web/PWA repo (reference):** https://github.com/tejusaiausapple-tespyer/Roster.git
 **Deployed Firestore rules (authoritative):** `docs/reference/firestore.rules.deployed`
-**Test suite status:** 74 passed / 0 failed (last run 2026-07-05, iPhone 17 Pro sim)
+**Test suite status:** 96 passed / 0 failed (last run 2026-07-05, iPhone 17 Pro sim)
 
 ---
 
@@ -59,6 +59,32 @@
         input preserved)
   - [x] repo.loadError rendered as a Banner on the Manager Dashboard
   - [x] roster-published notification on single-shift publish (parity)
+- [ ] **Branch `wages-and-shift-flow`** (owner request 2026-07-05) — ✅ CODE
+      COMPLETE, ⏳ awaiting Sura's device verification (96 tests pass)
+  - [x] Timesheets editable until approved: `BusinessRules.canSubmitHours`
+        now allows pending/draft edits (matches deployed rules); SubmitHours
+        sheet shows "Update hours"; Roster swipe shows "Edit"
+  - [x] Break surfaced when confirming shifts: manager timesheet row shows
+        "Xm break / no break" (detail sheet already did); break is deducted
+        in `calcWorkedHours`
+  - [x] Clock in/out: `Models/ClockSession.swift` + repo session methods +
+        `Features/Home/ClockInCard.swift` (Start Shift → Start/End Break →
+        End Shift → Submit hours). DEVICE-LOCAL by necessity: deployed rules
+        block staff timesheet writes before `submittableAfter`, so the
+        session persists in UserDefaults (survives relaunch) and seeds
+        SubmitHoursSheet (start/end/break, rounded to 5m, clamped 0–90);
+        session cleared on successful submit. No break taken → 0m, submit
+        fine. FUTURE: to show live clock-ins to managers, rules must allow
+        staff `draft` timesheet creates from `shiftStartAt` (owner action).
+  - [x] Wages module: `Models/WageModels.swift` (Xero-AU-style awards w/
+        classifications, earnings lines w/ rate types + super/tax exemption,
+        per-staff profiles) in manager-only `wages` collection; Wage tab UI
+        (`Features/Manager/Wage/ManagerWageView.swift`, also reachable from
+        Account); nothing seeded — managers create awards/lines manually
+  - [x] Earnings-line assignment in Staff tab (`StaffWageAssignmentSheet`) —
+        manager-only, stored in `wages`, never on user docs
+  - [x] Superannuation % per staff: `AppUser.superRate` + editable row in
+        the manager staff detail sheet ("Pay (manager only)" section)
 - [ ] **M6 — Domain robustness** (PARTIALLY DONE via `manager-portal-updates`
       branch, 2026-07-05, per Sura's product answers)
   - [x] Shift editor: seeded locations REMOVED → manager-created locations

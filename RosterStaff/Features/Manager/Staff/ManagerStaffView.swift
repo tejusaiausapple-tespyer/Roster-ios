@@ -258,15 +258,17 @@ struct ManagerStaffDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     let user: AppUser
 
-    private enum Field: Hashable { case name, phone, employment }
+    private enum Field: Hashable { case name, phone, employment, superRate }
 
     @State private var fullName: String
     @State private var phone: String
     @State private var employmentType: EmploymentType
+    @State private var superRateText: String
     @State private var unlocked: Set<Field> = []
     @State private var savingField: Field?
     @State private var emailRequested: Bool
     @State private var showAddressConfirm = false
+    @State private var showWageAssignment = false
     @State private var toast: ToastMessage?
 
     init(user: AppUser) {
@@ -274,6 +276,7 @@ struct ManagerStaffDetailSheet: View {
         _fullName = State(initialValue: user.fullName)
         _phone = State(initialValue: user.phone ?? "")
         _employmentType = State(initialValue: user.employmentType ?? .casual)
+        _superRateText = State(initialValue: user.superRate.map { String(format: "%g", $0) } ?? "")
         _emailRequested = State(initialValue: user.emailChangeRequired)
     }
 
@@ -304,6 +307,29 @@ struct ManagerStaffDetailSheet: View {
                     }
                 }
 
+                // Manager-only pay settings. Earnings-line assignments live in
+                // the `wages` collection (staff can't read it); the super %
+                // sits on the user doc but is never rendered in the staff UI.
+                Section {
+                    superRateRow
+                    Button {
+                        showWageAssignment = true
+                    } label: {
+                        HStack {
+                            Label("Wage assignment", systemImage: "dollarsign.circle")
+                                .foregroundStyle(Theme.brand)
+                            Spacer()
+                            Text(wageAssignmentSummary)
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                    }
+                } header: {
+                    Text("Pay (manager only)")
+                } footer: {
+                    Text("Award, classification and earnings lines are only visible to managers. Set up awards and lines in the Wage tab first.")
+                }
+
                 Section("Record") {
                     infoRow("Status", user.status.rawValue.capitalized)
                     infoRow("Hourly rate", user.hourlyRate.map { String(format: "$%.2f", $0) } ?? "—")
@@ -323,6 +349,9 @@ struct ManagerStaffDetailSheet: View {
                 }
             }
             .toast($toast)
+            .sheet(isPresented: $showWageAssignment) {
+                StaffWageAssignmentSheet(user: user)
+            }
             .confirmationDialog(
                 "Require new address?",
                 isPresented: $showAddressConfirm,
@@ -359,6 +388,45 @@ struct ManagerStaffDetailSheet: View {
                 editButton(field)
             }
         }
+    }
+
+    private var superRateRow: some View {
+        HStack {
+            Text("Superannuation")
+                .font(.subheadline)
+                .foregroundStyle(Theme.textSecondary)
+            Spacer()
+            if unlocked.contains(.superRate) {
+                TextField("12", text: $superRateText)
+                    .multilineTextAlignment(.trailing)
+                    .keyboardType(.decimalPad)
+                    .frame(width: 64)
+                    .foregroundStyle(Theme.textPrimary)
+                Text("%").foregroundStyle(Theme.textSecondary)
+                commitButton(.superRate)
+            } else {
+                Text(superRateText.isEmpty ? "—" : "\(superRateText)%")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                editButton(.superRate)
+            }
+        }
+    }
+
+    private var wageAssignmentSummary: String {
+        guard let profile = repo.staffWageProfile(for: user.id) else { return "Not set" }
+        var parts: [String] = []
+        if let awardId = profile.awardId,
+           let award = repo.wageAwards.first(where: { $0.id == awardId }) {
+            parts.append(award.code.isEmpty ? award.name : award.code)
+            if let level = profile.classificationLevel, !level.isEmpty {
+                parts.append("L\(level)")
+            }
+        }
+        if !profile.earningsLineIds.isEmpty {
+            parts.append("\(profile.earningsLineIds.count) line\(profile.earningsLineIds.count == 1 ? "" : "s")")
+        }
+        return parts.isEmpty ? "Not set" : parts.joined(separator: " · ")
     }
 
     private var employmentRow: some View {
@@ -467,6 +535,14 @@ struct ManagerStaffDetailSheet: View {
             key = "phone"; value = phone.trimmingCharacters(in: .whitespaces)
         case .employment:
             key = "employmentType"; value = employmentType.rawValue
+        case .superRate:
+            let trimmed = superRateText.trimmingCharacters(in: .whitespaces)
+            guard trimmed.isEmpty || Double(trimmed) != nil else {
+                toast = ToastMessage(kind: .error, text: "Super must be a number (e.g. 12).")
+                Haptics.error()
+                return
+            }
+            key = "superRate"; value = Double(trimmed).map { $0 as Any } ?? NSNull()
         }
         savingField = field
         Task {
@@ -516,6 +592,128 @@ struct ManagerStaffDetailSheet: View {
                 dismiss()
             } catch {
                 toast = ToastMessage(kind: .error, text: "Couldn't update. \(error.localizedDescription)")
+                Haptics.error()
+            }
+        }
+    }
+}
+
+// MARK: - Per-staff wage assignment (manager-only)
+
+/// Assign an award, classification level, and earnings lines to a staff
+/// member. Stored in the manager-only `wages` collection, never on the user
+/// doc — staff cannot see any of this.
+struct StaffWageAssignmentSheet: View {
+    @Environment(RosterRepository.self) private var repo
+    @Environment(\.dismiss) private var dismiss
+    let user: AppUser
+
+    @State private var awardId: String = ""
+    @State private var classificationLevel: String = ""
+    @State private var selectedLineIds: Set<String> = []
+    @State private var isSaving = false
+    @State private var toast: ToastMessage?
+    @State private var seeded = false
+
+    private var selectedAward: WageAward? {
+        repo.wageAwards.first { $0.id == awardId }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Award") {
+                    Picker("Wage award", selection: $awardId) {
+                        Text("None").tag("")
+                        ForEach(repo.wageAwards.filter { $0.active || $0.id == awardId }) { award in
+                            Text(award.code.isEmpty ? award.name : "\(award.name) (\(award.code))").tag(award.id)
+                        }
+                    }
+                    if let award = selectedAward, !award.classifications.isEmpty {
+                        Picker("Classification", selection: $classificationLevel) {
+                            Text("None").tag("")
+                            ForEach(award.classifications) { classification in
+                                Text("L\(classification.level) — \(classification.title) ($\(String(format: "%.2f", classification.baseHourlyRate))/h)")
+                                    .tag(classification.level)
+                            }
+                        }
+                    }
+                }
+
+                Section {
+                    if repo.earningsLines.isEmpty {
+                        Text("No earnings lines yet — create them in the Wage tab first.")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textSecondary)
+                    } else {
+                        ForEach(repo.earningsLines.filter { $0.active || selectedLineIds.contains($0.id) }) { line in
+                            Toggle(isOn: Binding(
+                                get: { selectedLineIds.contains(line.id) },
+                                set: { on in
+                                    if on { selectedLineIds.insert(line.id) } else { selectedLineIds.remove(line.id) }
+                                }
+                            )) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(line.name).font(.subheadline)
+                                    Text("\(line.category.label) · \(line.rateSummary)")
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.textSecondary)
+                                }
+                            }
+                            .tint(Theme.brand)
+                        }
+                    }
+                } header: {
+                    Text("Earnings lines")
+                } footer: {
+                    Text("Only managers can see these. They'll drive \(user.firstName)'s payroll calculations in the upcoming Wages/Payslip features.")
+                }
+            }
+            .navigationTitle("Wage Assignment")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if isSaving {
+                        ProgressView()
+                    } else {
+                        Button("Save") { save() }
+                    }
+                }
+            }
+            .toast($toast)
+            .onAppear { seedIfNeeded() }
+        }
+    }
+
+    private func seedIfNeeded() {
+        guard !seeded else { return }
+        seeded = true
+        if let profile = repo.staffWageProfile(for: user.id) {
+            awardId = profile.awardId ?? ""
+            classificationLevel = profile.classificationLevel ?? ""
+            selectedLineIds = Set(profile.earningsLineIds)
+        }
+    }
+
+    private func save() {
+        isSaving = true
+        let profile = StaffWageProfile(
+            staffId: user.id,
+            awardId: awardId.isEmpty ? nil : awardId,
+            classificationLevel: classificationLevel.isEmpty ? nil : classificationLevel,
+            earningsLineIds: Array(selectedLineIds)
+        )
+        Task {
+            defer { isSaving = false }
+            do {
+                try await repo.saveStaffWageProfile(profile)
+                Haptics.success()
+                dismiss()
+            } catch {
+                toast = ToastMessage(kind: .error, text: "Couldn't save. \(error.localizedDescription)")
                 Haptics.error()
             }
         }

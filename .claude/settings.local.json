@@ -8,7 +8,9 @@
       "Bash(git push *)",
       "Bash(git checkout *)",
       "Bash(grep -v \"repo\\\\.taskCompletions\\\\|repo\\\\.appSettings\\\\|\\\\`taskCompletions\\\\` *|\\\\|TaskCompletion\")",
-      "Bash(git commit -m 'docs: accuracy pass — sync all documentation with the implementation *)"
+      "Bash(git commit -m 'docs: accuracy pass — sync all documentation with the implementation *)",
+      "Bash(git merge --no-ff milestone-1-docs -m 'Merge milestone-1-docs: documentation accuracy pass *)",
+      "Bash(git stash *)"
     ]
   }
 }

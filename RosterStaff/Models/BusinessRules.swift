@@ -153,11 +153,14 @@ enum BusinessRules {
         return ts.status == .rejected
     }
 
-    /// Whether staff may submit / resubmit hours for this shift.
+    /// Whether staff may submit / edit / resubmit hours for this shift.
+    /// A submitted (pending) timesheet stays editable until the manager
+    /// approves it — matching the Firestore rules, which permit staff updates
+    /// while the status is pending/rejected/draft.
     static func canSubmitHours(shift: Shift, timesheet: Timesheet?, at now: Date = Date()) -> Bool {
         guard shift.status == .published, shift.isSubmittable(at: now) else { return false }
         guard let ts = timesheet else { return true }
-        return ts.status == .rejected
+        return ts.status == .rejected || ts.status == .pending || ts.status == .draft
     }
 
     // MARK: - Manager dashboard shift lifecycle

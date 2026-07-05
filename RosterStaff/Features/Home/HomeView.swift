@@ -134,8 +134,22 @@ struct HomeView: View {
                     actions: shiftActions(for: shift)
                 )
                 .contextMenu { calendarMenu(shift) }
+                if isClockable(shift) {
+                    ClockInCard(shift: shift) {
+                        router.pendingSubmitShiftId = shift.id
+                        router.select(.roster)
+                    }
+                }
             }
         }
+    }
+
+    /// Clock in/out applies until hours are submitted: no timesheet yet, or
+    /// there's an active/ended session for this shift awaiting submission.
+    private func isClockable(_ shift: Shift) -> Bool {
+        if repo.clockSession?.shiftId == shift.id { return true }
+        guard repo.clockSession == nil else { return false } // busy on another shift
+        return repo.timesheet(forShift: shift.id) == nil
     }
 
     // MARK: Hours

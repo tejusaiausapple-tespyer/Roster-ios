@@ -22,6 +22,15 @@ final class RosterRepository {
     var allUsers: [AppUser] = []
     /// Manager-defined work locations (settings/locations).
     var locations: [RosterLocation] = []
+    // Wages module (manager-only — the `wages` collection is unreadable by
+    // staff under the deployed rules, keeping earnings lines invisible to them)
+    var wageAwards: [WageAward] = []
+    var earningsLines: [EarningsLine] = []
+    var staffWageProfiles: [StaffWageProfile] = []
+
+    /// Live clock-in session for the signed-in staff member (device-local;
+    /// see ClockSession for why this can't be written to Firestore live).
+    var clockSession: ClockSession?
 
     var isLoading = true
     var loadError: String?
@@ -41,6 +50,7 @@ final class RosterRepository {
         guard activeUID != uid else { return }
         stop()
         activeUID = uid
+        loadClockSession(for: uid)
         isLoading = true
         loadError = nil
         pendingFirstSnapshot = ["users", "tasks", "task_completions"]
@@ -159,6 +169,22 @@ final class RosterRepository {
                         self.allUsers = (snap?.documents ?? []).compactMap { AppUser(id: $0.documentID, data: $0.data()) }
                     }
             )
+
+            // 4. Wages module: awards, earnings lines, per-staff assignments —
+            //    one collection, discriminated by `kind`. Manager-only by rules.
+            roleListeners.append(
+                db.collection("wages")
+                    .addSnapshotListener { [weak self] snap, error in
+                        guard let self else { return }
+                        if let error { self.handleError(error, label: "wages"); return }
+                        let docs = snap?.documents ?? []
+                        self.wageAwards = docs.compactMap { WageAward(id: $0.documentID, data: $0.data()) }
+                            .sorted { $0.name < $1.name }
+                        self.earningsLines = docs.compactMap { EarningsLine(id: $0.documentID, data: $0.data()) }
+                            .sorted { $0.name < $1.name }
+                        self.staffWageProfiles = docs.compactMap { StaffWageProfile(id: $0.documentID, data: $0.data()) }
+                    }
+            )
         } else {
             // STAFF LISTENERS (Restricted to own UID):
             
@@ -221,9 +247,68 @@ final class RosterRepository {
         tasks = []
         taskCompletions = []
         allUsers = []
+        wageAwards = []
+        earningsLines = []
+        staffWageProfiles = []
         roleListenersInitialized = false
         currentRole = nil
+        clockSession = nil // persisted copy stays on disk for re-sign-in
         isLoading = true
+    }
+
+    // MARK: - Clock in/out (device-local session)
+
+    private static let clockSessionKeyPrefix = "clockSession."
+
+    private func clockSessionKey(for uid: String) -> String {
+        Self.clockSessionKeyPrefix + uid
+    }
+
+    private func loadClockSession(for uid: String) {
+        guard let data = UserDefaults.standard.data(forKey: clockSessionKey(for: uid)),
+              let session = try? JSONDecoder().decode(ClockSession.self, from: data),
+              session.staffId == uid else {
+            clockSession = nil
+            return
+        }
+        clockSession = session
+    }
+
+    private func persistClockSession() {
+        guard let uid = activeUID else { return }
+        let key = clockSessionKey(for: uid)
+        if let session = clockSession, let data = try? JSONEncoder().encode(session) {
+            UserDefaults.standard.set(data, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+
+    func startClockSession(shiftId: String) {
+        guard let uid = activeUID, clockSession == nil else { return }
+        clockSession = ClockSession(shiftId: shiftId, staffId: uid, clockInAt: Date())
+        persistClockSession()
+    }
+
+    func startClockBreak() {
+        clockSession?.startBreak()
+        persistClockSession()
+    }
+
+    func endClockBreak() {
+        clockSession?.endBreak()
+        persistClockSession()
+    }
+
+    func endClockSession() {
+        clockSession?.clockOut()
+        persistClockSession()
+    }
+
+    /// Discard the session (after its data lands in a timesheet, or on cancel).
+    func clearClockSession() {
+        clockSession = nil
+        persistClockSession()
     }
 
     private func markArrived(_ label: String) {
@@ -523,6 +608,38 @@ final class RosterRepository {
     func saveCompanyDetails(_ settings: AppSettings) async throws {
         try await db.collection("settings").document("app")
             .setData(settings.asDictionary, merge: true)
+    }
+
+    // MARK: - Wages module (manager-only collection)
+
+    /// Create/update a wage award. Pass nil id to create.
+    func saveWageAward(_ award: WageAward) async throws {
+        let ref = award.id.isEmpty
+            ? db.collection("wages").document()
+            : db.collection("wages").document(award.id)
+        try await ref.setData(award.asDictionary)
+    }
+
+    /// Create/update an earnings line. Pass empty id to create.
+    func saveEarningsLine(_ line: EarningsLine) async throws {
+        let ref = line.id.isEmpty
+            ? db.collection("wages").document()
+            : db.collection("wages").document(line.id)
+        try await ref.setData(line.asDictionary)
+    }
+
+    /// Save a staff member's wage assignment (award/classification/lines).
+    func saveStaffWageProfile(_ profile: StaffWageProfile) async throws {
+        try await db.collection("wages").document(profile.id).setData(profile.asDictionary)
+    }
+
+    /// Delete any wages-collection document (award or earnings line).
+    func deleteWageDocument(id: String) async throws {
+        try await db.collection("wages").document(id).delete()
+    }
+
+    func staffWageProfile(for staffId: String) -> StaffWageProfile? {
+        staffWageProfiles.first { $0.staffId == staffId }
     }
 
     /// Add or update a shift in Firestore (calculating scheduledHours dynamically).

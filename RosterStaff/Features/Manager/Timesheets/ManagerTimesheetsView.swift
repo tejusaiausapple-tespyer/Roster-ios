@@ -370,6 +370,11 @@ struct ManagerTimesheetsView: View {
                     Text("worked")
                         .font(.caption)
                         .foregroundStyle(Theme.textSecondary)
+                    // Break is already deducted from workedHours — surface it
+                    // so the manager can confirm the deduction at a glance.
+                    Text(ts.actualBreakMinutes > 0 ? "· \(ts.actualBreakMinutes)m break" : "· no break")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textTertiary)
                     if mismatch {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.caption2)

@@ -149,10 +149,13 @@ final class BusinessRulesTests: XCTestCase {
         // Status gate: drafts never submittable
         XCTAssertFalse(BusinessRules.canSubmitHours(shift: draft, timesheet: nil, at: afterShiftEnd))
 
-        // Timesheet gate: only rejected allows resubmission
+        // Timesheet gate: editable until approved (pending/rejected/draft),
+        // locked once approved or absence-confirmed.
         XCTAssertTrue(BusinessRules.canSubmitHours(shift: published, timesheet: TestSupport.timesheet(status: "rejected"), at: afterShiftEnd))
-        XCTAssertFalse(BusinessRules.canSubmitHours(shift: published, timesheet: TestSupport.timesheet(status: "pending"), at: afterShiftEnd))
+        XCTAssertTrue(BusinessRules.canSubmitHours(shift: published, timesheet: TestSupport.timesheet(status: "pending"), at: afterShiftEnd),
+                      "submitted hours stay editable until approved")
         XCTAssertFalse(BusinessRules.canSubmitHours(shift: published, timesheet: TestSupport.timesheet(status: "approved"), at: afterShiftEnd))
+        XCTAssertFalse(BusinessRules.canSubmitHours(shift: published, timesheet: TestSupport.timesheet(status: "absent"), at: afterShiftEnd))
     }
 
     func testCanReportAbsenceGates() {

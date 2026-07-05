@@ -253,6 +253,11 @@ struct ManagerAccountView: View {
             } label: {
                 Label("Reports", systemImage: "chart.bar")
             }
+            NavigationLink {
+                ManagerWageView(embedInNavigationStack: false)
+            } label: {
+                Label("Wage", systemImage: "dollarsign.circle")
+            }
         }
     }
 

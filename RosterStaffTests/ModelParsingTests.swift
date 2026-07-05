@@ -186,6 +186,48 @@ final class ModelParsingTests: XCTestCase {
         XCTAssertNil(RosterLocation(dict: ["state": "SA"]))
     }
 
+    // MARK: - Wages module
+
+    func testWageAwardRoundTripAndKindGuard() {
+        let award = WageAward(id: "a1", name: "General Retail Industry Award",
+                              code: "MA000004", industry: "Retail",
+                              classifications: [AwardClassification(level: "2", title: "Retail Employee Level 2", baseHourlyRate: 26.18)])
+        let restored = WageAward(id: "a1", data: award.asDictionary)
+        XCTAssertEqual(restored, award)
+        XCTAssertNil(EarningsLine(id: "a1", data: award.asDictionary),
+                     "kind discriminator prevents cross-parsing")
+    }
+
+    func testEarningsLineRoundTripAndSummary() {
+        let overtime = EarningsLine(id: "e1", name: "Overtime 1.5x",
+                                    category: .overtime, rateType: .multipleOfOrdinary, multiplier: 1.5)
+        XCTAssertEqual(EarningsLine(id: "e1", data: overtime.asDictionary), overtime)
+        XCTAssertEqual(overtime.rateSummary, "1.5× ordinary")
+
+        let kmAllowance = EarningsLine(id: "e2", name: "Vehicle allowance",
+                                       category: .allowance, rateType: .ratePerUnit,
+                                       fixedRate: 0.96, unitName: "km", exemptFromSuper: true)
+        XCTAssertEqual(kmAllowance.rateSummary, "$0.96/km")
+        XCTAssertEqual(EarningsLine(id: "e2", data: kmAllowance.asDictionary), kmAllowance)
+    }
+
+    func testStaffWageProfileRoundTrip() {
+        let profile = StaffWageProfile(staffId: "u1", awardId: "a1",
+                                       classificationLevel: "2", earningsLineIds: ["e1", "e2"])
+        XCTAssertEqual(profile.id, "staff_u1")
+        let restored = StaffWageProfile(id: profile.id, data: profile.asDictionary)
+        XCTAssertEqual(restored, profile)
+
+        let bare = StaffWageProfile(staffId: "u2")
+        let restoredBare = StaffWageProfile(id: bare.id, data: bare.asDictionary)
+        XCTAssertEqual(restoredBare?.awardId, nil)
+    }
+
+    func testUserSuperRateParsing() {
+        XCTAssertEqual(TestSupport.user(extra: ["superRate": 12.0]).superRate, 12.0)
+        XCTAssertNil(TestSupport.user().superRate)
+    }
+
     // MARK: - Availability round-trip
 
     func testDayAvailabilityDictionaryRoundTrip() {
