@@ -106,12 +106,12 @@
         `availability-week-lock` in ~/Desktop/Roster-old — Sura must deploy
         the Worker + PWA for enforcement to go live). PWA got the same
         publish modal, toolbar lock pill, and staff-page lockout.
-  - [x] UX (2026-07-05): iPad manager sidebar rebuilt — branded company
-        header, grouped sections (Scheduling/People/Operations/Settings,
-        `ManagerSidebarSection`), tinted icon chips w/ fill-on-select,
-        profile footer → Account. PWA sidebar mirrors the same grouping.
-        Also fixed: "Approved on" raw ISO string (M7 item),
-        TaskCompletionDetailSheet wrong "Completed By" (M7 item).
+  - [x] UX (2026-07-05): iPad sidebar — Sura preferred the ORIGINAL plain
+        list, so the grouped/branded redesign was reverted (both platforms);
+        kept: profile footer pinned at the sidebar bottom that opens the
+        Account tab (highlighted when selected). Also fixed: "Approved on"
+        raw ISO string (M7 item), TaskCompletionDetailSheet wrong
+        "Completed By" (M7 item).
 - [ ] **M6 — Domain robustness** (PARTIALLY DONE via `manager-portal-updates`
       branch, 2026-07-05, per Sura's product answers)
   - [x] Shift editor: seeded locations REMOVED → manager-created locations
