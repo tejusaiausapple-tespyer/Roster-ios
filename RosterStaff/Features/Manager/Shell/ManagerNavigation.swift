@@ -44,29 +44,3 @@ enum ManagerTab: String, CaseIterable, Identifiable {
         }
     }
 }
-
-/// Sidebar grouping for the iPad/macOS split view — mirrors the PWA
-/// sidebar's order while giving the ten tabs scannable sections.
-enum ManagerSidebarSection: CaseIterable {
-    case overview, scheduling, people, operations, settings
-
-    var title: String? {
-        switch self {
-        case .overview: return nil
-        case .scheduling: return "Scheduling"
-        case .people: return "People"
-        case .operations: return "Operations"
-        case .settings: return "Settings"
-        }
-    }
-
-    var tabs: [ManagerTab] {
-        switch self {
-        case .overview: return [.dashboard]
-        case .scheduling: return [.roster, .timesheets, .availability]
-        case .people: return [.staff, .tenure]
-        case .operations: return [.tasks, .reports, .wage]
-        case .settings: return [.account]
-        }
-    }
-}
