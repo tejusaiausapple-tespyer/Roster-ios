@@ -20,6 +20,8 @@ final class RosterRepository {
     var tasks: [RosterTask] = []
     var taskCompletions: [TaskCompletion] = []
     var allUsers: [AppUser] = []
+    /// Manager-defined work locations (settings/locations).
+    var locations: [RosterLocation] = []
 
     var isLoading = true
     var loadError: String?
@@ -89,6 +91,17 @@ final class RosterRepository {
             db.collection("settings").document("app").addSnapshotListener { [weak self] snap, _ in
                 guard let self else { return }
                 if let data = snap?.data() { self.appSettings = AppSettings(data: data) }
+            }
+        )
+
+        // settings/locations — manager-defined work locations
+        listeners.append(
+            db.collection("settings").document("locations").addSnapshotListener { [weak self] snap, _ in
+                guard let self else { return }
+                let items = snap?.data()?["items"] as? [[String: Any]] ?? []
+                self.locations = items
+                    .compactMap { RosterLocation(dict: $0) }
+                    .sorted { $0.displayName < $1.displayName }
             }
         )
     }
@@ -201,6 +214,7 @@ final class RosterRepository {
         roleListeners.removeAll()
         activeUID = nil
         currentUser = nil
+        locations = []
         shifts = []
         timesheets = []
         messages = []
@@ -487,6 +501,13 @@ final class RosterRepository {
         guard let image = UIImage(data: data) else { return nil }
         TaskPhotoCache.save(image: image, taskId: taskId, date: date)
         return image
+    }
+
+    /// Save a manager-defined work location (arrayUnion — idempotent for
+    /// identical entries). Managers only; the settings write rule enforces it.
+    func addLocation(_ location: RosterLocation) async throws {
+        try await db.collection("settings").document("locations")
+            .setData(["items": FieldValue.arrayUnion([location.asDictionary])], merge: true)
     }
 
     /// Add or update a shift in Firestore (calculating scheduledHours dynamically).

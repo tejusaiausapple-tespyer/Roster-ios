@@ -139,6 +139,33 @@ final class ModelParsingTests: XCTestCase {
         XCTAssertEqual(message.bodyLines, ["First line", "Second", "Third"])
     }
 
+    // MARK: - RosterLocation
+
+    func testLocationCapitalMapping() {
+        XCTAssertEqual(RosterLocation.capital(for: "SA"), "Adelaide")
+        XCTAssertEqual(RosterLocation.capital(for: "NSW"), "Sydney")
+        XCTAssertEqual(RosterLocation.capital(for: "ACT"), "Canberra")
+        XCTAssertEqual(RosterLocation.capital(for: "??"), "")
+        XCTAssertEqual(RosterLocation.states.count, 8)
+    }
+
+    func testLocationAutoCityAndRoundTrip() {
+        let loc = RosterLocation(suburb: "Norwood", state: "SA")
+        XCTAssertEqual(loc.city, "Adelaide", "capital auto-derived from state")
+        XCTAssertEqual(loc.displayName, "Norwood, SA")
+
+        let restored = RosterLocation(dict: loc.asDictionary)
+        XCTAssertEqual(restored, loc)
+
+        let custom = RosterLocation(suburb: "Whyalla", state: "SA", city: "Whyalla")
+        XCTAssertEqual(custom.city, "Whyalla", "explicit city overrides the capital")
+    }
+
+    func testLocationParsingRejectsIncomplete() {
+        XCTAssertNil(RosterLocation(dict: ["suburb": "Norwood"]))
+        XCTAssertNil(RosterLocation(dict: ["state": "SA"]))
+    }
+
     // MARK: - Availability round-trip
 
     func testDayAvailabilityDictionaryRoundTrip() {

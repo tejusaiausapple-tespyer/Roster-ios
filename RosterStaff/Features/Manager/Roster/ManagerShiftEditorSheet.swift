@@ -7,22 +7,51 @@ struct ManagerShiftEditorSheet: View {
     let shift: Shift?
     let defaultDateKey: String
     
+    /// Roles offered in the dropdown (replaces the old free-text field).
+    static let roleOptions = ["Console Operator", "Junior Attendee"]
+
     @State private var selectedStaffId: String = ""
     @State private var date: Date = Date()
     @State private var startDateTime: Date = Date()
     @State private var endDateTime: Date = Date()
-    @State private var breakMinutes: Int = 30
-    @State private var location: String = "Melbourne HQ"
-    @State private var department: String = "Sales"
+    @State private var breakMinutes: Int = 0 // default: No break
+    @State private var location: String = ""
+    @State private var department: String = ManagerShiftEditorSheet.roleOptions[0]
     @State private var notes: String = ""
     @State private var isPublished: Bool = true
-    
+
+    // Inline "add location" form state
+    @State private var showAddLocation = false
+    @State private var newSuburb: String = ""
+    @State private var newState: String = "SA"
+    @State private var newCity: String = RosterLocation.capital(for: "SA")
+    @State private var isSavingLocation = false
+
     @State private var isSaving = false
     @State private var errorMessage: String? = nil
     @State private var showDeleteConfirm = false
-    
+
     private var staffMembers: [AppUser] {
         repo.allUsers.filter { $0.role == .staff }
+    }
+
+    /// Saved locations plus the shift's current value when it isn't in the
+    /// saved list (so editing an old shift never silently changes it).
+    private var locationOptions: [String] {
+        var options = repo.locations.map { $0.displayName }
+        if !location.isEmpty, !options.contains(location) {
+            options.insert(location, at: 0)
+        }
+        return options
+    }
+
+    /// Role options plus the shift's existing value for legacy free-text data.
+    private var roleOptions: [String] {
+        var options = Self.roleOptions
+        if !department.isEmpty, !options.contains(department) {
+            options.insert(department, at: 0)
+        }
+        return options
     }
     
     init(shift: Shift? = nil, defaultDateKey: String) {
@@ -56,13 +85,63 @@ struct ManagerShiftEditorSheet: View {
                         Text("45 minutes").tag(45)
                         Text("60 minutes").tag(60)
                     }
-                    
-                    TextField("Role / Department", text: $department)
-                    
-                    Picker("Location", selection: $location) {
-                        Text("Melbourne HQ").tag("Melbourne HQ")
-                        Text("Sydney HQ").tag("Sydney HQ")
-                        Text("Brisbane Branch").tag("Brisbane Branch")
+
+                    Picker("Role", selection: $department) {
+                        ForEach(roleOptions, id: \.self) { role in
+                            Text(role).tag(role)
+                        }
+                    }
+                }
+
+                Section("Location") {
+                    if locationOptions.isEmpty {
+                        Text("No locations yet — add one below.")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textSecondary)
+                    } else {
+                        Picker("Location", selection: $location) {
+                            ForEach(locationOptions, id: \.self) { option in
+                                Text(option).tag(option)
+                            }
+                        }
+                    }
+
+                    if showAddLocation {
+                        TextField("Suburb", text: $newSuburb)
+                            .textInputAutocapitalization(.words)
+                        Picker("State", selection: $newState) {
+                            ForEach(RosterLocation.states, id: \.self) { state in
+                                Text(state).tag(state)
+                            }
+                        }
+                        .onChange(of: newState) { _, state in
+                            newCity = RosterLocation.capital(for: state)
+                        }
+                        TextField("City", text: $newCity)
+                            .textInputAutocapitalization(.words)
+                        HStack {
+                            Button("Cancel", role: .cancel) {
+                                withAnimation { showAddLocation = false }
+                            }
+                            .foregroundStyle(Theme.textSecondary)
+                            Spacer()
+                            Button {
+                                saveNewLocation()
+                            } label: {
+                                if isSavingLocation {
+                                    ProgressView()
+                                } else {
+                                    Text("Save Location").fontWeight(.semibold)
+                                }
+                            }
+                            .disabled(newSuburb.trimmingCharacters(in: .whitespaces).isEmpty || isSavingLocation)
+                        }
+                    } else {
+                        Button {
+                            withAnimation { showAddLocation = true }
+                        } label: {
+                            Label("Add new location", systemImage: "plus.circle")
+                        }
                     }
                 }
                 
@@ -132,8 +211,8 @@ struct ManagerShiftEditorSheet: View {
             startDateTime = BusinessRules.shiftStartDateTime(date: shift.date, time: shift.rosteredStart)
             endDateTime = BusinessRules.shiftEndDateTime(date: shift.date, start: shift.rosteredStart, end: shift.rosteredEnd)
             breakMinutes = shift.breakMinutes
-            location = shift.location ?? "Melbourne HQ"
-            department = shift.department ?? "Sales"
+            location = shift.location ?? ""
+            department = (shift.department?.isEmpty == false) ? shift.department! : Self.roleOptions[0]
             notes = shift.notes ?? ""
             isPublished = shift.status == .published
         } else {
@@ -152,6 +231,30 @@ struct ManagerShiftEditorSheet: View {
             
             if let firstStaff = staffMembers.first {
                 selectedStaffId = firstStaff.id
+            }
+            // Preselect the first saved location, if any (no seeded data).
+            location = repo.locations.first?.displayName ?? ""
+        }
+    }
+
+    private func saveNewLocation() {
+        let suburb = newSuburb.trimmingCharacters(in: .whitespaces)
+        guard !suburb.isEmpty else { return }
+        let city = newCity.trimmingCharacters(in: .whitespaces)
+        let newLocation = RosterLocation(suburb: suburb, state: newState,
+                                         city: city.isEmpty ? nil : city)
+        isSavingLocation = true
+        Task {
+            defer { isSavingLocation = false }
+            do {
+                try await repo.addLocation(newLocation)
+                location = newLocation.displayName
+                newSuburb = ""
+                withAnimation { showAddLocation = false }
+                Haptics.success()
+            } catch {
+                errorMessage = "Couldn't save location. \(error.localizedDescription)"
+                Haptics.error()
             }
         }
     }

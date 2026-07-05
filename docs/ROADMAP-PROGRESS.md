@@ -52,21 +52,34 @@
   - Render `repo.loadError` somewhere for managers (Banner on Dashboard)
   - Also: send `roster-published` on single-shift publish (publishSingleShift
     in ManagerRosterView) — parity gap noted in M4
-- [ ] **M6 — Domain robustness** (NOT STARTED)
-  - Staff filters by `fullName` → filter by staff id (ManagerRosterView,
-    ManagerTimesheetsView)
-  - Centralize super rate (11.25% — CHECK with Sura: AU SG is 12% from
-    2025-07-01) and default hourly rate ($25) in BusinessRules/AppSettings
-  - Shift editor hardcoded locations ("Melbourne HQ" etc.) + dept "Sales" —
-    ASK Sura what they should be
-  - Fix stale bundle-id string in SetupRequiredView; remove unused
-    ManagerBlockedView (ask first); run `xcodegen generate` after file removal
-- [ ] **M7 — UI/UX correctness** (NOT STARTED)
-  - Dashboard "Clocked In" → "Submitted"; Dashboard/Tasks date formatters →
-    RosterCalendar/RosterFormat (currently device-local TZ)
-  - Wire Dashboard Quick Actions (New Shift/Staff Directory; keep one-sheet-
-    per-view rule); TaskCompletionDetailSheet shows wrong "Completed By"
-    (uses current user, should resolve `completedBy`)
+- [ ] **M6 — Domain robustness** (PARTIALLY DONE via `manager-portal-updates`
+      branch, 2026-07-05, per Sura's product answers)
+  - [x] Shift editor: seeded locations REMOVED → manager-created locations
+        (suburb + AU state dropdown + auto capital city), stored on
+        `settings/locations` (`Models/RosterLocation.swift`, repo listener +
+        `addLocation`)
+  - [x] Role free-text → dropdown: "Console Operator" / "Junior Attendee"
+        (legacy values still shown when editing old shifts)
+  - [x] Default break = No break (0 min, was 30)
+  - [ ] Staff filters by `fullName` → filter by staff id (ManagerRosterView,
+        ManagerTimesheetsView)
+  - [ ] Centralize super rate (11.25% — CHECK with Sura: AU SG is 12% from
+        2025-07-01) and default hourly rate ($25) in BusinessRules/AppSettings
+  - [ ] Fix stale bundle-id string in SetupRequiredView; remove unused
+        ManagerBlockedView (ask first); run `xcodegen generate` after removal
+- [ ] **M7 — UI/UX correctness** (PARTIALLY DONE via `manager-portal-updates`)
+  - [x] Dashboard Today's Roster: chronological by start time; in-progress
+        shift highlighted (brand bar/pill; placeholder until Staff Portal
+        "Start Shift" tracking exists); "Clocked In" → "Submitted"
+  - [x] Dashboard Quick Actions wired: New Shift → editor sheet, Staff
+        Directory → staff view, New Task → placeholder
+  - [x] Roster agenda: selected day snaps into the displayed week, so Add
+        Shift defaults to the viewed week's first day (or today if current
+        week), and a tapped day is respected
+  - [ ] Dashboard/Tasks date formatters → RosterCalendar/RosterFormat
+        (currently device-local TZ)
+  - [ ] TaskCompletionDetailSheet shows wrong "Completed By"
+        (uses current user, should resolve `completedBy`)
   - ManagerTimesheetDetailSheet "Approved on" prints raw ISO string
   - TasksView week-strip dots mark any staff's completions
   - Shift editor default times use Calendar.current → RosterCalendar

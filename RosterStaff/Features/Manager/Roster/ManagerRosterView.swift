@@ -232,6 +232,16 @@ struct ManagerRosterView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .background(Theme.background.ignoresSafeArea())
+            // Keep the selected day inside the week being viewed: today when
+            // viewing the current week, otherwise that week's first day. This
+            // makes "Add Shift" default to the displayed week rather than
+            // today's date after navigating weeks (a specifically tapped day
+            // in the new week is respected, since tapping sets selectedDayKey).
+            .onChange(of: weekOffset) { _, _ in
+                guard !weekKeys.contains(selectedDayKey) else { return }
+                let today = RosterCalendar.todayKey()
+                selectedDayKey = weekKeys.contains(today) ? today : (weekKeys.first ?? today)
+            }
             .navigationTitle("Roster Planner")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

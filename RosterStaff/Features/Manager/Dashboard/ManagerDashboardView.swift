@@ -3,7 +3,9 @@ import FirebaseAuth
 
 struct ManagerDashboardView: View {
     @Environment(RosterRepository.self) private var repo
-    
+
+    @State private var showNewShiftEditor = false
+
     private var todayKey: String {
         RosterCalendar.todayKey()
     }
@@ -23,7 +25,16 @@ struct ManagerDashboardView: View {
     // MARK: - Computed Properties (Live Data)
     
     private var todaysShifts: [Shift] {
-        repo.shifts.filter { $0.date == todayKey }
+        repo.shifts
+            .filter { $0.date == todayKey }
+            .sorted { $0.rosteredStart < $1.rosteredStart }
+    }
+
+    /// Scheduled to be running right now (start ≤ now < end, Adelaide time).
+    /// Placeholder until the Staff Portal gains a "Start Shift" action that
+    /// records actual start times.
+    private func isInProgress(_ shift: Shift, at now: Date = Date()) -> Bool {
+        now >= shift.startDateTime && now < shift.endDateTime
     }
     
     private var activeStaffCount: Int {
@@ -113,6 +124,9 @@ struct ManagerDashboardView: View {
                 ToolbarItem(placement: .principal) {
                     ScreenTitlePill(title: "Dashboard", icon: "square.grid.2x2.fill")
                 }
+            }
+            .sheet(isPresented: $showNewShiftEditor) {
+                ManagerShiftEditorSheet(defaultDateKey: todayKey)
             }
         }
     }
@@ -223,32 +237,48 @@ struct ManagerDashboardView: View {
                 .foregroundStyle(Theme.textPrimary)
             
             HStack(spacing: 12) {
-                actionButton(title: "New Shift", icon: "calendar.badge.plus", color: Theme.brand)
-                actionButton(title: "New Task", icon: "checkmark.circle.badge.questionmark", color: Theme.accent)
-                actionButton(title: "Staff Directory", icon: "person.2.fill", color: Theme.textSecondary)
+                actionButton(title: "New Shift", icon: "calendar.badge.plus", color: Theme.brand) {
+                    showNewShiftEditor = true
+                }
+                NavigationLink {
+                    ManagerPlaceholderView(tab: .tasks)
+                } label: {
+                    actionLabel(title: "New Task", icon: "checkmark.circle.badge.questionmark", color: Theme.accent)
+                }
+                .buttonStyle(.plain)
+                NavigationLink {
+                    ManagerStaffView(embedInNavigationStack: false)
+                } label: {
+                    actionLabel(title: "Staff Directory", icon: "person.2.fill", color: Theme.textSecondary)
+                }
+                .buttonStyle(.plain)
             }
         }
     }
-    
-    private func actionButton(title: String, icon: String, color: Color) -> some View {
-        Button {} label: {
-            VStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.title3)
-                    .foregroundStyle(color)
-                Text(title)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .multilineTextAlignment(.center)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous)
-                    .fill(Theme.card)
-            )
+
+    private func actionButton(title: String, icon: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            actionLabel(title: title, icon: icon, color: color)
         }
         .buttonStyle(.plain)
+    }
+
+    private func actionLabel(title: String, icon: String, color: Color) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.title3)
+                .foregroundStyle(color)
+            Text(title)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous)
+                .fill(Theme.card)
+        )
     }
     
     private var activeRosterSection: some View {
@@ -272,15 +302,17 @@ struct ManagerDashboardView: View {
                     ForEach(Array(todaysShifts.enumerated()), id: \.element.id) { index, shift in
                         let staffMember = repo.allUsers.first(where: { $0.id == shift.staffId })
                         let hasTimesheet = repo.timesheets.contains(where: { $0.shiftId == shift.id })
-                        
+                        let inProgress = isInProgress(shift)
+
                         rosterRow(
                             name: staffMember?.fullName ?? "Staff Member",
                             role: shift.department ?? "General",
                             time: "\(shift.rosteredStart) - \(shift.rosteredEnd)",
-                            status: hasTimesheet ? "Clocked In" : "Scheduled",
-                            isClockedIn: hasTimesheet
+                            status: inProgress ? "In Progress" : (hasTimesheet ? "Submitted" : "Scheduled"),
+                            isClockedIn: hasTimesheet,
+                            inProgress: inProgress
                         )
-                        
+
                         if index < todaysShifts.count - 1 {
                             Divider().overlay(Theme.separator)
                         }
@@ -294,30 +326,42 @@ struct ManagerDashboardView: View {
         }
     }
     
-    private func rosterRow(name: String, role: String, time: String, status: String, isClockedIn: Bool) -> some View {
-        HStack(spacing: 12) {
+    private func rosterRow(name: String, role: String, time: String, status: String,
+                           isClockedIn: Bool, inProgress: Bool = false) -> some View {
+        // In-progress (scheduled to be running right now) takes visual
+        // priority: brand highlight + pulsing-style dot. Otherwise green for
+        // a submitted timesheet, grey for merely scheduled.
+        let tint: Color = inProgress ? Theme.brand : (isClockedIn ? Theme.accent : Theme.textTertiary)
+
+        return HStack(spacing: 12) {
             Circle()
-                .fill(isClockedIn ? Theme.accent : Theme.textTertiary)
+                .fill(tint)
                 .frame(width: 8, height: 8)
-            
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.subheadline.weight(inProgress ? .bold : .semibold))
                     .foregroundStyle(Theme.textPrimary)
                 Text("\(role) • \(time)")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
             }
-            
+
             Spacer()
-            
+
             Text(status)
                 .font(.caption2.weight(.bold))
-                .foregroundStyle(isClockedIn ? Theme.accent : Theme.textTertiary)
+                .foregroundStyle(tint)
                 .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(Capsule().fill((isClockedIn ? Theme.accent : Theme.textTertiary).opacity(0.12)))
+                .background(Capsule().fill(tint.opacity(0.12)))
         }
         .padding(14)
+        .background(inProgress ? Theme.brand.opacity(0.08) : Color.clear)
+        .overlay(alignment: .leading) {
+            if inProgress {
+                Rectangle().fill(Theme.brand).frame(width: 3)
+            }
+        }
     }
     
     private var recentTasksSection: some View {

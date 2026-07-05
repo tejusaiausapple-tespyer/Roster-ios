@@ -125,6 +125,7 @@ RosterStaff/
 | `RosterFormat.swift` | Formatting helpers for dates, times, hours display |
 | `FirestoreValue.swift` | `FS` enum — safe Firestore document field extraction |
 | `AppSettings.swift` | `AppSettings` — company name from Firestore |
+| `RosterLocation.swift` | `RosterLocation` — manager-defined work location (suburb + AU state + auto capital city). Stored as an array on `settings/locations`; `shifts.location` stays a plain string (`"Suburb, STATE"`) for PWA compatibility |
 
 ### Services (all in `Services/`)
 | File | Purpose |
