@@ -176,11 +176,14 @@ final class RosterRepository {
                     }
             )
             
-            // 3. Staff user directory (to resolve names/avatars)
+            // 3. Staff user directory (names/avatars + weekly availability).
+            //    Errors must surface: a silent failure here leaves the manager
+            //    looking at stale staff availability with no indication.
             roleListeners.append(
                 db.collection("users")
-                    .addSnapshotListener { [weak self] snap, _ in
+                    .addSnapshotListener { [weak self] snap, error in
                         guard let self else { return }
+                        if let error { self.handleError(error, label: "users"); return }
                         self.allUsers = (snap?.documents ?? []).compactMap { AppUser(id: $0.documentID, data: $0.data()) }
                     }
             )

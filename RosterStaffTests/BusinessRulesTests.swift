@@ -105,6 +105,21 @@ final class BusinessRulesTests: XCTestCase {
         XCTAssertFalse(BusinessRules.isWeekLockedForStaff(weekStartKey: "2026-06-08", at: now), "next week editable")
     }
 
+    /// The staff Availability screen writes weekly availability under
+    /// `dayFormatter.string(from: monday)` while the manager Availability
+    /// screen reads it back under `weekStartKey(monday)`. These must be the
+    /// same key for every navigable week offset or manager and staff silently
+    /// disagree about which week an entry belongs to.
+    func testStaffWriteKeyMatchesManagerReadKey() {
+        let now = TestSupport.instant("2026-07-05", "12:00") // Sunday
+        for offset in -4...12 {
+            let monday = RosterCalendar.addWeeks(offset, to: RosterCalendar.weekStart(now))
+            let staffWriteKey = RosterCalendar.dayFormatter.string(from: monday)
+            let managerReadKey = RosterCalendar.weekStartKey(monday)
+            XCTAssertEqual(staffWriteKey, managerReadKey, "offset \(offset)")
+        }
+    }
+
     func testManagerAvailabilityWeekLock() {
         let now = TestSupport.instant("2026-06-03", "12:00") // Wed of week 2026-06-01
         let locked: Set<String> = ["2026-06-08"]
