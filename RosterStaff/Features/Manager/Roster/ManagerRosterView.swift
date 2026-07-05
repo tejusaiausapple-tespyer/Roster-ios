@@ -23,6 +23,8 @@ struct ManagerRosterView: View {
     /// entire week's shifts.
     @State private var isCopyingWeek = false
     @State private var showPublishDialog = false
+    /// Single shift awaiting the Publish Only / Publish & Lock choice.
+    @State private var pendingPublishShift: Shift? = nil
 
     /// A single sheet source of truth. Using two separate `.sheet` modifiers on
     /// one view causes SwiftUI to present unreliably (slow / sometimes never,
@@ -306,6 +308,22 @@ struct ManagerRosterView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("Publish \(weeklyDraftsCount) draft shift\(weeklyDraftsCount == 1 ? "" : "s")? \"Publish & Lock\" also freezes staff availability for this week so the published roster can't drift out of sync. You can unlock later from the ⋯ menu.")
+            }
+            .confirmationDialog(
+                "Publish Shift",
+                isPresented: Binding(
+                    get: { pendingPublishShift != nil },
+                    set: { if !$0 { pendingPublishShift = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                if let shift = pendingPublishShift {
+                    Button("Publish Only") { publishSingleShift(shift, lockWeek: false) }
+                    Button("Publish & Lock Availability") { publishSingleShift(shift, lockWeek: true) }
+                }
+                Button("Cancel", role: .cancel) { pendingPublishShift = nil }
+            } message: {
+                Text("\"Publish & Lock\" also freezes staff availability for that shift's week. You can unlock later from the ⋯ menu.")
             }
         }
         // Sheet is attached to the NavigationStack (a stable view) rather than
@@ -815,7 +833,7 @@ struct ManagerRosterView: View {
 
             if isDraft {
                 Button {
-                    publishSingleShift(shift)
+                    pendingPublishShift = shift
                 } label: {
                     Label("Publish Shift", systemImage: "paperplane")
                 }
@@ -1031,7 +1049,7 @@ struct ManagerRosterView: View {
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             if isDraft {
                 Button {
-                    publishSingleShift(shift)
+                    pendingPublishShift = shift
                 } label: {
                     Label("Publish", systemImage: "paperplane")
                 }
@@ -1205,14 +1223,20 @@ struct ManagerRosterView: View {
         }
     }
 
-    private func publishSingleShift(_ shift: Shift) {
+    private func publishSingleShift(_ shift: Shift, lockWeek: Bool) {
+        pendingPublishShift = nil
         Task {
             do {
                 try await repo.publishShift(shift)
+                if lockWeek, let shiftDate = RosterCalendar.dateFromKey(shift.date) {
+                    try await repo.setAvailabilityWeekLock(
+                        weekKey: RosterCalendar.weekStartKey(shiftDate), locked: true)
+                }
                 // Same notification the batch publish sends (parity).
                 await WorkerAPIClient.shared.sendNotification(event: "roster-published",
                                                               shiftIds: [shift.id])
-                toast = ToastMessage(kind: .success, text: "Shift published")
+                toast = ToastMessage(kind: .success,
+                                     text: "Shift published\(lockWeek ? " — availability locked" : "")")
                 Haptics.success()
             } catch {
                 toast = ToastMessage(kind: .error, text: "Publish failed. \(error.localizedDescription)")

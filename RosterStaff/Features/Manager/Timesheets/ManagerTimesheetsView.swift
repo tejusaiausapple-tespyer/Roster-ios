@@ -12,6 +12,12 @@ struct ManagerTimesheetsView: View {
     @State private var selectedStaffFilter: String = "All staff"
     @State private var selectedTimesheet: Timesheet? = nil
 
+    // Bulk selection
+    @State private var selectionMode = false
+    @State private var selectedIds: Set<String> = []
+    @State private var isBulkApproving = false
+    @State private var bulkToast: ToastMessage?
+
     enum TimesheetFilterStatus: String, CaseIterable, Identifiable {
         case pending, approved, rejected
         var id: String { rawValue }
@@ -89,6 +95,11 @@ struct ManagerTimesheetsView: View {
         weekTimesheets.reduce(0) { $0 + $1.workedHours }
     }
 
+    /// Whether the Select button should be available (pending tab with results).
+    private var canEnterSelectionMode: Bool {
+        selectedStatusFilter == .pending && !filteredTimesheets.isEmpty
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -100,7 +111,11 @@ struct ManagerTimesheetsView: View {
                     VStack(spacing: 0) {
                         controlBar
                         timesheetScroll(containerWidth: width)
-                        summaryBar
+                        if selectionMode {
+                            bulkActionBar
+                        } else {
+                            summaryBar
+                        }
                     }
                     .frame(maxWidth: Theme.maxContentWidth)
                     .frame(maxWidth: .infinity)
@@ -114,11 +129,41 @@ struct ManagerTimesheetsView: View {
                 ToolbarItem(placement: .principal) {
                     ScreenTitlePill(title: "Timesheets Review", icon: "clipboard.fill")
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    selectToggleButton
+                }
             }
             .sheet(item: $selectedTimesheet) { ts in
                 let shift = repo.shifts.first(where: { $0.id == ts.shiftId })
                 ManagerTimesheetDetailSheet(timesheet: ts, shift: shift)
             }
+            .toast($bulkToast)
+            // Exit selection mode when switching away from pending tab or week.
+            .onChange(of: selectedStatusFilter) { _, _ in exitSelectionMode() }
+            .onChange(of: weekOffset) { _, _ in exitSelectionMode() }
+        }
+    }
+
+    // MARK: - Toolbar button
+
+    @ViewBuilder
+    private var selectToggleButton: some View {
+        if canEnterSelectionMode || selectionMode {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    if selectionMode {
+                        exitSelectionMode()
+                    } else {
+                        selectionMode = true
+                    }
+                }
+                Haptics.selection()
+            } label: {
+                Text(selectionMode ? "Cancel" : "Select")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(selectionMode ? Theme.textSecondary : Theme.brand)
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -304,13 +349,19 @@ struct ManagerTimesheetsView: View {
                     spacing: 12
                 ) {
                     ForEach(filteredTimesheets) { ts in
+                        let isSelected = selectedIds.contains(ts.id)
                         Button {
-                            selectedTimesheet = ts
-                            Haptics.selection()
+                            if selectionMode {
+                                toggleSelection(ts.id)
+                            } else {
+                                selectedTimesheet = ts
+                                Haptics.selection()
+                            }
                         } label: {
-                            timesheetCard(ts)
+                            timesheetCard(ts, isSelected: isSelected)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityHint(selectionMode ? (isSelected ? "Deselect" : "Select for bulk approval") : "Open timesheet detail")
                     }
                 }
                 .padding(16)
@@ -319,8 +370,8 @@ struct ManagerTimesheetsView: View {
         .refreshable { await repo.refreshFromServer() }
     }
 
-    // Content layer — solid card (no glass).
-    private func timesheetCard(_ ts: Timesheet) -> some View {
+    // Content layer — solid card (no glass). Highlights when selected in bulk mode.
+    private func timesheetCard(_ ts: Timesheet, isSelected: Bool = false) -> some View {
         let staff = repo.allUsers.first(where: { $0.id == ts.staffId })
         let shift = repo.shifts.first(where: { $0.id == ts.shiftId })
         let rosteredHours = shift?.scheduledHours ?? 0
@@ -352,12 +403,20 @@ struct ManagerTimesheetsView: View {
 
                 Spacer()
 
-                Text(ds.title)
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(style.tint)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(style.soft))
+                // In selection mode show a checkbox; otherwise the status pill.
+                if selectionMode {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(isSelected ? Theme.accent : Theme.textTertiary)
+                        .transition(.scale.combined(with: .opacity))
+                } else {
+                    Text(ds.title)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(style.tint)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(style.soft))
+                }
             }
 
             Divider().overlay(Theme.separator)
@@ -398,12 +457,17 @@ struct ManagerTimesheetsView: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: Theme.cornerLarge, style: .continuous).fill(Theme.card)
+            RoundedRectangle(cornerRadius: Theme.cornerLarge, style: .continuous)
+                .fill(isSelected ? Theme.accent.opacity(0.07) : Theme.card)
         )
         .overlay(
             RoundedRectangle(cornerRadius: Theme.cornerLarge, style: .continuous)
-                .strokeBorder(mismatch ? Theme.warning.opacity(0.35) : Theme.separator, lineWidth: 1)
+                .strokeBorder(
+                    isSelected ? Theme.accent.opacity(0.45) : (mismatch ? Theme.warning.opacity(0.35) : Theme.separator),
+                    lineWidth: isSelected ? 1.5 : 1
+                )
         )
+        .animation(.easeInOut(duration: 0.15), value: isSelected)
     }
 
     private var emptyState: some View {
@@ -452,6 +516,139 @@ struct ManagerTimesheetsView: View {
             .foregroundStyle(tint)
             .lineLimit(1)
             .fixedSize()
+    }
+
+    // MARK: - Bulk action bar
+
+    private var bulkActionBar: some View {
+        let allSelected = selectedIds.count == filteredTimesheets.count && !filteredTimesheets.isEmpty
+
+        let content = HStack(spacing: 12) {
+            // Select All / Deselect All
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    if allSelected {
+                        selectedIds.removeAll()
+                    } else {
+                        selectedIds = Set(filteredTimesheets.map { $0.id })
+                    }
+                }
+                Haptics.selection()
+            } label: {
+                Text(allSelected ? "Deselect All" : "Select All")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.brand)
+                    .fixedSize()
+            }
+            .buttonStyle(.plain)
+
+            Spacer(minLength: 4)
+
+            if !selectedIds.isEmpty {
+                Text("\(selectedIds.count) selected")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .transition(.scale.combined(with: .opacity))
+            }
+
+            Spacer(minLength: 4)
+
+            // Approve button
+            Button {
+                bulkApprove()
+            } label: {
+                HStack(spacing: 5) {
+                    if isBulkApproving {
+                        ProgressView()
+                            .tint(.white)
+                            .scaleEffect(0.75)
+                            .frame(width: 14, height: 14)
+                    } else {
+                        Image(systemName: "checkmark.circle.fill")
+                    }
+                    Text(selectedIds.isEmpty ? "Approve All" : "Approve (\(selectedIds.count))")
+                        .lineLimit(1)
+                }
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(selectedIds.isEmpty || isBulkApproving ? Theme.textTertiary : Theme.accent)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(selectedIds.isEmpty || isBulkApproving)
+            .accessibilityLabel(selectedIds.isEmpty ? "Approve all pending timesheets" : "Approve \(selectedIds.count) timesheets")
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 10)
+
+        return ViewThatFits(in: .horizontal) {
+            content
+            ScrollView(.horizontal, showsIndicators: false) { content }
+        }
+        .glassCapsule()
+        .padding(.horizontal, 24)
+        .padding(.top, 8)
+        .padding(.bottom, 10)
+    }
+
+    // MARK: - Selection helpers
+
+    private func toggleSelection(_ id: String) {
+        withAnimation(.easeInOut(duration: 0.15)) {
+            if selectedIds.contains(id) {
+                selectedIds.remove(id)
+            } else {
+                selectedIds.insert(id)
+            }
+        }
+        Haptics.selection()
+    }
+
+    private func exitSelectionMode() {
+        selectionMode = false
+        selectedIds.removeAll()
+    }
+
+    // MARK: - Bulk approve action
+
+    private func bulkApprove() {
+        guard !selectedIds.isEmpty, !isBulkApproving else { return }
+        let ids = Array(selectedIds)
+        isBulkApproving = true
+
+        Task {
+            var failedCount = 0
+            for id in ids {
+                do {
+                    try await repo.approveTimesheet(id: id, managerNotes: nil)
+                } catch {
+                    failedCount += 1
+                }
+            }
+
+            isBulkApproving = false
+
+            if failedCount == 0 {
+                Haptics.success()
+                let approvedCount = ids.count
+                withAnimation(.easeInOut(duration: 0.18)) { exitSelectionMode() }
+                bulkToast = ToastMessage(kind: .success, text: "\(approvedCount) timesheet\(approvedCount == 1 ? "" : "s") approved")
+            } else if failedCount == ids.count {
+                Haptics.error()
+                bulkToast = ToastMessage(kind: .error, text: "Approval failed. Please try again.")
+            } else {
+                Haptics.error()
+                let succeeded = ids.count - failedCount
+                withAnimation(.easeInOut(duration: 0.18)) { exitSelectionMode() }
+                bulkToast = ToastMessage(kind: .error, text: "\(succeeded) approved, \(failedCount) failed.")
+            }
+        }
     }
 }
 
