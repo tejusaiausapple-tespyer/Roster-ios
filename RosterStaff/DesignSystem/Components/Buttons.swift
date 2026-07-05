@@ -43,6 +43,45 @@ struct SecondaryButtonStyle: ButtonStyle {
     }
 }
 
+/// Navigation-bar Save pill (top-right). Subdued while there are no unsaved
+/// changes; fills with the brand color the moment the page becomes dirty;
+/// returns to subdued after a successful save. Use on edit-and-save screens —
+/// one-shot submit flows keep their prominent bottom CTA.
+struct ToolbarSaveButton: View {
+    var title: String = "Save"
+    var isEnabled: Bool
+    var isWorking: Bool = false
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Group {
+                if isWorking {
+                    ProgressView().tint(.white)
+                } else {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                }
+            }
+            .foregroundStyle(isEnabled || isWorking ? .white : Theme.textTertiary)
+            .padding(.horizontal, 14)
+            .frame(height: 32)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(isEnabled || isWorking ? Theme.brandStrong : Theme.card)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(isEnabled || isWorking ? Color.clear : Theme.separator, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled || isWorking)
+        .animation(.easeInOut(duration: 0.18), value: isEnabled)
+        .accessibilityLabel(isEnabled ? "\(title) changes" : "\(title), no changes to save")
+    }
+}
+
 /// A compact pill button used inline on cards (e.g. "Submit hours").
 struct InlinePillButtonStyle: ButtonStyle {
     var tint: Color = Theme.brandStrong

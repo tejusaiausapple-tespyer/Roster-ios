@@ -78,18 +78,6 @@ struct ManagerCompanyDetailsView: View {
                 Text("These details appear on the dashboards and will be used on staff payslips in a future update.")
             }
 
-            Section {
-                Button {
-                    save()
-                } label: {
-                    HStack {
-                        Spacer()
-                        if isSaving { ProgressView() } else { Text("Save").fontWeight(.semibold) }
-                        Spacer()
-                    }
-                }
-                .disabled(isSaving || !isDirty || companyName.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
         }
         .scrollContentBackground(.hidden)
         .background(Theme.background.ignoresSafeArea())
@@ -98,6 +86,14 @@ struct ManagerCompanyDetailsView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 ScreenTitlePill(title: "Company Details", icon: "building.2.fill")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                ToolbarSaveButton(
+                    isEnabled: isDirty && !companyName.trimmingCharacters(in: .whitespaces).isEmpty,
+                    isWorking: isSaving
+                ) {
+                    save()
+                }
             }
         }
         .toast($toast)
