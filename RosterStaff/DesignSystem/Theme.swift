@@ -132,6 +132,11 @@ extension View {
     /// A translucent navigation-layer surface. Liquid Glass on iOS 26+,
     /// `.ultraThinMaterial` (with a hairline border) on earlier versions.
     /// Use for bars, control clusters, and floating chips — not content cards.
+    ///
+    /// `.contentShape(shape)` is applied on every branch: unlike a solid
+    /// `background(fill)`, a `glassEffect` does NOT make the surface
+    /// hit-testable, so glass buttons without it only respond on their
+    /// glyph/text pixels (the "Add Shift + is unresponsive" bug).
     @ViewBuilder
     func glassSurface<S: Shape>(
         in shape: S,
@@ -143,22 +148,25 @@ extension View {
             // Build the Glass value inside a closure so the @ViewBuilder branch
             // contains a single view expression (imperative statements are not
             // allowed directly in a ViewBuilder context).
-            self.glassEffect(
-                {
-                    var glass: Glass = .regular
-                    if let tint { glass = glass.tint(tint) }
-                    if interactive { glass = glass.interactive() }
-                    return glass
-                }(),
-                in: shape
-            )
+            self.contentShape(shape)
+                .glassEffect(
+                    {
+                        var glass: Glass = .regular
+                        if let tint { glass = glass.tint(tint) }
+                        if interactive { glass = glass.interactive() }
+                        return glass
+                    }(),
+                    in: shape
+                )
         } else {
             self
+                .contentShape(shape)
                 .background(shape.fill(.ultraThinMaterial))
                 .overlay(shape.stroke(Theme.separator, lineWidth: 1))
         }
         #else
         self
+            .contentShape(shape)
             .background(shape.fill(.ultraThinMaterial))
             .overlay(shape.stroke(Theme.separator, lineWidth: 1))
         #endif
@@ -172,16 +180,20 @@ extension View {
 
     /// A prominent (call-to-action) glass surface — tinted Liquid Glass on
     /// iOS 26+, a solid tinted fill on earlier versions. For primary buttons.
+    /// `.contentShape(shape)` for the same hit-testing reason as glassSurface.
     @ViewBuilder
     func glassProminentSurface<S: Shape>(in shape: S, tint: Color) -> some View {
         #if compiler(>=6.2)
         if #available(iOS 26.0, *) {
-            self.glassEffect(.regular.tint(tint).interactive(), in: shape)
+            self.contentShape(shape)
+                .glassEffect(.regular.tint(tint).interactive(), in: shape)
         } else {
-            self.background(shape.fill(tint))
+            self.contentShape(shape)
+                .background(shape.fill(tint))
         }
         #else
-        self.background(shape.fill(tint))
+        self.contentShape(shape)
+            .background(shape.fill(tint))
         #endif
     }
 }
