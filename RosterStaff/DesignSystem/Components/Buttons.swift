@@ -54,28 +54,21 @@ struct ToolbarSaveButton: View {
     var action: () -> Void
 
     var body: some View {
+        // System .borderedProminent + capsule shape: renders as ONE solid
+        // pill everywhere, including inside iOS 26 toolbars (a hand-rolled
+        // capsule background there fought the toolbar's own glass grouping
+        // and looked like two half-pills).
         Button(action: action) {
-            Group {
-                if isWorking {
-                    ProgressView().tint(.white)
-                } else {
-                    Text(title)
-                        .font(.subheadline.weight(.semibold))
-                }
+            if isWorking {
+                ProgressView().tint(.white)
+            } else {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
             }
-            .foregroundStyle(isEnabled || isWorking ? .white : Theme.textTertiary)
-            .padding(.horizontal, 14)
-            .frame(height: 32)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(isEnabled || isWorking ? Theme.brandStrong : Theme.card)
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .strokeBorder(isEnabled || isWorking ? Color.clear : Theme.separator, lineWidth: 1)
-            )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.capsule)
+        .tint(Theme.brandStrong)
         .disabled(!isEnabled || isWorking)
         .animation(.easeInOut(duration: 0.18), value: isEnabled)
         .accessibilityLabel(isEnabled ? "\(title) changes" : "\(title), no changes to save")

@@ -65,6 +65,43 @@ enum RosterFormat {
         return "\(formatter("d MMM").string(from: monday)) – \(formatter("d MMM").string(from: sunday))"
     }
 
+    // MARK: - Business identifiers (live input formatting)
+
+    /// Keep only digits, cap the count, and insert spaces per group sizes —
+    /// e.g. groups [2,3,3,3] formats "12345678901" as "12 345 678 901".
+    /// Used for as-you-type formatting (the number pad has no space bar).
+    static func groupedDigits(_ raw: String, groups: [Int]) -> String {
+        let maxDigits = groups.reduce(0, +)
+        let digits = String(raw.filter(\.isNumber).prefix(maxDigits))
+        var out: [String] = []
+        var index = digits.startIndex
+        for size in groups {
+            guard index < digits.endIndex else { break }
+            let end = digits.index(index, offsetBy: size, limitedBy: digits.endIndex) ?? digits.endIndex
+            out.append(String(digits[index..<end]))
+            index = end
+        }
+        return out.joined(separator: " ")
+    }
+
+    /// ABN: XX XXX XXX XXX (11 digits).
+    static func abn(_ raw: String) -> String {
+        groupedDigits(raw, groups: [2, 3, 3, 3])
+    }
+
+    /// ACN: XXX XXX XXX (9 digits).
+    static func acn(_ raw: String) -> String {
+        groupedDigits(raw, groups: [3, 3, 3])
+    }
+
+    /// Australian local phone digits (after the fixed +61 prefix): drops a
+    /// leading 0 ("0412…" → "412…"), digits only, grouped 3-3-3.
+    static func auPhoneLocal(_ raw: String) -> String {
+        var digits = String(raw.filter(\.isNumber))
+        if digits.hasPrefix("0") { digits.removeFirst() }
+        return groupedDigits(digits, groups: [3, 3, 3])
+    }
+
     // MARK: - Hours (mirrors formatHours)
 
     static func hours(_ value: Double) -> String {

@@ -78,6 +78,38 @@ final class CalendarFormatTests: XCTestCase {
         XCTAssertEqual(RosterFormat.weekRange(monday: monday), "4 – 10 May")
     }
 
+    // MARK: - Business identifier formatting (as-you-type)
+
+    func testABNFormatting() {
+        XCTAssertEqual(RosterFormat.abn("12345678901"), "12 345 678 901")
+        XCTAssertEqual(RosterFormat.abn("123"), "12 3", "partial input formats progressively")
+        XCTAssertEqual(RosterFormat.abn("12 345 678 901 999"), "12 345 678 901", "capped at 11 digits")
+        XCTAssertEqual(RosterFormat.abn("ab12cd345"), "12 345", "non-digits stripped")
+        XCTAssertEqual(RosterFormat.abn(""), "")
+    }
+
+    func testACNFormatting() {
+        XCTAssertEqual(RosterFormat.acn("123456789"), "123 456 789")
+        XCTAssertEqual(RosterFormat.acn("1234"), "123 4")
+        XCTAssertEqual(RosterFormat.acn("1234567890"), "123 456 789", "capped at 9 digits")
+    }
+
+    func testAUPhoneLocalFormatting() {
+        XCTAssertEqual(RosterFormat.auPhoneLocal("412345678"), "412 345 678")
+        XCTAssertEqual(RosterFormat.auPhoneLocal("0412345678"), "412 345 678", "leading 0 dropped")
+        XCTAssertEqual(RosterFormat.auPhoneLocal("41"), "41")
+        XCTAssertEqual(RosterFormat.auPhoneLocal(""), "")
+    }
+
+    func testComposedAddress() {
+        XCTAssertEqual(AppSettings.composedAddress(street: "1 Example St", suburb: "Norwood", state: "SA"),
+                       "1 Example St, Norwood SA")
+        XCTAssertEqual(AppSettings.composedAddress(street: "", suburb: "Norwood", state: "SA"),
+                       "Norwood SA")
+        XCTAssertEqual(AppSettings.composedAddress(street: "1 Example St", suburb: "", state: ""),
+                       "1 Example St")
+    }
+
     func testWeekRangeCrossMonth() {
         let monday = TestSupport.instant("2026-04-27", "00:00")
         XCTAssertEqual(RosterFormat.weekRange(monday: monday), "27 Apr – 3 May")
