@@ -709,25 +709,65 @@ final class RosterRepository {
         try await batch.commit()
     }
 
-    /// Publish all draft shifts for a given date range (firstKey to lastKey) in a batch transaction.
+    /// Fields written when a shift is published. Mirrors the PWA's
+    /// `publishShifts` (dataStore.ts): status + publishedAt + updatedAt, and
+    /// backfills `shiftStartAt`/`submittableAfter` so drafts created before
+    /// those fields existed become submittable once published.
+    private func publishFields(date: String, start: String, end: String) -> [String: Any] {
+        [
+            "status": ShiftStatus.published.rawValue,
+            "publishedAt": nowISO(),
+            "updatedAt": FieldValue.serverTimestamp(),
+            "shiftStartAt": Timestamp(date: BusinessRules.shiftStartDateTime(date: date, time: start)),
+            "submittableAfter": Timestamp(date: BusinessRules.shiftEndDateTime(date: date, start: start, end: end))
+        ]
+    }
+
+    /// Publish a single shift (context-menu / swipe action).
+    func publishShift(_ shift: Shift) async throws {
+        try await db.collection("shifts").document(shift.id).updateData(
+            publishFields(date: shift.date, start: shift.rosteredStart, end: shift.rosteredEnd)
+        )
+    }
+
+    /// Publish all draft shifts for a given date range (firstKey to lastKey).
+    ///
+    /// The date filter is the only server-side clause: combining it with a
+    /// `status == draft` filter requires a `(status, date)` composite index
+    /// that is NOT in the deployed indexes (only `(staffId, status, date)`
+    /// exists), so that query fails on device with FAILED_PRECONDITION —
+    /// this was why publishing from the iPad failed while the PWA (which
+    /// batch-updates ids it already holds in memory) succeeded. Drafts are
+    /// filtered client-side instead.
     func publishAllDrafts(from firstKey: String, to lastKey: String) async throws {
         let snap = try await db.collection("shifts")
             .whereField("date", isGreaterThanOrEqualTo: firstKey)
             .whereField("date", isLessThanOrEqualTo: lastKey)
-            .whereField("status", isEqualTo: ShiftStatus.draft.rawValue)
             .getDocuments()
-            
-        guard !snap.documents.isEmpty else { return }
 
-        let batch = db.batch()
-        for doc in snap.documents {
-            batch.updateData(["status": ShiftStatus.published.rawValue], forDocument: doc.reference)
+        let drafts = snap.documents.filter {
+            ($0.data()["status"] as? String) == ShiftStatus.draft.rawValue
         }
-        try await batch.commit()
+        guard !drafts.isEmpty else { return }
+
+        // Firestore batches cap at 500 operations — chunk like the PWA does.
+        for chunkStart in stride(from: 0, to: drafts.count, by: 500) {
+            let batch = db.batch()
+            for doc in drafts[chunkStart..<min(chunkStart + 500, drafts.count)] {
+                let data = doc.data()
+                batch.updateData(
+                    publishFields(date: FS.stringValue(data, "date"),
+                                  start: FS.stringValue(data, "rosteredStart"),
+                                  end: FS.stringValue(data, "rosteredEnd")),
+                    forDocument: doc.reference
+                )
+            }
+            try await batch.commit()
+        }
         // Notify affected staff their roster is out (event name from the
         // Worker's registry; recipient resolution happens server-side).
         await WorkerAPIClient.shared.sendNotification(event: "roster-published",
-                                                      shiftIds: snap.documents.map { $0.documentID })
+                                                      shiftIds: drafts.map { $0.documentID })
     }
 
     /// Approve a pending timesheet — sets status = .approved, managerNotes, approvedBy, and approvedAt.

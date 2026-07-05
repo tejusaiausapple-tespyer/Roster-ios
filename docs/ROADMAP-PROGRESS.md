@@ -85,6 +85,16 @@
         manager-only, stored in `wages`, never on user docs
   - [x] Superannuation % per staff: `AppUser.superRate` + editable row in
         the manager staff detail sheet ("Pay (manager only)" section)
+  - [x] FIX (2026-07-05, Sura's iPad repro): **Publish Week failed on device**
+        — `publishAllDrafts` queried `date range + status == draft`, which
+        needs a `(status, date)` composite index that is NOT deployed (only
+        `(staffId, status, date)` exists) → FAILED_PRECONDITION. The PWA
+        worked because it batch-updates ids already in memory. Now queries by
+        date only, filters drafts client-side, chunks batches at 500, and
+        writes PWA-parity fields on publish (`publishedAt`, `updatedAt`,
+        backfilled `shiftStartAt`/`submittableAfter`). Single-shift publish
+        moved to new `repo.publishShift` (same fields; previously a full
+        `saveShift` rewrite without `publishedAt`).
 - [ ] **M6 — Domain robustness** (PARTIALLY DONE via `manager-portal-updates`
       branch, 2026-07-05, per Sura's product answers)
   - [x] Shift editor: seeded locations REMOVED → manager-created locations

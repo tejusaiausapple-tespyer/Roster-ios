@@ -1164,18 +1164,7 @@ struct ManagerRosterView: View {
     private func publishSingleShift(_ shift: Shift) {
         Task {
             do {
-                try await repo.saveShift(
-                    id: shift.id,
-                    staffId: shift.staffId,
-                    date: shift.date,
-                    start: shift.rosteredStart,
-                    end: shift.rosteredEnd,
-                    breakMinutes: shift.breakMinutes,
-                    location: shift.location,
-                    department: shift.department,
-                    notes: shift.notes,
-                    status: .published
-                )
+                try await repo.publishShift(shift)
                 // Same notification the batch publish sends (parity).
                 await WorkerAPIClient.shared.sendNotification(event: "roster-published",
                                                               shiftIds: [shift.id])
