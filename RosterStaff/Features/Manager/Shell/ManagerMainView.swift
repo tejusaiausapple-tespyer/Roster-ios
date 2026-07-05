@@ -3,6 +3,7 @@ import SwiftUI
 struct ManagerMainView: View {
     @Environment(RosterRepository.self) private var repo
     @State private var selectedTab: ManagerTab = .dashboard
+    @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
 
     var body: some View {
         if UIDevice.current.userInterfaceIdiom == .phone {
@@ -43,7 +44,7 @@ struct ManagerMainView: View {
             .tint(Color(hex: 0x4F46E5))
         } else {
             // iPadOS & macOS: Sidebar split view with all 10 tabs
-            NavigationSplitView {
+            NavigationSplitView(columnVisibility: $columnVisibility) {
                 sidebar
             } detail: {
                 switch selectedTab {
@@ -88,6 +89,18 @@ struct ManagerMainView: View {
         .navigationTitle("Manager Portal")
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom, spacing: 0) { sidebarFooter }
+        // The system edge-swipe opens the sidebar, but there is no built-in
+        // right-to-left swipe to dismiss it. Mirror the gesture: a leftward
+        // drag anywhere on the sidebar collapses it.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 30)
+                .onEnded { value in
+                    if value.translation.width < -40,
+                       abs(value.translation.width) > abs(value.translation.height) {
+                        withAnimation { columnVisibility = .detailOnly }
+                    }
+                }
+        )
     }
 
     private var sidebarFooter: some View {
