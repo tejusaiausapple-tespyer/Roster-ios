@@ -17,6 +17,8 @@ struct ScreenTitlePill: View {
             Text(title)
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(Theme.brand)
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 10)

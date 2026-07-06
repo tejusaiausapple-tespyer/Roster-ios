@@ -34,6 +34,7 @@ struct NotificationsSheet: View {
                         }
                         .padding(20)
                     }
+                    .scrollIndicators(.hidden)
                     .background(Theme.background.ignoresSafeArea())
                 }
             }
@@ -58,7 +59,7 @@ struct NotificationsSheet: View {
 
     private var dailyJobsSection: some View {
         Card(accentColor: repo.pendingDailyJobCount > 0 ? Theme.warning : Theme.accent) {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Label("Daily Jobs", systemImage: "checklist")
                         .font(.subheadline.weight(.bold))
@@ -69,46 +70,67 @@ struct NotificationsSheet: View {
                         .foregroundStyle(repo.pendingDailyJobCount > 0 ? Theme.warning : Theme.accent)
                 }
 
-                ForEach(dailyJobs) { job in
-                    HStack(spacing: 10) {
-                        Image(systemName: job.completed ? "checkmark.circle.fill" : "circle")
-                            .font(.title3)
-                            .foregroundStyle(job.completed ? Theme.accent : Theme.textTertiary)
-
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(job.title)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(Theme.textPrimary)
-                                .strikethrough(job.completed, color: Theme.textTertiary)
-                            if job.completed, let at = job.completedAt {
-                                Text("Done \(RosterFormat.dateTime(at))")
-                                    .font(.caption2)
-                                    .foregroundStyle(Theme.accent)
-                            }
+                // Jobs scroll independently so long lists work in the
+                // collapsed (medium) detent; indicators hidden by request.
+                // Rows keep their positions when completed — only the
+                // styling and button flip (Complete → Undo).
+                ScrollView {
+                    VStack(spacing: 10) {
+                        ForEach(dailyJobs) { job in
+                            jobRow(job)
                         }
-
-                        Spacer()
-
-                        Button {
-                            toggle(job)
-                        } label: {
-                            Text(job.completed ? "Undo" : "Complete")
-                                .font(.caption.weight(.bold))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 7)
-                                .background(
-                                    Capsule().fill(job.completed
-                                                   ? Theme.textTertiary.opacity(0.15)
-                                                   : Theme.brand)
-                                )
-                                .foregroundStyle(job.completed ? Theme.textSecondary : .white)
-                        }
-                        .buttonStyle(.plain)
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, 4)
                 }
+                .scrollIndicators(.hidden)
+                .frame(maxHeight: 320)
             }
         }
+    }
+
+    private func jobRow(_ job: DailyJobAssignment) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: job.completed ? "checkmark.circle.fill" : "circle")
+                .font(.title3)
+                .foregroundStyle(job.completed ? Theme.accent : Theme.textTertiary)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(job.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(job.completed ? Theme.textSecondary : Theme.textPrimary)
+                    .strikethrough(job.completed, color: Theme.textTertiary)
+                if job.completed, let at = job.completedAt {
+                    Text("Done \(RosterFormat.time(at))")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            Button {
+                toggle(job)
+            } label: {
+                Text(job.completed ? "Undo" : "Complete")
+                    .font(.caption.weight(.bold))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(
+                        Capsule().fill(job.completed
+                                       ? Theme.textTertiary.opacity(0.15)
+                                       : Theme.brand)
+                    )
+                    .foregroundStyle(job.completed ? Theme.textSecondary : .white)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous)
+                .fill(job.completed ? Theme.accent.opacity(0.06) : Theme.background)
+        )
+        .animation(.easeInOut(duration: 0.18), value: job.completed)
     }
 
     private func toggle(_ job: DailyJobAssignment) {

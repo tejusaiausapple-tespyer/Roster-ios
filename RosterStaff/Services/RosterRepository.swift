@@ -870,27 +870,24 @@ final class RosterRepository {
         ])
     }
 
-    /// Assignments for a shift, pending first then by title.
+    /// Assignments for a shift. Sorted by title only — completing a job must
+    /// NOT reorder the list (rows jumping under a tapped button reads as the
+    /// tap having failed and invites accidental taps on the next row).
     func dailyJobs(forShift shiftId: String) -> [DailyJobAssignment] {
         dailyJobAssignments
             .filter { $0.shiftId == shiftId }
-            .sorted {
-                if $0.completed != $1.completed { return !$0.completed }
-                return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
-            }
+            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
     }
 
     /// Staff bell feed: assignments still visible (shift not ended yet).
+    /// Title-sorted, stable across complete/undo — see dailyJobs(forShift:).
     var activeDailyJobsForStaff: [DailyJobAssignment] {
         dailyJobAssignments
             .filter { assignment in
                 let shiftEnd = shifts.first(where: { $0.id == assignment.shiftId })?.endDateTime
                 return assignment.isVisibleToStaff(shiftEnd: shiftEnd)
             }
-            .sorted {
-                if $0.completed != $1.completed { return !$0.completed }
-                return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
-            }
+            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
     }
 
     /// Incomplete visible jobs — feeds the bell badge alongside unread messages.

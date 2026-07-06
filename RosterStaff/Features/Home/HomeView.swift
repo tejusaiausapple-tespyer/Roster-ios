@@ -42,12 +42,15 @@ struct HomeView: View {
                     upcomingSection
                 }
             }
-            .navigationTitle(greetingTitle)
+            .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    
-                    ScreenTitlePill(title: greetingTitle, icon: "house.fill")
+                // Company name owns the header pill, left-aligned so long
+                // names get room (truncated gracefully by the pill).
+                ToolbarItem(placement: .topBarLeading) {
+                    ScreenTitlePill(title: repo.appSettings.companyName.isEmpty
+                                    ? "Home" : repo.appSettings.companyName,
+                                    icon: "house.fill")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     messagesButton
@@ -88,31 +91,28 @@ struct HomeView: View {
                 Image(systemName: "bell")
                     .font(.body.weight(.semibold))
                 if badgeCount > 0 {
+                    // Overlap the bell by ~a third — offset ≈ badge radius/2
+                    // keeps it attached to the icon instead of floating.
                     Text("\(min(badgeCount, 9))")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.white)
                         .frame(width: 16, height: 16)
                         .background(Circle().fill(Theme.error))
-                        .offset(x: 8, y: -8)
+                        .offset(x: 5, y: -5)
                 }
             }
         }
         .accessibilityLabel("Notifications, \(badgeCount) unread")
     }
 
-    // MARK: Company
+    // MARK: Greeting header (company name lives in the toolbar pill)
 
-    @ViewBuilder
     private var companyHeader: some View {
-        if !repo.appSettings.companyName.isEmpty {
-            Text(repo.appSettings.companyName)
-                .font(.caption.weight(.bold))
-                .tracking(1.2)
-                .textCase(.uppercase)
-                .foregroundStyle(Theme.brand)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityAddTraits(.isHeader)
-        }
+        Text(greetingTitle)
+            .font(.title2.weight(.bold))
+            .foregroundStyle(Theme.textPrimary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityAddTraits(.isHeader)
     }
 
     // MARK: Today
