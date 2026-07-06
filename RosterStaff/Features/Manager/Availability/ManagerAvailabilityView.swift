@@ -168,7 +168,7 @@ struct ManagerAvailabilityView: View {
                     ForEach(Weekday.allCases) { day in
                         VStack(spacing: 1) {
                             Text(day.shortLabel).font(.caption2.weight(.bold)).foregroundStyle(Theme.textTertiary)
-                            Text("\(availableCount(day))").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.brand)
+                            Text("\(availableCount(day))").font(.caption2.weight(.bold)).foregroundStyle(Theme.brand)
                         }
                         .frame(width: cellW)
                     }
@@ -225,7 +225,7 @@ struct ManagerAvailabilityView: View {
                             ForEach(Weekday.allCases) { day in
                                 VStack(spacing: 3) {
                                     Text(String(day.shortLabel.prefix(1)))
-                                        .font(.system(size: 9, weight: .bold))
+                                        .font(.caption2.weight(.bold))
                                         .foregroundStyle(Theme.textTertiary)
                                     dayCell(avail[day], compact: true)
                                 }
@@ -249,7 +249,7 @@ struct ManagerAvailabilityView: View {
             return ("\(s)–\(e)", Theme.accent)
         }()
         return Text(label)
-            .font(.system(size: compact ? 8 : 10, weight: .semibold))
+            .font((compact ? Font.caption2 : Font.caption).weight(.semibold))
             .foregroundStyle(tint)
             .lineLimit(1)
             .minimumScaleFactor(0.6)

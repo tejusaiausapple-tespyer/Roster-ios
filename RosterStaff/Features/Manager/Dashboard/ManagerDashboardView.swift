@@ -346,6 +346,7 @@ struct ManagerDashboardView: View {
                             )
                         }
                         .buttonStyle(.plain)
+                        .accessibilityHint("Opens Daily Jobs assignment")
 
                         if index < todaysShifts.count - 1 {
                             Divider().overlay(Theme.separator)

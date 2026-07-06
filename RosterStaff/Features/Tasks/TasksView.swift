@@ -228,10 +228,10 @@ struct TasksView: View {
     private func miniStat(value: String, label: String, tint: Color = Theme.textPrimary) -> some View {
         VStack(spacing: 2) {
             Text(value)
-                .font(.system(size: 20, weight: .bold))
+                .font(.system(.title3, design: .default).weight(.bold))
                 .foregroundStyle(tint)
             Text(label)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(.caption2, design: .default).weight(.semibold))
                 .foregroundStyle(Theme.textSecondary)
                 .textCase(.uppercase)
         }

@@ -184,10 +184,28 @@
   - [x] `pendingFirstSnapshot` now includes shifts + timesheets, so isLoading
         stays true until the roster actually arrives (was flashing an empty
         roster before role-listener data streamed in)
-- [ ] **M9 — Accessibility & design consistency** (NOT STARTED)
-  - Fixed font sizes → Dynamic Type (LoginView, TasksView, Dashboard,
-    ManagerAvailability cells); Reduce Motion on LoginView orbs/border sweep;
-    VoiceOver pass
+- [ ] **M9 — Accessibility & design consistency** — ✅ CODE COMPLETE on branch
+      `milestone-9-accessibility` (2026-07-06), ⏳ awaiting Sura's device
+      verification (needs a real VoiceOver + Dynamic Type pass on device)
+  - [x] Dynamic Type: content-text `.system(size:)` → scalable semantic fonts
+        — Tasks + ManagerTasks miniStats (title3/caption2), Login titles
+        (title3 rounded), ManagerAvailability grid micro-labels (caption2/
+        caption; the day-cell already has minimumScaleFactor so it stays
+        overflow-safe). SF Symbol icon sizes (48/44/34/26pt) left fixed —
+        icons don't need text scaling.
+  - [x] Reduce Motion: LoginView error shake gated behind
+        `accessibilityReduceMotion` (6 call sites → one `triggerShake()`
+        helper; haptic + error banner still convey failure). NOTE: the
+        "orbs/border sweep" the roadmap mentioned were already removed in a
+        prior login redesign — only the shake remained.
+  - [x] VoiceOver: labels/hints on icon-only controls — password show/hide
+        toggle, New Task button, dashboard roster row (hints it opens Daily
+        Jobs). Bell already labelled.
+  - DEFERRED: exhaustive VoiceOver audit of every screen is device work best
+    done with VoiceOver actually running — flagged for Sura's verification.
+    Tiny fixed badges in size-constrained chrome (bell count, calendar count
+    dots) intentionally left fixed to avoid layout breakage at accessibility
+    sizes.
 - [ ] **M10 — CI** (NOT STARTED)
   - GitHub Actions: xcodegen → build → test on PRs (web repo has a CI to copy
     patterns from). pbxproj is gitignored so no drift check needed.

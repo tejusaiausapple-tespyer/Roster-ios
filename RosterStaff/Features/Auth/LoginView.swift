@@ -7,6 +7,7 @@ enum LoginField {
 
 struct LoginView: View {
     @Environment(AuthViewModel.self) private var auth
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var email = ""
     @State private var password = ""
@@ -160,6 +161,7 @@ struct LoginView: View {
                 }
                 .buttonStyle(.plain)
                 .transition(.opacity)
+                .accessibilityLabel(showPassword ? "Hide password" : "Show password")
             }
         }
         .modifier(LoginFieldStyle(isFocused: focus == .password))
@@ -267,6 +269,15 @@ struct LoginView: View {
         return Date().timeIntervalSince(lastManual) > maxDuration
     }
 
+    /// Error-shake the form, unless Reduce Motion is on — the haptic and the
+    /// error banner already convey the failure without the motion.
+    private func triggerShake() {
+        guard !reduceMotion else { return }
+        withAnimation(.linear(duration: 0.4)) {
+            shakeAttempts += 1
+        }
+    }
+
     private func submit() async {
         guard !email.isEmpty, !password.isEmpty else { return }
         focus = nil
@@ -275,9 +286,7 @@ struct LoginView: View {
         await auth.login(email: attemptedEmail, password: attemptedPassword)
         if auth.errorMessage != nil {
             Haptics.error()
-            withAnimation(.linear(duration: 0.4)) {
-                shakeAttempts += 1
-            }
+            triggerShake()
             return
         }
 
@@ -296,9 +305,7 @@ struct LoginView: View {
         if isManualLoginRequired {
             auth.errorMessage = "For security, please enter your password."
             Haptics.error()
-            withAnimation(.linear(duration: 0.4)) {
-                shakeAttempts += 1
-            }
+            triggerShake()
             return
         }
         guard let credentialID = PasskeyStore.credentialID,
@@ -309,9 +316,7 @@ struct LoginView: View {
             try await PasskeyManager.shared.signIn(credentialID: credentialID)
         } catch {
             Haptics.error()
-            withAnimation(.linear(duration: 0.4)) {
-                shakeAttempts += 1
-            }
+            triggerShake()
             return // cancelled / failed passkey assertion
         }
         guard let savedPassword = await PasskeyStore.readPassword(reason: "Sign in to Sura Roster") else {
@@ -325,9 +330,7 @@ struct LoginView: View {
             PasskeyStore.clear()
             email = savedEmail
             Haptics.error()
-            withAnimation(.linear(duration: 0.4)) {
-                shakeAttempts += 1
-            }
+            triggerShake()
         }
     }
 
@@ -335,9 +338,7 @@ struct LoginView: View {
         if isManualLoginRequired {
             auth.errorMessage = "For security, please enter your password."
             Haptics.error()
-            withAnimation(.linear(duration: 0.4)) {
-                shakeAttempts += 1
-            }
+            triggerShake()
             return
         }
         guard let savedEmail = BiometricCredentialStore.savedEmail else { return }
@@ -354,9 +355,7 @@ struct LoginView: View {
             BiometricCredentialStore.clear()
             email = savedEmail
             Haptics.error()
-            withAnimation(.linear(duration: 0.4)) {
-                shakeAttempts += 1
-            }
+            triggerShake()
         }
     }
 }
@@ -473,7 +472,7 @@ struct ForgotPasswordSheet: View {
                         .foregroundStyle(Theme.brand)
                 }
                 Text("Forgot password?")
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .font(.system(.title3, design: .rounded).weight(.bold))
                     .foregroundStyle(Theme.textPrimary)
                 Text("Enter your work email and we'll send you a link to reset your password.")
                     .font(.subheadline)
@@ -544,7 +543,7 @@ struct ForgotPasswordSheet: View {
                     .foregroundStyle(Theme.accent)
             }
             Text("Check your email")
-                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .font(.system(.title3, design: .rounded).weight(.bold))
                 .foregroundStyle(Theme.textPrimary)
             Text("If an account exists for \(email), a password reset link is on its way. Check your inbox.")
                 .font(.subheadline)
