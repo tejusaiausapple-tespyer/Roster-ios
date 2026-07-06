@@ -34,6 +34,14 @@
       ]
     },
     {
+      "collectionGroup": "daily_job_assignments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "staffId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "shift_attendance",
       "queryScope": "COLLECTION",
       "fields": [

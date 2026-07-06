@@ -6,6 +6,7 @@ struct ManagerDashboardView: View {
 
     @State private var showNewShiftEditor = false
     @State private var showNewTaskEditor = false
+    @State private var assigningJobsShift: Shift? = nil
 
     private var todayKey: String {
         RosterCalendar.todayKey()
@@ -157,6 +158,9 @@ struct ManagerDashboardView: View {
             }
             .sheet(isPresented: $showNewTaskEditor) {
                 ManagerTaskEditorSheet(task: nil, defaultDateKey: todayKey)
+            }
+            .sheet(item: $assigningJobsShift) { shift in
+                DailyJobAssignSheet(shift: shift)
             }
         }
     }
@@ -330,14 +334,20 @@ struct ManagerDashboardView: View {
                         let staffMember = repo.allUsers.first(where: { $0.id == shift.staffId })
                         let status = lifecycleStatus(for: shift)
 
-                        rosterRow(
-                            name: staffMember?.fullName ?? "Staff Member",
-                            role: shift.department ?? "General",
-                            time: "\(shift.rosteredStart) - \(shift.rosteredEnd)",
-                            status: status.title,
-                            tint: tint(for: status),
-                            inProgress: status == .inProgress
-                        )
+                        Button {
+                            assigningJobsShift = shift
+                        } label: {
+                            rosterRow(
+                                name: staffMember?.fullName ?? "Staff Member",
+                                role: shift.department ?? "General",
+                                time: "\(shift.rosteredStart) - \(shift.rosteredEnd)",
+                                status: status.title,
+                                tint: tint(for: status),
+                                inProgress: status == .inProgress,
+                                jobs: repo.dailyJobs(forShift: shift.id)
+                            )
+                        }
+                        .buttonStyle(.plain)
 
                         if index < todaysShifts.count - 1 {
                             Divider().overlay(Theme.separator)
@@ -358,7 +368,8 @@ struct ManagerDashboardView: View {
     }
     
     private func rosterRow(name: String, role: String, time: String, status: String,
-                           tint: Color, inProgress: Bool = false) -> some View {
+                           tint: Color, inProgress: Bool = false,
+                           jobs: [DailyJobAssignment] = []) -> some View {
         // The in-progress shift takes visual priority: brand bar + tinted row.
         HStack(spacing: 12) {
             Circle()
@@ -372,6 +383,16 @@ struct ManagerDashboardView: View {
                 Text("\(role) • \(time)")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
+                if !jobs.isEmpty {
+                    let done = jobs.filter(\.completed).count
+                    HStack(spacing: 3) {
+                        Image(systemName: done == jobs.count ? "checkmark.circle.fill" : "checklist")
+                            .font(.caption2)
+                        Text("Jobs \(done)/\(jobs.count)")
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .foregroundStyle(done == jobs.count ? Theme.accent : Theme.warning)
+                }
             }
 
             Spacer()

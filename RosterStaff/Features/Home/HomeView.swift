@@ -79,14 +79,16 @@ struct HomeView: View {
     }
 
     private var messagesButton: some View {
-        Button {
+        // Badge counts unread messages + pending Daily Jobs for the current shift.
+        let badgeCount = repo.unreadMessageCount + repo.pendingDailyJobCount
+        return Button {
             showMessages = true
         } label: {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: "bell")
                     .font(.body.weight(.semibold))
-                if repo.unreadMessageCount > 0 {
-                    Text("\(min(repo.unreadMessageCount, 9))")
+                if badgeCount > 0 {
+                    Text("\(min(badgeCount, 9))")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.white)
                         .frame(width: 16, height: 16)
@@ -95,7 +97,7 @@ struct HomeView: View {
                 }
             }
         }
-        .accessibilityLabel("Notifications, \(repo.unreadMessageCount) unread")
+        .accessibilityLabel("Notifications, \(badgeCount) unread")
     }
 
     // MARK: Company

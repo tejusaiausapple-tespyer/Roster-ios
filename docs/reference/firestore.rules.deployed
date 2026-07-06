@@ -262,6 +262,27 @@ service cloud.firestore {
       allow delete: if isManager();
     }
 
+    // Daily Jobs — reusable manager-curated job library (permanent) plus
+    // shift-scoped assignments. Staff read their own assignments and may only
+    // toggle the completion fields; managers own everything else.
+    match /daily_job_templates/{templateId} {
+      allow read: if isManager();
+      allow write: if isManager();
+    }
+
+    match /daily_job_assignments/{assignmentId} {
+      allow read: if isManager() ||
+        (isAuthenticated() && resource.data.staffId == request.auth.uid);
+      allow create, delete: if isManager();
+      allow update: if isManager() ||
+        (isAuthenticated() &&
+         resource.data.staffId == request.auth.uid &&
+         request.resource.data.diff(resource.data).affectedKeys()
+           .hasOnly(['completed', 'completedAt', 'completedBy']) &&
+         (request.resource.data.completedBy == request.auth.uid ||
+          request.resource.data.completedBy == null));
+    }
+
     // Shift attendance — verified clock-in/out records written by the iOS app.
     // Server timestamps are enforced: staff can only ever write clockInAt /
     // clockOutAt as request.time (i.e. FieldValue.serverTimestamp()), so a

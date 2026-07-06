@@ -19,6 +19,10 @@ final class RosterRepository {
     var appSettings: AppSettings = .fallback
     var tasks: [RosterTask] = []
     var taskCompletions: [TaskCompletion] = []
+    /// Daily Jobs (separate from Tasks): permanent manager template library
+    /// (manager-only listener) + shift-scoped assignments (both roles).
+    var dailyJobTemplates: [DailyJobTemplate] = []
+    var dailyJobAssignments: [DailyJobAssignment] = []
     var allUsers: [AppUser] = []
     /// Manager-defined work locations (settings/locations).
     var locations: [RosterLocation] = []
@@ -227,6 +231,31 @@ final class RosterRepository {
                     }
             )
 
+            // Daily Job template library (permanent, manager-managed) and all
+            // assignments in the shift window for live progress.
+            roleListeners.append(
+                db.collection("daily_job_templates")
+                    .whereField("active", isEqualTo: true)
+                    .addSnapshotListener { [weak self] snap, error in
+                        guard let self else { return }
+                        if let error { self.handleError(error, label: "daily_job_templates"); return }
+                        self.dailyJobTemplates = (snap?.documents ?? [])
+                            .compactMap { try? $0.data(as: DailyJobTemplate.self) }
+                            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+                    }
+            )
+            roleListeners.append(
+                db.collection("daily_job_assignments")
+                    .whereField("date", isGreaterThanOrEqualTo: range.start)
+                    .whereField("date", isLessThanOrEqualTo: range.end)
+                    .addSnapshotListener { [weak self] snap, error in
+                        guard let self else { return }
+                        if let error { self.handleError(error, label: "daily_job_assignments"); return }
+                        self.dailyJobAssignments = (snap?.documents ?? [])
+                            .compactMap { try? $0.data(as: DailyJobAssignment.self) }
+                    }
+            )
+
             // 5. Wages module: awards, earnings lines, per-staff assignments —
             //    one collection, discriminated by `kind`. Manager-only by rules.
             roleListeners.append(
@@ -305,6 +334,21 @@ final class RosterRepository {
                     }
             )
 
+            // Own daily-job assignments in the shift window (drives the bell
+            // badge + notification panel). Needs the (staffId, date) index.
+            roleListeners.append(
+                db.collection("daily_job_assignments")
+                    .whereField("staffId", isEqualTo: uid)
+                    .whereField("date", isGreaterThanOrEqualTo: range.start)
+                    .whereField("date", isLessThanOrEqualTo: range.end)
+                    .addSnapshotListener { [weak self] snap, error in
+                        guard let self else { return }
+                        if let error { self.handleError(error, label: "daily_job_assignments"); return }
+                        self.dailyJobAssignments = (snap?.documents ?? [])
+                            .compactMap { try? $0.data(as: DailyJobAssignment.self) }
+                    }
+            )
+
             // 4. Own messages (recipient, last 30 days)
             roleListeners.append(
                 db.collection("messages")
@@ -333,6 +377,8 @@ final class RosterRepository {
         messages = []
         tasks = []
         taskCompletions = []
+        dailyJobTemplates = []
+        dailyJobAssignments = []
         allUsers = []
         wageAwards = []
         earningsLines = []
@@ -768,6 +814,88 @@ final class RosterRepository {
         guard let url = URL(string: urlString),
               let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
         return UIImage(data: data)
+    }
+
+    // MARK: - Daily Jobs (separate from Tasks — see docs/daily-jobs-feature.md)
+
+    /// Add a reusable job to the permanent template library.
+    func addDailyJobTemplate(title: String) async throws {
+        guard let uid = activeUID else { throw AuthError.notAuthenticated }
+        try await db.collection("daily_job_templates").document().setData([
+            "title": title,
+            "active": true,
+            "createdAt": FieldValue.serverTimestamp(),
+            "createdBy": uid
+        ])
+    }
+
+    /// Replace a shift's job assignments with the given template selection.
+    /// Deterministic doc IDs make re-saving idempotent; deselected jobs are
+    /// removed, already-assigned jobs keep their completion state.
+    func setDailyJobs(for shift: Shift, templateIds: Set<String>) async throws {
+        guard let uid = activeUID else { throw AuthError.notAuthenticated }
+        let existing = dailyJobAssignments.filter { $0.shiftId == shift.id }
+        let batch = db.batch()
+
+        for assignment in existing where !templateIds.contains(assignment.templateId) {
+            batch.deleteDocument(db.collection("daily_job_assignments").document(assignment.id))
+        }
+        for templateId in templateIds {
+            guard !existing.contains(where: { $0.templateId == templateId }),
+                  let template = dailyJobTemplates.first(where: { $0.id == templateId }) else { continue }
+            let docId = DailyJobAssignment.docId(shiftId: shift.id, templateId: templateId)
+            batch.setData([
+                "id": docId,
+                "shiftId": shift.id,
+                "staffId": shift.staffId,
+                "templateId": templateId,
+                "title": template.title,
+                "date": shift.date,
+                "assignedAt": FieldValue.serverTimestamp(),
+                "assignedBy": uid,
+                "completed": false
+            ], forDocument: db.collection("daily_job_assignments").document(docId))
+        }
+        try await batch.commit()
+    }
+
+    /// Staff toggle: complete or undo. Live listeners propagate the change to
+    /// the manager dashboard immediately.
+    func setDailyJobCompleted(_ assignment: DailyJobAssignment, completed: Bool) async throws {
+        guard let uid = activeUID else { throw AuthError.notAuthenticated }
+        try await db.collection("daily_job_assignments").document(assignment.id).updateData([
+            "completed": completed,
+            "completedAt": completed ? FieldValue.serverTimestamp() : NSNull(),
+            "completedBy": completed ? uid : NSNull()
+        ])
+    }
+
+    /// Assignments for a shift, pending first then by title.
+    func dailyJobs(forShift shiftId: String) -> [DailyJobAssignment] {
+        dailyJobAssignments
+            .filter { $0.shiftId == shiftId }
+            .sorted {
+                if $0.completed != $1.completed { return !$0.completed }
+                return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+            }
+    }
+
+    /// Staff bell feed: assignments still visible (shift not ended yet).
+    var activeDailyJobsForStaff: [DailyJobAssignment] {
+        dailyJobAssignments
+            .filter { assignment in
+                let shiftEnd = shifts.first(where: { $0.id == assignment.shiftId })?.endDateTime
+                return assignment.isVisibleToStaff(shiftEnd: shiftEnd)
+            }
+            .sorted {
+                if $0.completed != $1.completed { return !$0.completed }
+                return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+            }
+    }
+
+    /// Incomplete visible jobs — feeds the bell badge alongside unread messages.
+    var pendingDailyJobCount: Int {
+        activeDailyJobsForStaff.filter { !$0.completed }.count
     }
 
     // MARK: - Manager task management
