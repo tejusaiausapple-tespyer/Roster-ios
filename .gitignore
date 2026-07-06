@@ -22,3 +22,6 @@ RosterStaff/Resources/GoogleService-Info.plist
 
 # macOS
 .DS_Store
+
+# Tool crash logs
+firepit-log.txt

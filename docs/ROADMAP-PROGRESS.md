@@ -183,6 +183,11 @@
   - ACTION REQUIRED: deploy Firebase Storage rules — task proof/reference photo
     paths are in docs/reference/storage.rules. Until deployed, photo uploads can
     fail with "permission denied" on `gs://.../task_photos/...`.
+  - VERIFY after Storage rules deploy: staff completes a photo-required task;
+    Firebase Storage shows the object under `task_photos/{staffUid}/...`;
+    `task_completions/{taskId}_{date}.staffPhotoUrl` starts with `gs://`;
+    manager opens the completion photo, then taps "Reviewed — delete photo
+    from cloud" and the Storage object is removed.
   - FUTURE (owner request 2026-07-05): **Payslip feature** — staff-visible
     payslips rendering the business details from `settings/app` (company
     name, address, ABN, contact — already captured via Account → Company

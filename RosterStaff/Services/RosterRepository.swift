@@ -54,6 +54,11 @@ final class RosterRepository {
     private var db: Firestore { Firestore.firestore() }
     private var storage: Storage { Storage.storage() }
 
+    private func storageReference(for urlString: String) -> StorageReference? {
+        guard let url = URL(string: urlString) else { return nil }
+        return try? storage.reference(for: url)
+    }
+
     // MARK: - Lifecycle
 
     func start(uid: String) {
@@ -732,8 +737,11 @@ final class RosterRepository {
     func downloadAndCachePhoto(taskId: String, date: String, urlString: String) async -> UIImage? {
         let data: Data?
         if urlString.hasPrefix("gs://") {
-            let ref = storage.reference(forURL: urlString)
-            data = try? await ref.data(maxSize: Int64(ImageCompressor.maxBytes))
+            if let ref = storageReference(for: urlString) {
+                data = try? await ref.data(maxSize: Int64(ImageCompressor.maxBytes))
+            } else {
+                data = nil
+            }
         } else if let url = URL(string: urlString) {
             if let response = try? await URLSession.shared.data(from: url) {
                 data = response.0
@@ -821,8 +829,9 @@ final class RosterRepository {
 
     /// Delete a task definition. Completion history is retained.
     func deleteTask(id: String, managerPhotoUrl: String?) async throws {
-        if let managerPhotoUrl, !managerPhotoUrl.isEmpty {
-            try? await Storage.storage().reference(forURL: managerPhotoUrl).delete()
+        if let managerPhotoUrl, !managerPhotoUrl.isEmpty,
+           let ref = storageReference(for: managerPhotoUrl) {
+            try? await ref.delete()
         }
         try await db.collection("tasks").document(id).delete()
     }
@@ -832,8 +841,9 @@ final class RosterRepository {
     /// manager's local cache keeps a copy of what was rejected).
     func requestTaskRedo(completion: TaskCompletion, reason: String) async throws {
         guard let uid = activeUID else { throw AuthError.notAuthenticated }
-        if let url = completion.staffPhotoUrl, !url.isEmpty {
-            try? await Storage.storage().reference(forURL: url).delete()
+        if let url = completion.staffPhotoUrl, !url.isEmpty,
+           let ref = storageReference(for: url) {
+            try? await ref.delete()
         }
         try await db.collection("task_completions").document(completion.id).updateData([
             "completed": false,
@@ -850,8 +860,9 @@ final class RosterRepository {
     /// history.
     func deleteTaskCloudPhoto(completion: TaskCompletion) async throws {
         guard let uid = activeUID else { throw AuthError.notAuthenticated }
-        if let url = completion.staffPhotoUrl, !url.isEmpty {
-            try? await Storage.storage().reference(forURL: url).delete()
+        if let url = completion.staffPhotoUrl, !url.isEmpty,
+           let ref = storageReference(for: url) {
+            try? await ref.delete()
         }
         try await db.collection("task_completions").document(completion.id).updateData([
             "staffPhotoUrl": NSNull(),
@@ -873,8 +884,9 @@ final class RosterRepository {
             return downloadedAt < cutoff
         }
         for comp in expired {
-            if let url = comp.staffPhotoUrl {
-                try? await Storage.storage().reference(forURL: url).delete()
+            if let url = comp.staffPhotoUrl,
+               let ref = storageReference(for: url) {
+                try? await ref.delete()
             }
             try? await db.collection("task_completions").document(comp.id)
                 .updateData(["staffPhotoUrl": NSNull()])
