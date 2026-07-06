@@ -13,9 +13,7 @@ struct ManagerDashboardView: View {
     }
     
     private var formattedDate: String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .full
-        return formatter.string(from: Date())
+        RosterFormat.dateFull(Date())
     }
     
     private var weekday: Int {
@@ -488,9 +486,7 @@ struct ManagerDashboardView: View {
     
     private func formatTime(_ date: Date?) -> String {
         guard let date else { return "—" }
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return RosterFormat.time(date)
     }
 }
 

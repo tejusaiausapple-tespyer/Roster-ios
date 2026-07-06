@@ -213,9 +213,14 @@ struct ManagerTaskEditorSheet: View {
         }
         if let due = task.dueTime {
             hasDueTime = true
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm"
-            if let parsed = formatter.date(from: due) { dueTime = parsed }
+            // Interpret the stored HH:mm in the business timezone so the
+            // round-trip matches RosterFormat.hhmm on save.
+            let parts = due.split(separator: ":").compactMap { Int($0) }
+            if parts.count == 2,
+               let parsed = RosterCalendar.calendar.date(bySettingHour: parts[0], minute: parts[1],
+                                                         second: 0, of: Date()) {
+                dueTime = parsed
+            }
         }
         priority = task.priorityLevel
         requiresPhoto = task.photoRequired
@@ -228,8 +233,6 @@ struct ManagerTaskEditorSheet: View {
     private func save() {
         isSaving = true
         errorMessage = nil
-        let timeFormatter = DateFormatter()
-        timeFormatter.dateFormat = "HH:mm"
 
         Task {
             do {
@@ -242,7 +245,7 @@ struct ManagerTaskEditorSheet: View {
                     date: RosterCalendar.todayKey(onceDate),
                     dayOfWeek: weekdays.sorted(),
                     assignedTo: assignToAll ? nil : Array(assignedIds),
-                    dueTime: hasDueTime ? timeFormatter.string(from: dueTime) : nil,
+                    dueTime: hasDueTime ? RosterFormat.hhmm(dueTime) : nil,
                     priority: priority.rawValue,
                     requiresPhoto: requiresPhoto,
                     endDate: (frequency != "once" && hasEndDate) ? RosterCalendar.todayKey(endDate) : nil,

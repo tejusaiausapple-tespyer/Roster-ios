@@ -254,10 +254,7 @@ struct ManagerTasksView: View {
         let todayKey = RosterCalendar.todayKey()
         if selectedDayKey < todayKey { return true }
         guard selectedDayKey == todayKey else { return false }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        let nowKey = formatter.string(from: Date())
-        return nowKey > due
+        return RosterFormat.hhmm(Date()) > due
     }
 
     private func frequencyLabel(_ task: RosterTask) -> String {

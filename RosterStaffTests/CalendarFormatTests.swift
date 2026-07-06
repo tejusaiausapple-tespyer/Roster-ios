@@ -114,4 +114,14 @@ final class CalendarFormatTests: XCTestCase {
         let monday = TestSupport.instant("2026-04-27", "00:00")
         XCTAssertEqual(RosterFormat.weekRange(monday: monday), "27 Apr – 3 May")
     }
+
+    // The Date-based formatters must render in the business timezone
+    // (Australia/Adelaide), never the device's — M7 fix.
+    func testDateFormattersUseBusinessTimezone() {
+        let instant = TestSupport.instant("2026-07-06", "14:05")
+        XCTAssertEqual(RosterFormat.hhmm(instant), "14:05")
+        XCTAssertEqual(RosterFormat.time(instant), "2:05 PM")
+        XCTAssertEqual(RosterFormat.dateFull(instant), "Monday, 6 July 2026")
+        XCTAssertEqual(RosterFormat.dateTime(instant), "6 Jul 2026, 2:05 PM")
+    }
 }

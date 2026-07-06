@@ -240,9 +240,7 @@ struct TasksView: View {
     
     private func formatTime(_ date: Date?) -> String {
         guard let date else { return "" }
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return RosterFormat.time(date)
     }
 }
 
@@ -576,10 +574,7 @@ struct TaskCompletionDetailSheet: View {
     
     private func formatDateTime(_ date: Date?) -> String {
         guard let date else { return "" }
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return RosterFormat.dateTime(date)
     }
 }
 

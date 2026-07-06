@@ -9,7 +9,7 @@
 **Repo:** https://github.com/tejusaiausapple-tespyer/Roster-ios.git
 **Web/PWA repo (reference):** https://github.com/tejusaiausapple-tespyer/Roster.git
 **Deployed Firestore rules (authoritative):** `docs/reference/firestore.rules.deployed`
-**Test suite status:** 114 passed / 0 failed (last run 2026-07-06, iPhone 17 Pro sim)
+**Test suite status:** 115 passed / 0 failed (last run 2026-07-06, iPhone 17 Pro sim)
 
 ---
 
@@ -151,12 +151,14 @@
   - [x] Roster agenda: selected day snaps into the displayed week, so Add
         Shift defaults to the viewed week's first day (or today if current
         week), and a tapped day is respected
-  - [ ] Dashboard/Tasks date formatters → RosterCalendar/RosterFormat
-        (currently device-local TZ)
+  - [x] Dashboard/Tasks date formatters → RosterFormat business-TZ helpers
+        (time/dateFull/hhmm Date overloads; 2026-07-06, branch
+        milestone-7-uiux-correctness). Also fixed: shift editor SAVE path
+        serialized HH:mm device-local, and task editor dueTime round-trip.
   - [x] TaskCompletionDetailSheet "Completed By" resolves `completedBy`
   - [x] ManagerTimesheetDetailSheet "Approved on" ISO string (fixed 07-05)
   - [x] TasksView week-strip dots now only mark this user's tasks (07-06)
-  - Shift editor default times use Calendar.current → RosterCalendar
+  - [x] Shift editor default times Calendar.current → RosterCalendar (07-06)
 - [ ] **M8 — Performance** (NOT STARTED)
   - Cache `RosterCalendar.calendar` (recomputed per access)
   - Dictionary lookups (usersById, timesheetsByShiftId) in manager views

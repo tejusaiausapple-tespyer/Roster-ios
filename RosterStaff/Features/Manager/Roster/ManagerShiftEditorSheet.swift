@@ -220,14 +220,11 @@ struct ManagerShiftEditorSheet: View {
             let targetDate = RosterCalendar.dateFromKey(defaultDateKey) ?? Date()
             date = targetDate
             
-            // Default shift: 09:00 to 17:00
-            // NOTE: uses device-local `Calendar.current` to seed the default
-            // start/end times. The date is unaffected, but if we later want the
-            // default times to be strictly Australia/Adelaide-consistent (e.g.
-            // for users travelling / non-Adelaide devices), switch these two
-            // lines to `RosterCalendar.calendar`. Left as-is for now per product.
-            startDateTime = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: targetDate) ?? targetDate
-            endDateTime = Calendar.current.date(bySettingHour: 17, minute: 0, second: 0, of: targetDate) ?? targetDate
+            // Default shift: 09:00 to 17:00 in the business timezone
+            // (Australia/Adelaide), so a manager on a travelling device still
+            // seeds Adelaide-clock shifts.
+            startDateTime = RosterCalendar.calendar.date(bySettingHour: 9, minute: 0, second: 0, of: targetDate) ?? targetDate
+            endDateTime = RosterCalendar.calendar.date(bySettingHour: 17, minute: 0, second: 0, of: targetDate) ?? targetDate
             
             if let firstStaff = staffMembers.first {
                 selectedStaffId = firstStaff.id
@@ -265,10 +262,10 @@ struct ManagerShiftEditorSheet: View {
         
         let dateKey = RosterCalendar.dayFormatter.string(from: date)
         
-        let timeFormatter = DateFormatter()
-        timeFormatter.dateFormat = "HH:mm"
-        let startTimeString = timeFormatter.string(from: startDateTime)
-        let endTimeString = timeFormatter.string(from: endDateTime)
+        // Serialize in the business timezone — pairs with the Adelaide-clock
+        // seeding above so the round-trip is device-timezone-independent.
+        let startTimeString = RosterFormat.hhmm(startDateTime)
+        let endTimeString = RosterFormat.hhmm(endDateTime)
         
         // Validation: end must be after start
         if startDateTime >= endDateTime {
