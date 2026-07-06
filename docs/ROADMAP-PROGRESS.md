@@ -9,7 +9,7 @@
 **Repo:** https://github.com/tejusaiausapple-tespyer/Roster-ios.git
 **Web/PWA repo (reference):** https://github.com/tejusaiausapple-tespyer/Roster.git
 **Deployed Firestore rules (authoritative):** `docs/reference/firestore.rules.deployed`
-**Test suite status:** 96 passed / 0 failed (last run 2026-07-05, iPhone 17 Pro sim)
+**Test suite status:** 111 passed / 0 failed (last run 2026-07-06, iPhone 17 Pro sim)
 
 ---
 
@@ -131,12 +131,17 @@
   - [x] Role free-text → dropdown: "Console Operator" / "Junior Attendee"
         (legacy values still shown when editing old shifts)
   - [x] Default break = No break (0 min, was 30)
-  - [ ] Staff filters by `fullName` → filter by staff id (ManagerRosterView,
-        ManagerTimesheetsView)
-  - [ ] Centralize super rate (11.25% — CHECK with Sura: AU SG is 12% from
-        2025-07-01) and default hourly rate ($25) in BusinessRules/AppSettings
-  - [ ] Fix stale bundle-id string in SetupRequiredView; remove unused
-        ManagerBlockedView (ask first); run `xcodegen generate` after removal
+  - [x] Staff filters by `fullName` → filter by staff id (ManagerRosterView,
+        ManagerTimesheetsView; 2026-07-06, branch milestone-6-domain-robustness)
+  - [x] Super rate & default hourly rate centralized in BusinessRules
+        (defaultSuperRatePercent = 12 — AU SG since 2025-07-01, was 11.25%;
+        defaultHourlyRate = 25). Reports & Roster wage cards now use
+        per-staff `superRate` when set. NOTE for Sura: weekly super figures
+        will read higher than before (12% vs 11.25%).
+  - [x] SetupRequiredView now prints the live bundle id (was stale
+        com.sura.roster.staff)
+  - [ ] Remove unused ManagerBlockedView — still awaiting Sura's OK
+        (open decision below)
 - [ ] **M7 — UI/UX correctness** (PARTIALLY DONE via `manager-portal-updates`)
   - [x] Dashboard Today's Roster: chronological by start time; in-progress
         shift highlighted (brand bar/pill; placeholder until Staff Portal
@@ -209,7 +214,8 @@ Then: `git checkout main && git merge --no-ff milestone-4-data-integrity && git 
 
 ## Open decisions (answers needed before the milestone that uses them)
 
-- M6: super rate 11.25% → 12%? Source constants from Firestore settings?
+- M6: super rate set to 12% (AU SG) as BusinessRules fallback on 2026-07-06 —
+  Sura to confirm, and decide if constants should move to Firestore settings.
 - M6: real shift locations/departments (replace Melbourne/Sydney/Brisbane)?
 - M6: OK to delete unused ManagerBlockedView?
 - M12: keep passkeys (wire registration + Associated Domains) or remove?

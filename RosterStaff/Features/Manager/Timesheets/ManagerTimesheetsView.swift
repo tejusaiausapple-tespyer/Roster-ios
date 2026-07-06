@@ -9,7 +9,9 @@ struct ManagerTimesheetsView: View {
 
     @State private var weekOffset = 0
     @State private var selectedStatusFilter: TimesheetFilterStatus = .pending
-    @State private var selectedStaffFilter: String = "All staff"
+    /// Staff filter keyed by user id, not display name — names can collide
+    /// or change mid-session. nil = all staff.
+    @State private var selectedStaffFilterId: String? = nil
     @State private var selectedTimesheet: Timesheet? = nil
 
     // Bulk selection
@@ -78,15 +80,20 @@ struct ManagerTimesheetsView: View {
         weekTimesheets.filter { statusMatches($0, status) }.count
     }
 
-    private var isStaffFilterActive: Bool { selectedStaffFilter != "All staff" }
+    private var isStaffFilterActive: Bool { selectedStaffFilterId != nil }
+
+    private var selectedStaffFilterName: String {
+        selectedStaffFilterId.flatMap { id in
+            repo.allUsers.first(where: { $0.id == id })?.fullName
+        } ?? "All staff"
+    }
 
     private var filteredTimesheets: [Timesheet] {
         weekTimesheets
             .filter { statusMatches($0, selectedStatusFilter) }
             .filter { ts in
-                if selectedStaffFilter == "All staff" { return true }
-                guard let staff = repo.allUsers.first(where: { $0.fullName == selectedStaffFilter }) else { return false }
-                return ts.staffId == staff.id
+                guard let selectedStaffFilterId else { return true }
+                return ts.staffId == selectedStaffFilterId
             }
             .sorted { ($0.submittedAt ?? .distantPast) > ($1.submittedAt ?? .distantPast) }
     }
@@ -304,14 +311,14 @@ struct ManagerTimesheetsView: View {
 
     private var staffFilterChip: some View {
         Menu {
-            Button("All staff") { selectedStaffFilter = "All staff" }
+            Button("All staff") { selectedStaffFilterId = nil }
             ForEach(repo.allUsers.filter { $0.role == .staff }) { staff in
-                Button(staff.fullName) { selectedStaffFilter = staff.fullName }
+                Button(staff.fullName) { selectedStaffFilterId = staff.id }
             }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "person.crop.circle")
-                Text(isStaffFilterActive ? selectedStaffFilter : "Staff")
+                Text(isStaffFilterActive ? selectedStaffFilterName : "Staff")
                     .lineLimit(1)
                 if isStaffFilterActive {
                     Circle().fill(Theme.brand).frame(width: 6, height: 6)
@@ -332,7 +339,7 @@ struct ManagerTimesheetsView: View {
                     .strokeBorder(isStaffFilterActive ? Theme.brand.opacity(0.4) : Theme.separator, lineWidth: 1)
             )
         }
-        .accessibilityLabel(isStaffFilterActive ? "Staff filter: \(selectedStaffFilter)" : "Filter by staff")
+        .accessibilityLabel(isStaffFilterActive ? "Staff filter: \(selectedStaffFilterName)" : "Filter by staff")
     }
 
     // MARK: - Content grid

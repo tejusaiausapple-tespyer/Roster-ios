@@ -47,7 +47,7 @@ struct ManagerTimesheetDetailSheet: View {
     }
     
     private var rate: Double {
-        staffMember?.hourlyRate ?? 25.0
+        staffMember?.hourlyRate ?? BusinessRules.defaultHourlyRate
     }
     
     private var rosteredCost: Double {

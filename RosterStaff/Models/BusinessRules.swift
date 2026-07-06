@@ -26,6 +26,14 @@ enum BusinessRules {
     /// Availability navigation lower bound (2 weeks back, though locked).
     static let availabilityMinWeekOffset = -2
 
+    // MARK: - Pay defaults (fallbacks when a staff member has no value set)
+
+    /// AU Superannuation Guarantee: 12% since 1 July 2025. Per-staff overrides
+    /// live on `AppUser.superRate` (percent); use this only as the fallback.
+    static let defaultSuperRatePercent = 12.0
+    /// Fallback hourly rate when `AppUser.hourlyRate` is unset.
+    static let defaultHourlyRate = 25.0
+
     // MARK: - Shift instants (timezone-aware, mirrors getShiftStartDateTime)
 
     static func shiftStartDateTime(date: String, time: String) -> Date {

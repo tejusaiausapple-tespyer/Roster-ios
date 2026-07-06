@@ -62,7 +62,9 @@ struct ManagerRosterView: View {
     }
 
     // Filters state
-    @State private var selectedStaffFilter: String = "All staff"
+    /// Staff filter keyed by user id, not display name — names can collide
+    /// or change mid-session. nil = all staff.
+    @State private var selectedStaffFilterId: String? = nil
     @State private var selectedStatusFilter: String = "All statuses"
 
     private var hasStaff: Bool { repo.allUsers.contains { $0.role == .staff } }
@@ -119,9 +121,8 @@ struct ManagerRosterView: View {
     }
 
     private func filterByStaff(_ shift: Shift) -> Bool {
-        if selectedStaffFilter == "All staff" { return true }
-        guard let staff = repo.allUsers.first(where: { $0.fullName == selectedStaffFilter }) else { return false }
-        return shift.staffId == staff.id
+        guard let selectedStaffFilterId else { return true }
+        return shift.staffId == selectedStaffFilterId
     }
 
     private func filterByStatus(_ shift: Shift) -> Bool {
@@ -150,7 +151,13 @@ struct ManagerRosterView: View {
         Set(weekShifts.map { $0.date })
     }
 
-    private var isStaffFilterActive: Bool { selectedStaffFilter != "All staff" }
+    private var isStaffFilterActive: Bool { selectedStaffFilterId != nil }
+
+    private var selectedStaffFilterName: String {
+        selectedStaffFilterId.flatMap { id in
+            repo.allUsers.first(where: { $0.id == id })?.fullName
+        } ?? "All staff"
+    }
     private var isStatusFilterActive: Bool { selectedStatusFilter != "All statuses" }
 
     // MARK: - Roster Metrics Math
@@ -165,13 +172,19 @@ struct ManagerRosterView: View {
 
     private var grossWages: Double {
         weekShifts.reduce(0.0) { sum, shift in
-            let rate = repo.allUsers.first(where: { $0.id == shift.staffId })?.hourlyRate ?? 25.0
+            let rate = repo.allUsers.first(where: { $0.id == shift.staffId })?.hourlyRate ?? BusinessRules.defaultHourlyRate
             return sum + (shift.scheduledHours * rate)
         }
     }
 
     private var superannuation: Double {
-        grossWages * 0.1125 // 11.25% Super
+        // Per-staff super where set, otherwise the SG default (12%).
+        weekShifts.reduce(0.0) { sum, shift in
+            let user = repo.allUsers.first(where: { $0.id == shift.staffId })
+            let rate = user?.hourlyRate ?? BusinessRules.defaultHourlyRate
+            let superPercent = user?.superRate ?? BusinessRules.defaultSuperRatePercent
+            return sum + (shift.scheduledHours * rate * superPercent / 100)
+        }
     }
 
     private var totalLabourCost: Double {
@@ -496,14 +509,14 @@ struct ManagerRosterView: View {
 
     private var staffFilterChip: some View {
         Menu {
-            Button("All staff") { selectedStaffFilter = "All staff" }
+            Button("All staff") { selectedStaffFilterId = nil }
             ForEach(repo.allUsers.filter { $0.role == .staff }) { staff in
-                Button(staff.fullName) { selectedStaffFilter = staff.fullName }
+                Button(staff.fullName) { selectedStaffFilterId = staff.id }
             }
         } label: {
             filterChipLabel(icon: "person.crop.circle", title: "Staff", active: isStaffFilterActive)
         }
-        .accessibilityLabel(isStaffFilterActive ? "Staff filter: \(selectedStaffFilter)" : "Filter by staff")
+        .accessibilityLabel(isStaffFilterActive ? "Staff filter: \(selectedStaffFilterName)" : "Filter by staff")
     }
 
     private var statusFilterChip: some View {
