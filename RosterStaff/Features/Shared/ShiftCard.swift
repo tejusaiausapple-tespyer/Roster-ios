@@ -36,8 +36,15 @@ struct ShiftCard: View {
     private var canUndoAbsence: Bool {
         actions.onUndoAbsence != nil && (timesheet?.isStaffReportedAbsence ?? false)
     }
-    private var isRejected: Bool { timesheet?.status == .rejected }
     private var isHero: Bool { variant == .hero }
+
+    /// A pending timesheet stays editable until approval, so the button
+    /// remains — but its label must reflect that hours were already
+    /// submitted, otherwise a successful submission looks like it failed.
+    private var submitLabel: String {
+        guard let ts = timesheet else { return "Submit hours" }
+        return ts.status == .rejected ? "Resubmit hours" : "Update hours"
+    }
 
     var body: some View {
         Group {
@@ -105,7 +112,7 @@ struct ShiftCard: View {
         if showAny {
             HStack(spacing: 8) {
                 if canSubmit {
-                    Button(isRejected ? "Resubmit hours" : "Submit hours") { actions.onSubmit?() }
+                    Button(submitLabel) { actions.onSubmit?() }
                         .buttonStyle(InlinePillButtonStyle(tint: Theme.brandStrong, filled: true))
                 }
                 if canReportAbsence {
