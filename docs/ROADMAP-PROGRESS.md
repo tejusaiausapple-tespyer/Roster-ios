@@ -9,7 +9,7 @@
 **Repo:** https://github.com/tejusaiausapple-tespyer/Roster-ios.git
 **Web/PWA repo (reference):** https://github.com/tejusaiausapple-tespyer/Roster.git
 **Deployed Firestore rules (authoritative):** `docs/reference/firestore.rules.deployed`
-**Test suite status:** 111 passed / 0 failed (last run 2026-07-06, iPhone 17 Pro sim)
+**Test suite status:** 114 passed / 0 failed (last run 2026-07-06, iPhone 17 Pro sim)
 
 ---
 
@@ -178,8 +178,15 @@
     `gs://` Storage references under `task_photos/{uid}/...` so manager review
     uses Storage rules instead of public download-token URLs. See
     docs/tasks-feature.md.
-  - ACTION REQUIRED: redeploy Firestore rules — task_completions tightened
-    (docs/reference/firestore.rules.deployed).
+  - Multi-photo proof (2026-07-06): up to 4 photos per completion,
+    staffPhotoUrls array + legacy staffPhotoUrl mirror for PWA parity.
+  - **Daily Jobs** (2026-07-06, owner plan; docs/daily-jobs-feature.md):
+    separate from Tasks — permanent daily_job_templates library, per-shift
+    daily_job_assignments ({shiftId}_{templateId} ids), manager assigns from
+    dashboard roster rows w/ live Jobs n/m progress, staff Complete/Undo via
+    bell panel until shift end. Rules + (staffId,date) index in
+    docs/reference/ — Sura deployed 2026-07-06 (firestore + storage; storage
+    needed the cross-service IAM grant, see docs/reference/README.md).
   - DEPLOYED 2026-07-06: Firebase Storage rules for task proof/reference photo
     paths (`docs/reference/storage.rules`) are live in project `roster-8a270`.
   - VERIFY after Storage rules deploy: staff completes a photo-required task;
