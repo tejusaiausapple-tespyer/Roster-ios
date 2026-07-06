@@ -142,7 +142,9 @@
         com.sura.roster.staff)
   - [ ] Remove unused ManagerBlockedView — still awaiting Sura's OK
         (open decision below)
-- [ ] **M7 — UI/UX correctness** (PARTIALLY DONE via `manager-portal-updates`)
+- [ ] **M7 — UI/UX correctness** — ✅ CODE COMPLETE on branch
+      `milestone-7-uiux-correctness` (2026-07-06), ⏳ awaiting Sura's device
+      verification
   - [x] Dashboard Today's Roster: chronological by start time; in-progress
         shift highlighted (brand bar/pill; placeholder until Staff Portal
         "Start Shift" tracking exists); "Clocked In" → "Submitted"
@@ -159,6 +161,16 @@
   - [x] ManagerTimesheetDetailSheet "Approved on" ISO string (fixed 07-05)
   - [x] TasksView week-strip dots now only mark this user's tasks (07-06)
   - [x] Shift editor default times Calendar.current → RosterCalendar (07-06)
+  - [x] Staff Home header redesign (Sura feedback 07-06): company name → bold,
+        truncating toolbar pill (top-left); greeting becomes prominent in-page
+        heading; bell badge overlaps the icon (~1/3) instead of floating
+  - [x] Daily Jobs notification panel UX (Sura feedback 07-06): rows keep
+        position on complete (no reorder jump; Complete↔Undo in place), taller
+        rows, more spacing, independent hidden-indicator scroll in the medium
+        detent
+  - [x] Staff shift card button label reflects state — "Update hours" for a
+        pending (still-editable) timesheet, was stuck on "Submit hours" and
+        read as a failed submission (Sura feedback 07-06)
 - [ ] **M8 — Performance** (NOT STARTED)
   - Cache `RosterCalendar.calendar` (recomputed per access)
   - Dictionary lookups (usersById, timesheetsByShiftId) in manager views
