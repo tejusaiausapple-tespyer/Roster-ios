@@ -37,5 +37,5 @@ rules deployed. Granted for roster-8a270 on 2026-07-06.
 | `firestore.rules.deployed` | `firestore.rules` | Security rules the app's reads/writes must satisfy (includes `shift_attendance`) |
 | `storage.rules` | `storage.rules` | Security rules for task proof/reference photos in Firebase Storage |
 | `firestore.indexes.json` | same name | Composite indexes the app's queries rely on |
-| `firebase.json` | same name | Firebase deploy targets, including Firestore + Storage rules |
+| `firebase.json` | same name (rules path adapted to this folder's filenames) | Firebase deploy targets, including Firestore + Storage rules |
 | `worker-notifications.ts` | `worker/handlers/notifications.ts` | Notification event names/payloads the app sends to `/api/send-notification` (`shift-started` / `shift-ended` pending Worker support) |
