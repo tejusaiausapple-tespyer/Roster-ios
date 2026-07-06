@@ -28,6 +28,7 @@ struct MainTabView: View {
                 .tag(AppRouter.Tab.account.rawValue)
         }
         .tint(Theme.brand)
+        .onChange(of: router.selectedTab) { Haptics.tabChange() }
     }
 }
 

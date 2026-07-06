@@ -28,6 +28,39 @@ final class ClockSessionTests: XCTestCase {
         XCTAssertEqual(s.workedSeconds(), 7.5 * 3600, accuracy: 0.5)
     }
 
+    // MARK: - Early check-in / paid time
+
+    func testEarlyCheckInNotPaid() {
+        // Clock in 5 minutes before the rostered start; paid time begins at
+        // the rostered start.
+        var s = session()
+        let rosterStart = t0.addingTimeInterval(5 * 60)
+        s.clockOut(at: rosterStart.addingTimeInterval(4 * 3600))
+        XCTAssertEqual(s.paidWorkedSeconds(rosterStart: rosterStart), 4 * 3600, accuracy: 0.5)
+        XCTAssertEqual(s.paidStart(rosterStart: rosterStart), rosterStart)
+        // The raw session still records the true 4h05m on-clock time.
+        XCTAssertEqual(s.workedSeconds(), 4 * 3600 + 5 * 60, accuracy: 0.5)
+    }
+
+    func testLateCheckInPaidFromClockIn() {
+        var s = session()
+        let rosterStart = t0.addingTimeInterval(-30 * 60) // clocked in 30m late
+        s.clockOut(at: t0.addingTimeInterval(2 * 3600))
+        XCTAssertEqual(s.paidWorkedSeconds(rosterStart: rosterStart), 2 * 3600, accuracy: 0.5)
+        XCTAssertEqual(s.paidStart(rosterStart: rosterStart), t0)
+    }
+
+    func testBreakDuringEarlyWindowNotDoubleDeducted() {
+        // A break spanning the unpaid early window only deducts its paid part.
+        var s = session()
+        let rosterStart = t0.addingTimeInterval(10 * 60)
+        s.startBreak(at: t0.addingTimeInterval(5 * 60))       // starts before roster start
+        s.endBreak(at: rosterStart.addingTimeInterval(10 * 60)) // ends 10m into paid time
+        s.clockOut(at: rosterStart.addingTimeInterval(3600))
+        // Paid window is 1h; only 10m of the break overlaps it.
+        XCTAssertEqual(s.paidWorkedSeconds(rosterStart: rosterStart), 50 * 60, accuracy: 0.5)
+    }
+
     func testMultipleBreaksAccumulate() {
         var s = session()
         s.startBreak(at: t0.addingTimeInterval(3600))

@@ -36,6 +36,11 @@ final class RosterRepository {
     /// see ClockSession for why this can't be written to Firestore live).
     var clockSession: ClockSession?
 
+    /// Verified shift attendance records (`shift_attendance` collection):
+    /// server-authoritative clock-in/out timestamps + GPS fixes. Staff stream
+    /// their own; managers stream all records in the shift window.
+    var attendanceRecords: [ShiftAttendance] = []
+
     var isLoading = true
     var loadError: String?
 
@@ -140,7 +145,22 @@ final class RosterRepository {
         
         roleListenersInitialized = true
         currentRole = role
-        
+
+        // Photo retention sweeps (photo lifecycle — see docs/tasks-feature.md):
+        // staff lose local task photos once their week ends; managers keep a
+        // 90-day local review history and run the 14-day cloud backstop.
+        if role == .manager {
+            TaskPhotoCache.removePhotosOlderThan(days: 90)
+            Task { [weak self] in
+                // Give the task_completions listener a moment to deliver.
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                await self?.cleanupExpiredTaskCloudPhotos()
+            }
+        } else {
+            TaskPhotoCache.removePhotosBeforeCurrentWeek()
+        }
+
+
         let range = BusinessRules.staffShiftDateRange()
         let timesheetCutoff = BusinessRules.staffTimesheetCutoff()
         let managerTimesheetCutoff = BusinessRules.managerTimesheetCutoff()
@@ -188,7 +208,20 @@ final class RosterRepository {
                     }
             )
 
-            // 4. Wages module: awards, earnings lines, per-staff assignments —
+            // 4. Shift attendance (all staff, shift window) — verified
+            //    clock-in/out times and locations for the manager portal.
+            roleListeners.append(
+                db.collection("shift_attendance")
+                    .whereField("date", isGreaterThanOrEqualTo: range.start)
+                    .whereField("date", isLessThanOrEqualTo: range.end)
+                    .addSnapshotListener { [weak self] snap, _ in
+                        guard let self else { return }
+                        self.attendanceRecords = (snap?.documents ?? [])
+                            .compactMap { ShiftAttendance(id: $0.documentID, data: $0.data()) }
+                    }
+            )
+
+            // 5. Wages module: awards, earnings lines, per-staff assignments —
             //    one collection, discriminated by `kind`. Manager-only by rules.
             roleListeners.append(
                 db.collection("wages")
@@ -205,7 +238,12 @@ final class RosterRepository {
             )
         } else {
             // STAFF LISTENERS (Restricted to own UID):
-            
+
+            // Surface the location permission prompt at session start (not
+            // mid-clock-in) so attendance verification is ready on first use.
+            LocationService.shared.primePermission()
+
+
             // 1. Own shifts (published only)
             roleListeners.append(
                 db.collection("shifts")
@@ -218,9 +256,20 @@ final class RosterRepository {
                         if let error { self.handleError(error, label: "shifts"); return }
                         self.shifts = (snap?.documents ?? []).compactMap { Shift(id: $0.documentID, data: $0.data()) }
                         self.markArrived("shifts")
+                        // A persisted session whose shift no longer exists
+                        // (deleted, unpublished, or aged out of the window)
+                        // would silently block clock-in on every other shift
+                        // — discard it.
+                        if let session = self.clockSession,
+                           !self.shifts.contains(where: { $0.id == session.shiftId }) {
+                            self.clearClockSession()
+                        }
+                        // Keep local shift reminders in step with the roster.
+                        ShiftReminderScheduler.sync(shifts: self.shifts,
+                                                    clockedInShiftId: self.clockSession?.shiftId)
                     }
             )
-            
+
             // 2. Own timesheets
             roleListeners.append(
                 db.collection("timesheets")
@@ -237,7 +286,20 @@ final class RosterRepository {
                     }
             )
             
-            // 3. Own messages (recipient, last 30 days)
+            // 3. Own attendance records (server clock-in/out confirmations)
+            roleListeners.append(
+                db.collection("shift_attendance")
+                    .whereField("staffId", isEqualTo: uid)
+                    .whereField("date", isGreaterThanOrEqualTo: range.start)
+                    .whereField("date", isLessThanOrEqualTo: range.end)
+                    .addSnapshotListener { [weak self] snap, _ in
+                        guard let self else { return }
+                        self.attendanceRecords = (snap?.documents ?? [])
+                            .compactMap { ShiftAttendance(id: $0.documentID, data: $0.data()) }
+                    }
+            )
+
+            // 4. Own messages (recipient, last 30 days)
             roleListeners.append(
                 db.collection("messages")
                     .whereField("recipientId", isEqualTo: uid)
@@ -269,6 +331,7 @@ final class RosterRepository {
         wageAwards = []
         earningsLines = []
         staffWageProfiles = []
+        attendanceRecords = []
         roleListenersInitialized = false
         currentRole = nil
         clockSession = nil // persisted copy stays on disk for re-sign-in
@@ -307,6 +370,63 @@ final class RosterRepository {
         guard let uid = activeUID, clockSession == nil else { return }
         clockSession = ClockSession(shiftId: shiftId, staffId: uid, clockInAt: Date())
         persistClockSession()
+    }
+
+    // MARK: - Verified attendance (server timestamps + GPS)
+
+    func attendance(forShift shiftId: String) -> ShiftAttendance? {
+        attendanceRecords.first { $0.shiftId == shiftId }
+    }
+
+    /// The saved workplace matching a shift's location string, if it has
+    /// geofence coordinates configured.
+    func workplace(for shift: Shift) -> RosterLocation? {
+        guard let name = shift.location else { return nil }
+        return locations.first { $0.displayName == name && $0.hasGeofence }
+    }
+
+    /// Start the shift: local session for the live timer, plus the verified
+    /// attendance record. `FieldValue.serverTimestamp()` makes the recorded
+    /// time authoritative regardless of the device clock; the device clock is
+    /// stored alongside it so managers can spot manipulation.
+    func startShift(_ shift: Shift, fix: ShiftAttendance.Fix?) async throws {
+        guard let uid = activeUID else { return }
+        startClockSession(shiftId: shift.id)
+        var fields: [String: Any] = [
+            "shiftId": shift.id,
+            "staffId": uid,
+            "date": shift.date,
+            "clockInAt": FieldValue.serverTimestamp(),
+            "clockInDeviceAt": Timestamp(date: Date()),
+        ]
+        if let location = shift.location { fields["location"] = location }
+        fields.merge(ShiftAttendance.fixFields(prefix: "clockIn", fix: fix)) { _, new in new }
+        // Clock-in recorded: stop the "forgot to start" nag and arm the
+        // end-of-shift reminder.
+        ShiftReminderScheduler.cancelForgotStart(shiftId: shift.id)
+        ShiftReminderScheduler.sync(shifts: shifts, clockedInShiftId: shift.id)
+        try await db.collection("shift_attendance").document(shift.id).setData(fields, merge: true)
+        Task { await WorkerAPIClient.shared.sendNotification(event: "shift-started", shiftIds: [shift.id]) }
+    }
+
+    /// End the shift: closes the local session and stamps the attendance
+    /// record with the server-side clock-out time, GPS fix, and (for early
+    /// leavers) the staff member's reason.
+    func endShift(_ shift: Shift, fix: ShiftAttendance.Fix?, note: String? = nil,
+                  useRosteredEnd: Bool = false) async throws {
+        clockSession?.useRosteredEnd = useRosteredEnd
+        endClockSession()
+        var fields: [String: Any] = [
+            "clockOutAt": FieldValue.serverTimestamp(),
+            "clockOutDeviceAt": Timestamp(date: Date()),
+        ]
+        if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+            fields["clockOutNote"] = String(note.prefix(500))
+        }
+        fields.merge(ShiftAttendance.fixFields(prefix: "clockOut", fix: fix)) { _, new in new }
+        ShiftReminderScheduler.cancelForgotEnd(shiftId: shift.id)
+        try await db.collection("shift_attendance").document(shift.id).setData(fields, merge: true)
+        Task { await WorkerAPIClient.shared.sendNotification(event: "shift-ended", shiftIds: [shift.id]) }
     }
 
     func startClockBreak() {
@@ -559,52 +679,189 @@ final class RosterRepository {
         try? await batch.commit()
     }
 
-    /// Complete a task for a given date, uploading the compressed photo to Firebase Storage and saving a local cache copy.
-    func completeTask(taskId: String, date: String, image: UIImage?) async throws {
+    /// Complete a task for a given date. If a photo is provided it is
+    /// compressed to fit the 2 MB Storage budget, uploaded, and cached in the
+    /// app sandbox (never the phone gallery).
+    func completeTask(taskId: String, date: String, image: UIImage?, note: String? = nil) async throws {
         guard let uid = activeUID else { throw AuthError.notAuthenticated }
         var photoUrl: String? = nil
-        
+
         if let image {
-            // 1. Compress image to JPEG (0.5 quality)
-            guard let data = image.jpegData(compressionQuality: 0.5) else {
+            guard let data = ImageCompressor.jpegData(from: image) else {
                 throw NSError(domain: "RosterRepository", code: 400, userInfo: [NSLocalizedDescriptionKey: "Failed to compress image"])
             }
-            
-            // 2. Upload to Firebase Storage
             let storageRef = Storage.storage().reference().child("task_photos/\(taskId)_\(date)_\(UUID().uuidString).jpg")
             let metadata = StorageMetadata()
             metadata.contentType = "image/jpeg"
-            
+
             _ = try await storageRef.putDataAsync(data, metadata: metadata)
             let downloadURL = try await storageRef.downloadURL()
             photoUrl = downloadURL.absoluteString
-            
-            // 3. Save to local sandbox cache
+
             TaskPhotoCache.save(image: image, taskId: taskId, date: date)
         }
-        
-        // 4. Save completion document to Firestore
+
+        // setData (not merge) intentionally resets any prior redo state —
+        // a resubmission replaces the old completion outright.
         let docId = "\(taskId)_\(date)"
-        let completionData: [String: Any] = [
+        var completionData: [String: Any] = [
             "id": docId,
             "taskId": taskId,
             "date": date,
             "completed": true,
+            "status": "completed",
             "completedAt": FieldValue.serverTimestamp(),
             "completedBy": uid,
             "staffPhotoUrl": photoUrl ?? NSNull()
         ]
-        
+        if let note, !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            completionData["note"] = note
+        }
         try await db.collection("task_completions").document(docId).setData(completionData)
     }
 
-    /// Download and save a verification photo locally.
+    /// Download a verification photo once and save it in the app sandbox;
+    /// afterwards it is always served locally. When a manager triggers the
+    /// first download, stamp `managerDownloadedAt` — the 14-day cloud cleanup
+    /// clock starts from that moment.
     func downloadAndCachePhoto(taskId: String, date: String, urlString: String) async -> UIImage? {
         guard let url = URL(string: urlString) else { return nil }
         guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
         guard let image = UIImage(data: data) else { return nil }
         TaskPhotoCache.save(image: image, taskId: taskId, date: date)
+
+        if currentUser?.role == .manager {
+            let docId = "\(taskId)_\(date)"
+            if let comp = taskCompletions.first(where: { $0.id == docId }), comp.managerDownloadedAt == nil {
+                try? await db.collection("task_completions").document(docId)
+                    .updateData(["managerDownloadedAt": FieldValue.serverTimestamp()])
+            }
+        }
         return image
+    }
+
+    // MARK: - Manager task management
+
+    /// Create or update a task. A non-nil `referencePhoto` is compressed and
+    /// uploaded; pass nil to keep the existing reference photo on edit.
+    func saveTask(
+        id: String?,
+        title: String,
+        description: String?,
+        frequency: String,
+        date: String?,
+        dayOfWeek: [Int]?,
+        assignedTo: [String]?,
+        dueTime: String?,
+        priority: String,
+        requiresPhoto: Bool,
+        endDate: String?,
+        referencePhoto: UIImage? = nil
+    ) async throws {
+        guard let uid = activeUID else { throw AuthError.notAuthenticated }
+        let docRef = id.map { db.collection("tasks").document($0) } ?? db.collection("tasks").document()
+
+        var fields: [String: Any] = [
+            "title": title,
+            "description": description ?? NSNull(),
+            "frequency": frequency,
+            "date": (frequency == "once" ? date : nil) ?? NSNull(),
+            "dayOfWeek": (frequency == "weekly" ? dayOfWeek : nil) ?? NSNull(),
+            "assignedTo": (assignedTo?.isEmpty == false ? assignedTo : nil) ?? NSNull(),
+            "dueTime": dueTime ?? NSNull(),
+            "priority": priority,
+            "requiresPhoto": requiresPhoto,
+            "endDate": endDate ?? NSNull(),
+            "active": true
+        ]
+        if id == nil {
+            fields["createdAt"] = FieldValue.serverTimestamp()
+            fields["createdBy"] = uid
+        } else {
+            fields["updatedAt"] = FieldValue.serverTimestamp()
+            fields["updatedBy"] = uid
+        }
+
+        if let referencePhoto {
+            guard let data = ImageCompressor.jpegData(from: referencePhoto) else {
+                throw NSError(domain: "RosterRepository", code: 400, userInfo: [NSLocalizedDescriptionKey: "Failed to compress image"])
+            }
+            let storageRef = Storage.storage().reference().child("task_ref_photos/\(docRef.documentID)_\(UUID().uuidString).jpg")
+            let metadata = StorageMetadata()
+            metadata.contentType = "image/jpeg"
+            _ = try await storageRef.putDataAsync(data, metadata: metadata)
+            fields["managerPhotoUrl"] = try await storageRef.downloadURL().absoluteString
+        }
+
+        try await docRef.setData(fields, merge: true)
+    }
+
+    /// Pause/resume a task. The active-only listener drops paused tasks, so
+    /// both portals stop showing them immediately.
+    func setTaskActive(id: String, active: Bool) async throws {
+        try await db.collection("tasks").document(id).updateData(["active": active])
+    }
+
+    /// Delete a task definition. Completion history is retained.
+    func deleteTask(id: String, managerPhotoUrl: String?) async throws {
+        if let managerPhotoUrl, !managerPhotoUrl.isEmpty {
+            try? await Storage.storage().reference(forURL: managerPhotoUrl).delete()
+        }
+        try await db.collection("tasks").document(id).delete()
+    }
+
+    /// Manager rejects a completion: the task reopens for that day on the
+    /// staff side, and the rejected photo is removed from the cloud (the
+    /// manager's local cache keeps a copy of what was rejected).
+    func requestTaskRedo(completion: TaskCompletion, reason: String) async throws {
+        guard let uid = activeUID else { throw AuthError.notAuthenticated }
+        if let url = completion.staffPhotoUrl, !url.isEmpty {
+            try? await Storage.storage().reference(forURL: url).delete()
+        }
+        try await db.collection("task_completions").document(completion.id).updateData([
+            "completed": false,
+            "status": "redo",
+            "redoReason": reason,
+            "reviewedBy": uid,
+            "reviewedAt": FieldValue.serverTimestamp(),
+            "staffPhotoUrl": NSNull()
+        ])
+    }
+
+    /// Manager finished reviewing: remove the photo from Firebase Storage to
+    /// stay inside the free tier. The local sandbox copy remains the review
+    /// history.
+    func deleteTaskCloudPhoto(completion: TaskCompletion) async throws {
+        guard let uid = activeUID else { throw AuthError.notAuthenticated }
+        if let url = completion.staffPhotoUrl, !url.isEmpty {
+            try? await Storage.storage().reference(forURL: url).delete()
+        }
+        try await db.collection("task_completions").document(completion.id).updateData([
+            "staffPhotoUrl": NSNull(),
+            "reviewedBy": uid,
+            "reviewedAt": FieldValue.serverTimestamp()
+        ])
+    }
+
+    /// 14-day backstop: any photo the manager downloaded over two weeks ago
+    /// that is still in Firebase Storage gets deleted. Runs shortly after a
+    /// manager signs in; the explicit delete-after-review action handles the
+    /// common case.
+    func cleanupExpiredTaskCloudPhotos(now: Date = Date()) async {
+        guard currentUser?.role == .manager else { return }
+        let cutoff = now.addingTimeInterval(-14 * 24 * 3600)
+        let expired = taskCompletions.filter { comp in
+            guard let downloadedAt = comp.managerDownloadedAt,
+                  let url = comp.staffPhotoUrl, !url.isEmpty else { return false }
+            return downloadedAt < cutoff
+        }
+        for comp in expired {
+            if let url = comp.staffPhotoUrl {
+                try? await Storage.storage().reference(forURL: url).delete()
+            }
+            try? await db.collection("task_completions").document(comp.id)
+                .updateData(["staffPhotoUrl": NSNull()])
+        }
     }
 
     /// Save a manager-defined work location (arrayUnion — idempotent for
@@ -805,6 +1062,24 @@ final class RosterRepository {
     }
 
     /// Approve a pending timesheet — sets status = .approved, managerNotes, approvedBy, and approvedAt.
+    /// Manager correction of a submitted timesheet's times (typo fixes, staff
+    /// forgot to end shift, …). The rostered times on the shift are untouched
+    /// — they stay the primary reference — and the attendance record keeps
+    /// the original verified clock-in/out for audit.
+    func managerAdjustTimesheet(id: String, actualStart: String, actualEnd: String,
+                                breakMinutes: Int) async throws {
+        let worked = BusinessRules.calcWorkedHours(start: actualStart, end: actualEnd,
+                                                   breakMinutes: breakMinutes)
+        try await db.collection("timesheets").document(id).updateData([
+            "actualStart": actualStart,
+            "actualEnd": actualEnd,
+            "actualBreakMinutes": breakMinutes,
+            "workedHours": worked,
+            "adjustedByManagerAt": nowISO(),
+            "updatedAt": nowISO(),
+        ])
+    }
+
     func approveTimesheet(id: String, managerNotes: String?) async throws {
         guard let currentUserId = currentUser?.id else { return }
         

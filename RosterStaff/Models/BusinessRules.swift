@@ -178,17 +178,26 @@ enum BusinessRules {
     // MARK: - Manager dashboard shift lifecycle
 
     /// Real-time lifecycle status of a shift from the manager's perspective.
-    /// A timesheet decides the state once one exists; otherwise the schedule
-    /// does (scheduled → in progress → pending submission).
-    static func managerShiftStatus(shift: Shift, timesheet: Timesheet?, at now: Date = Date()) -> ManagerShiftStatus {
+    /// A timesheet decides the state once one exists; otherwise the verified
+    /// attendance record does (actual clock-in/out); otherwise the schedule
+    /// (scheduled → in progress → pending submission).
+    static func managerShiftStatus(shift: Shift, timesheet: Timesheet?,
+                                   attendance: ShiftAttendance? = nil,
+                                   at now: Date = Date()) -> ManagerShiftStatus {
         if let ts = timesheet {
             switch ts.status {
             case .approved: return .approved
             case .pending: return .awaitingApproval
             case .rejected: return .rejected
             case .absentReported, .absent: return .absence
-            case .draft: break // not submitted yet — fall through to schedule
+            case .draft: break // not submitted yet — fall through
             }
+        }
+        // Verified attendance beats the schedule: an early clock-out means
+        // the shift is over (awaiting submission), not "in progress".
+        if let attendance {
+            if attendance.clockOutAt != nil { return .pendingSubmission }
+            if attendance.clockInAt != nil, now < shift.endDateTime { return .inProgress }
         }
         if now < shift.startDateTime { return .scheduled }
         if now < shift.endDateTime { return .inProgress }

@@ -5,6 +5,7 @@ struct ManagerDashboardView: View {
     @Environment(RosterRepository.self) private var repo
 
     @State private var showNewShiftEditor = false
+    @State private var showNewTaskEditor = false
 
     private var todayKey: String {
         RosterCalendar.todayKey()
@@ -32,12 +33,13 @@ struct ManagerDashboardView: View {
 
     /// Lifecycle status per shift (Scheduled → In Progress → Pending →
     /// Awaiting Approval → Approved), derived by BusinessRules from the
-    /// schedule + timesheet. "In Progress" is schedule-based for now — a
-    /// future Staff Portal "Start Shift" action will track actual starts.
+    /// timesheet, the verified attendance record (actual clock-in/out),
+    /// and the schedule — in that order.
     private func lifecycleStatus(for shift: Shift) -> ManagerShiftStatus {
         BusinessRules.managerShiftStatus(
             shift: shift,
-            timesheet: repo.timesheets.first(where: { $0.shiftId == shift.id })
+            timesheet: repo.timesheets.first(where: { $0.shiftId == shift.id }),
+            attendance: repo.attendance(forShift: shift.id)
         )
     }
 
@@ -153,6 +155,9 @@ struct ManagerDashboardView: View {
             .sheet(isPresented: $showNewShiftEditor) {
                 ManagerShiftEditorSheet(defaultDateKey: todayKey)
             }
+            .sheet(isPresented: $showNewTaskEditor) {
+                ManagerTaskEditorSheet(task: nil, defaultDateKey: todayKey)
+            }
         }
     }
     
@@ -222,7 +227,7 @@ struct ManagerDashboardView: View {
             metricCard(
                 value: "\(pendingTimesheetsCount) Awaiting",
                 label: "Pending Timesheets",
-                icon: "doc.text.badge.clock",
+                icon: "doc.badge.clock",
                 color: pendingTimesheetsCount > 0 ? Theme.warning : Theme.textSecondary
             )
         }
@@ -265,12 +270,9 @@ struct ManagerDashboardView: View {
                 actionButton(title: "New Shift", icon: "calendar.badge.plus", color: Theme.brand) {
                     showNewShiftEditor = true
                 }
-                NavigationLink {
-                    ManagerPlaceholderView(tab: .tasks)
-                } label: {
-                    actionLabel(title: "New Task", icon: "checkmark.circle.badge.questionmark", color: Theme.accent)
+                actionButton(title: "New Task", icon: "checkmark.circle.badge.questionmark", color: Theme.accent) {
+                    showNewTaskEditor = true
                 }
-                .buttonStyle(.plain)
                 NavigationLink {
                     ManagerStaffView(embedInNavigationStack: false)
                 } label: {
@@ -346,6 +348,11 @@ struct ManagerDashboardView: View {
                     RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous)
                         .fill(Theme.card)
                 )
+                // Clip the stacked rows to the card's rounded shape so a
+                // highlighted row's full-bleed background/accent bar follows the
+                // rounded corners instead of poking past them (which read as a
+                // doubled edge on the top/bottom row).
+                .clipShape(RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous))
             }
         }
     }

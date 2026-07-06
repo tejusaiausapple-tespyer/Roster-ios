@@ -148,10 +148,9 @@
         week), and a tapped day is respected
   - [ ] Dashboard/Tasks date formatters → RosterCalendar/RosterFormat
         (currently device-local TZ)
-  - [ ] TaskCompletionDetailSheet shows wrong "Completed By"
-        (uses current user, should resolve `completedBy`)
-  - ManagerTimesheetDetailSheet "Approved on" prints raw ISO string
-  - TasksView week-strip dots mark any staff's completions
+  - [x] TaskCompletionDetailSheet "Completed By" resolves `completedBy`
+  - [x] ManagerTimesheetDetailSheet "Approved on" ISO string (fixed 07-05)
+  - [x] TasksView week-strip dots now only mark this user's tasks (07-06)
   - Shift editor default times use Calendar.current → RosterCalendar
 - [ ] **M8 — Performance** (NOT STARTED)
   - Cache `RosterCalendar.calendar` (recomputed per access)
@@ -165,16 +164,21 @@
 - [ ] **M10 — CI** (NOT STARTED)
   - GitHub Actions: xcodegen → build → test on PRs (web repo has a CI to copy
     patterns from). pbxproj is gitignored so no drift check needed.
-- [ ] **M11 — Manager Tasks / Tenure / Wage tabs** (NOT STARTED; placeholders)
+- [ ] **M11 — Manager Tasks / Tenure / Wage tabs** (Tasks portion BUILT
+      2026-07-06, awaiting owner verification; Tenure still placeholder)
+  - Tasks: manager tab (list/editor/review + redo flow), staff upgrades
+    (assignment, priority, due time, tick-only tasks, notes), photo lifecycle
+    (≤2 MB uploads, sandbox-only storage, staff week-end sweep, manager
+    14-day cloud backstop + 90-day local retention). See docs/tasks-feature.md.
+  - ACTION REQUIRED: redeploy Firestore rules — task_completions tightened
+    (docs/reference/firestore.rules.deployed).
   - FUTURE (owner request 2026-07-05): **Payslip feature** — staff-visible
     payslips rendering the business details from `settings/app` (company
     name, address, ABN, contact — already captured via Account → Company
     Details). Slot alongside the Wage tab work.
 - [ ] **M12 — App Store & push** (BLOCKED on paid Apple Developer account;
       checklist in docs/WHEN_DEVELOPER_ACCOUNT_READY.md)
-  - ALSO: verify NSCameraUsageDescription in Info.plist (TasksView uses the
-    camera — string appears to be MISSING; can be fixed any time, crash/
-    rejection risk on device camera use)
+  - [x] NSCameraUsageDescription added to Info.plist (2026-07-06)
   - Passkey keep-or-remove decision (registration UI never wired)
 
 ---

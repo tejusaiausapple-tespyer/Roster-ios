@@ -24,6 +24,11 @@ struct ClockSession: Codable, Equatable {
     var clockInAt: Date
     var clockOutAt: Date?
     var breaks: [BreakInterval] = []
+    /// Staff's choice when ending at/after the rostered end: true = "use my
+    /// rostered end time" (submit seeds the roster), false/nil = "stayed back
+    /// for extra work" (submit seeds the actual clock-out, editable).
+    /// Optional so sessions persisted before this field decode cleanly.
+    var useRosteredEnd: Bool?
 
     var isOnBreak: Bool { breaks.last?.end == nil && !breaks.isEmpty }
     var isActive: Bool { clockOutAt == nil }
@@ -47,6 +52,26 @@ struct ClockSession: Codable, Equatable {
     func workedSeconds(at now: Date = Date()) -> TimeInterval {
         let end = clockOutAt ?? now
         return max(0, end.timeIntervalSince(clockInAt) - totalBreakSeconds(at: now))
+    }
+
+    /// Paid working time: an early check-in (the pre-shift window) is not
+    /// counted — paid time begins at the rostered start, and only breaks
+    /// overlapping the paid window are deducted.
+    func paidWorkedSeconds(rosterStart: Date, at now: Date = Date()) -> TimeInterval {
+        let paidStart = max(clockInAt, rosterStart)
+        let end = clockOutAt ?? now
+        guard end > paidStart else { return 0 }
+        let breakOverlap = breaks.reduce(0.0) { total, brk in
+            let overlapStart = max(brk.start, paidStart)
+            let overlapEnd = min(brk.end ?? now, end)
+            return total + max(0, overlapEnd.timeIntervalSince(overlapStart))
+        }
+        return end.timeIntervalSince(paidStart) - breakOverlap
+    }
+
+    /// The instant paid time begins for a given rostered start.
+    func paidStart(rosterStart: Date) -> Date {
+        max(clockInAt, rosterStart)
     }
 
     // MARK: Mutations

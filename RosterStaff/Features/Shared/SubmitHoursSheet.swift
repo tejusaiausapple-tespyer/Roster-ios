@@ -28,12 +28,21 @@ struct SubmitHoursSheet: View {
         self.clock = (clock?.shiftId == shift.id) ? clock : nil
         // Seed priority: previously submitted values → recorded clock session
         // → rostered times. A recorded session with no breaks seeds 0m break.
+        // Early check-ins are clamped to the rostered start: the pre-shift
+        // window is unpaid, so paid time never begins before the roster says.
         let clockSeed = self.clock
         let startSeed = existing.flatMap { TimeConvert.date(from: $0.actualStart) }
-            ?? clockSeed?.clockInAt
+            ?? clockSeed.map { $0.paidStart(rosterStart: shift.startDateTime) }
             ?? TimeConvert.date(from: shift.rosteredStart) ?? Date()
+        // "Use rostered end time" choice at clock-out seeds the roster's end;
+        // "stayed back for extra work" seeds the actual clock-out (editable).
+        let clockEndSeed: Date? = clockSeed.flatMap { session in
+            session.useRosteredEnd == true
+                ? TimeConvert.date(from: shift.rosteredEnd)
+                : session.clockOutAt
+        }
         let endSeed = existing.flatMap { TimeConvert.date(from: $0.actualEnd) }
-            ?? clockSeed?.clockOutAt
+            ?? clockEndSeed
             ?? TimeConvert.date(from: shift.rosteredEnd) ?? Date()
         _start = State(initialValue: startSeed)
         _end = State(initialValue: endSeed)

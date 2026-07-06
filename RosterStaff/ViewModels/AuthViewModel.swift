@@ -59,6 +59,7 @@ final class AuthViewModel {
             repository?.start(uid: uid)
             NotificationService.shared.requestAuthorizationAndRegister()
             NotificationService.shared.syncTokenAfterLogin()
+            Task { await ServerClock.shared.sync() }
         } else {
             repository?.stop()
             deviceAuthEnabled = false
@@ -100,22 +101,33 @@ final class AuthViewModel {
             temporaryPassword = password
             try? await Firestore.firestore().collection("users").document(uid)
                 .updateData(["lastLoginAt": FS.isoFormatter.string(from: Date())])
+            Haptics.signIn()
         } catch {
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
 
     func logout() {
-        try? AuthService.shared.signOut()
-        deviceAuthVerified = false
-        deviceAuthEnabled = false
-        temporaryPassword = nil
+        Haptics.signOut()
+        endSession()
     }
 
     /// Force sign-out with a message (e.g. account became locked while signed in).
     func forceSignOut(message: String) {
         forcedSignOutMessage = message
-        logout()
+        Haptics.forcedSignOut()
+        endSession()
+    }
+
+    private func endSession() {
+        if let uid {
+            NotificationService.shared.clearTokenOnLogout(uid: uid)
+        }
+        ShiftReminderScheduler.cancelAll()
+        try? AuthService.shared.signOut()
+        deviceAuthVerified = false
+        deviceAuthEnabled = false
+        temporaryPassword = nil
     }
 
     // MARK: - Device auth gate
@@ -124,10 +136,10 @@ final class AuthViewModel {
         guard let uid else { return }
         let ok = await DeviceAuthService.shared.verify(uid: uid)
         if ok {
-            Haptics.success()
+            Haptics.authSuccess()
             deviceAuthVerified = true
         } else {
-            Haptics.error()
+            Haptics.authFailure()
         }
     }
 
@@ -153,6 +165,7 @@ final class AuthViewModel {
                 deviceAuthVerified = false
             }
             self.backgroundedAt = nil
+            Task { await ServerClock.shared.sync() }
             Task { await repository?.refreshFromServer() }
         case .inactive:
             break

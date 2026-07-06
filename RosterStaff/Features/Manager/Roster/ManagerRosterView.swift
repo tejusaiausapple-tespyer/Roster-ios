@@ -253,7 +253,7 @@ struct ManagerRosterView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    ScreenTitlePill(title: "Roster Planner", icon: "calendar.fill")
+                    ScreenTitlePill(title: "Roster Planner", icon: "calendar.circle.fill")
                 }
             }
             .confirmationDialog(

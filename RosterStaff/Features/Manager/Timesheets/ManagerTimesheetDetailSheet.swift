@@ -15,6 +15,12 @@ struct ManagerTimesheetDetailSheet: View {
     @State private var toast: ToastMessage?
     @State private var rejectError: String?
 
+    // Manager time corrections (pending timesheets only)
+    @State private var isEditingTimes = false
+    @State private var editedStart: Date = Date()
+    @State private var editedEnd: Date = Date()
+    @State private var editedBreak: Int = 0
+
     init(timesheet: Timesheet, shift: Shift?, isEmbedded: Bool = false) {
         self.timesheet = timesheet
         self.shift = shift
@@ -22,6 +28,12 @@ struct ManagerTimesheetDetailSheet: View {
         _managerNotes = State(initialValue: timesheet.managerNotes ?? "")
     }
     
+    /// Live copy from the repository, so manager corrections show immediately;
+    /// falls back to the passed-in snapshot.
+    private var liveTimesheet: Timesheet {
+        repo.timesheets.first(where: { $0.id == timesheet.id }) ?? timesheet
+    }
+
     private var staffMember: AppUser? {
         repo.allUsers.first(where: { $0.id == timesheet.staffId })
     }
@@ -31,7 +43,7 @@ struct ManagerTimesheetDetailSheet: View {
     }
     
     private var actualHours: Double {
-        timesheet.workedHours
+        liveTimesheet.workedHours
     }
     
     private var rate: Double {
@@ -65,6 +77,11 @@ struct ManagerTimesheetDetailSheet: View {
                         
                         // Financial Variance Widget
                         financialVarianceCard
+
+                        // Verified attendance (server times + GPS), when recorded
+                        if let attendance = repo.attendance(forShift: timesheet.shiftId) {
+                            AttendanceCard(attendance: attendance, shift: shift)
+                        }
                         
                         // Staff Notes Card
                         if let staffNotes = timesheet.staffNotes, !staffNotes.isEmpty {
@@ -181,15 +198,34 @@ struct ManagerTimesheetDetailSheet: View {
                     Text("Actual Worked")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(hoursMismatch ? Theme.warning : Theme.brand)
-                    
-                    Text("\(timesheet.actualStart) - \(timesheet.actualEnd)")
+
+                    Text("\(liveTimesheet.actualStart) - \(liveTimesheet.actualEnd)")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Theme.textPrimary)
-                    Text("\(timesheet.actualBreakMinutes)m break")
+                    Text("\(liveTimesheet.actualBreakMinutes)m break")
                         .font(.caption)
                         .foregroundStyle(Theme.textTertiary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            // Correction editor: fix staff mistakes without a reject round-trip.
+            if timesheet.status == .pending {
+                Divider().overlay(Theme.separator)
+                if isEditingTimes {
+                    editTimesForm
+                } else {
+                    Button {
+                        editedStart = TimeConvert.date(from: liveTimesheet.actualStart) ?? Date()
+                        editedEnd = TimeConvert.date(from: liveTimesheet.actualEnd) ?? Date()
+                        editedBreak = liveTimesheet.actualBreakMinutes
+                        withAnimation { isEditingTimes = true }
+                    } label: {
+                        Label("Adjust submitted times", systemImage: "pencil.line")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Theme.brand)
+                    }
+                }
             }
         }
         .padding(16)
@@ -197,6 +233,54 @@ struct ManagerTimesheetDetailSheet: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.cornerLarge).strokeBorder(Theme.separator, lineWidth: 1))
     }
     
+    /// Inline time-correction form shown inside the comparison card.
+    private var editTimesForm: some View {
+        VStack(spacing: 10) {
+            HStack {
+                Text("Start")
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                DatePicker("", selection: $editedStart, displayedComponents: .hourAndMinute)
+                    .labelsHidden()
+            }
+            HStack {
+                Text("End")
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                DatePicker("", selection: $editedEnd, displayedComponents: .hourAndMinute)
+                    .labelsHidden()
+            }
+            Stepper("Break: \(editedBreak)m", value: $editedBreak,
+                    in: BusinessRules.breakMinutesMin...BusinessRules.breakMinutesMax,
+                    step: BusinessRules.breakMinutesStep)
+                .font(.subheadline.weight(.medium))
+
+            HStack(spacing: 12) {
+                Button("Cancel") {
+                    withAnimation { isEditingTimes = false }
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.textSecondary)
+
+                Spacer()
+
+                Button {
+                    saveAdjustedTimes()
+                } label: {
+                    if isSubmitting {
+                        ProgressView()
+                    } else {
+                        Text("Save correction")
+                            .font(.subheadline.weight(.bold))
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.brand)
+                .disabled(isSubmitting)
+            }
+        }
+    }
+
     private var financialVarianceCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("FINANCIAL ESTIMATES & VARIANCE")
@@ -439,7 +523,28 @@ struct ManagerTimesheetDetailSheet: View {
     }
     
     // MARK: - Actions
-    
+
+    private func saveAdjustedTimes() {
+        isSubmitting = true
+        Task {
+            defer { isSubmitting = false }
+            do {
+                try await repo.managerAdjustTimesheet(
+                    id: timesheet.id,
+                    actualStart: TimeConvert.hhmm(from: editedStart),
+                    actualEnd: TimeConvert.hhmm(from: editedEnd),
+                    breakMinutes: editedBreak
+                )
+                Haptics.saveSuccess()
+                withAnimation { isEditingTimes = false }
+                toast = ToastMessage(kind: .success, text: "Times corrected")
+            } catch {
+                toast = ToastMessage(kind: .error, text: "Couldn't save. \(error.localizedDescription)")
+                Haptics.saveError()
+            }
+        }
+    }
+
     private func approve() {
         isSubmitting = true
         Task {

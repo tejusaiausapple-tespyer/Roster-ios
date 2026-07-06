@@ -10,6 +10,16 @@ enum AppConfig {
     /// URL of the web app, surfaced to managers who mistakenly sign in here.
     static let webAppURL = URL(string: "https://sura-roster.com")!
 
+    /// Remote push master switch. Flip to `true` once the paid Apple
+    /// Developer account is approved and the Push Notifications capability +
+    /// FirebaseMessaging are added (docs/WHEN_DEVELOPER_ACCOUNT_READY.md).
+    /// Local shift reminders work regardless of this flag.
+    static let pushEnabled = false
+
+    /// Staff may start their shift this many seconds before the rostered
+    /// start ("early check-in"). Paid time still begins at the rostered start.
+    static let earlyClockInWindow: TimeInterval = 5 * 60
+
     /// After this idle interval in the background, re-require the device-auth gate.
     /// Mirrors the web app's 2-minute re-lock behaviour.
     static let deviceAuthBackgroundRelock: TimeInterval = 2 * 60

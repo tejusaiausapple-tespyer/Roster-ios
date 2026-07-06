@@ -6,6 +6,12 @@ struct ManagerMainView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
 
     var body: some View {
+        content
+            .onChange(of: selectedTab) { Haptics.tabChange() }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if UIDevice.current.userInterfaceIdiom == .phone {
             // iOS Compact Layout: 5 visible bottom tabs
             TabView(selection: $selectedTab) {
@@ -21,9 +27,7 @@ struct ManagerMainView: View {
                 }
                 .tag(ManagerTab.roster)
                 
-                NavigationStack {
-                    ManagerPlaceholderView(tab: .tasks)
-                }
+                ManagerTasksView()
                 .tabItem {
                     Label("Tasks", systemImage: ManagerTab.tasks.icon)
                 }
@@ -54,6 +58,8 @@ struct ManagerMainView: View {
                     ManagerDashboardView()
                 case .roster:
                     ManagerRosterView()
+                case .tasks:
+                    ManagerTasksView()
                 case .timesheets:
                     ManagerTimesheetsView()
                 case .staff:
