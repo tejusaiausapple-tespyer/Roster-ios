@@ -150,15 +150,18 @@ struct ManagerTaskDetailSheet: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Theme.textPrimary)
 
-                TaskPhotoView(taskId: task.id ?? "", date: dateKey, urlString: comp.staffPhotoUrl)
+                TaskPhotoView(taskId: task.id ?? "", date: dateKey, urlStrings: comp.photoUrls)
                     .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.cornerMedium))
 
-                if let url = comp.staffPhotoUrl, !url.isEmpty {
+                if !comp.photoUrls.isEmpty {
                     Button {
                         deleteCloudPhoto(comp)
                     } label: {
-                        Label("Reviewed — delete photo from cloud", systemImage: "icloud.slash")
+                        Label(comp.photoUrls.count > 1
+                              ? "Reviewed — delete \(comp.photoUrls.count) photos from cloud"
+                              : "Reviewed — delete photo from cloud",
+                              systemImage: "icloud.slash")
                             .font(.subheadline.weight(.semibold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)

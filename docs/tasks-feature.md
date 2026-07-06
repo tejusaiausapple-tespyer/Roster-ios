@@ -16,7 +16,9 @@ photo lifecycle below.
 
 `task_completions` (doc ID `{taskId}_{date}` — one completion per task per
 day, shared across assignees): legacy fields plus optional `note`, `status`
-("completed"/"redo"), `redoReason`, `reviewedBy/At`, `managerDownloadedAt`.
+("completed"/"redo"), `redoReason`, `reviewedBy/At`, `managerDownloadedAt`,
+and `staffPhotoUrls` (up to 4 proof photos; the first is mirrored to the
+legacy `staffPhotoUrl` field for PWA compatibility).
 
 Rules:
 - Firestore (`docs/reference/firestore.rules.deployed`): staff can only write
@@ -43,8 +45,11 @@ HTTPS download-token URLs are still supported when reviewing older completions.
 
 ## Photo lifecycle (Firebase free tier)
 
-- Uploads are compressed to **<= 2 MB** (`Services/ImageCompressor.swift`:
-  downscale to 1600 px + stepped JPEG quality).
+- Staff may attach up to **4 photos per completion**
+  (`RosterRepository.maxPhotosPerCompletion`), each compressed to
+  **<= 2 MB** (`Services/ImageCompressor.swift`: downscale to 1600 px +
+  stepped JPEG quality). Local cache files are `{taskId}_{date}.jpg` for the
+  first photo and `{taskId}_{date}_pN.jpg` for extras.
 - Photos live only in the app sandbox (`Services/TaskPhotoCache.swift`),
   never the phone photo library.
 - New proof photo records store a `gs://` Storage reference so manager review

@@ -685,14 +685,18 @@ final class RosterRepository {
         try? await batch.commit()
     }
 
-    /// Complete a task for a given date. If a photo is provided it is
-    /// compressed to fit the 2 MB Storage budget, uploaded, and cached in the
-    /// app sandbox (never the phone gallery).
-    func completeTask(taskId: String, date: String, image: UIImage?, note: String? = nil) async throws {
-        guard let uid = activeUID else { throw AuthError.notAuthenticated }
-        var photoUrl: String? = nil
+    /// Photos allowed per completion — each is ≤ 2 MB, so this caps a single
+    /// completion's Storage footprint at ~8 MB until review/cleanup.
+    static let maxPhotosPerCompletion = 4
 
-        if let image {
+    /// Complete a task for a given date. Photos are compressed to fit the
+    /// 2 MB Storage budget, uploaded, and cached in the app sandbox (never
+    /// the phone gallery).
+    func completeTask(taskId: String, date: String, images: [UIImage], note: String? = nil) async throws {
+        guard let uid = activeUID else { throw AuthError.notAuthenticated }
+        var photoUrls: [String] = []
+
+        for (index, image) in images.prefix(Self.maxPhotosPerCompletion).enumerated() {
             guard let data = ImageCompressor.jpegData(from: image) else {
                 throw NSError(domain: "RosterRepository", code: 400, userInfo: [NSLocalizedDescriptionKey: "Failed to compress image"])
             }
@@ -706,9 +710,9 @@ final class RosterRepository {
             ]
 
             _ = try await storageRef.putDataAsync(data, metadata: metadata)
-            photoUrl = storageRef.description
+            photoUrls.append(storageRef.description)
 
-            TaskPhotoCache.save(image: image, taskId: taskId, date: date)
+            TaskPhotoCache.save(image: image, taskId: taskId, date: date, index: index)
         }
 
         // setData (not merge) intentionally resets any prior redo state —
@@ -722,7 +726,9 @@ final class RosterRepository {
             "status": "completed",
             "completedAt": FieldValue.serverTimestamp(),
             "completedBy": uid,
-            "staffPhotoUrl": photoUrl ?? NSNull()
+            // First photo mirrored to the legacy field for PWA compatibility.
+            "staffPhotoUrl": photoUrls.first ?? NSNull(),
+            "staffPhotoUrls": photoUrls.isEmpty ? NSNull() : photoUrls
         ]
         if let note, !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             completionData["note"] = note
@@ -730,30 +736,18 @@ final class RosterRepository {
         try await db.collection("task_completions").document(docId).setData(completionData)
     }
 
-    /// Download a verification photo once and save it in the app sandbox;
-    /// afterwards it is always served locally. When a manager triggers the
-    /// first download, stamp `managerDownloadedAt` — the 14-day cloud cleanup
-    /// clock starts from that moment.
-    func downloadAndCachePhoto(taskId: String, date: String, urlString: String) async -> UIImage? {
-        let data: Data?
-        if urlString.hasPrefix("gs://") {
-            if let ref = storageReference(for: urlString) {
-                data = try? await ref.data(maxSize: Int64(ImageCompressor.maxBytes))
-            } else {
-                data = nil
-            }
-        } else if let url = URL(string: urlString) {
-            if let response = try? await URLSession.shared.data(from: url) {
-                data = response.0
-            } else {
-                data = nil
-            }
-        } else {
-            data = nil
+    /// Download all verification photos once and save them in the app
+    /// sandbox; afterwards they are always served locally. When a manager
+    /// triggers the first download, stamp `managerDownloadedAt` — the 14-day
+    /// cloud cleanup clock starts from that moment.
+    func downloadAndCachePhotos(taskId: String, date: String, urlStrings: [String]) async -> [UIImage] {
+        var images: [UIImage] = []
+        for (index, urlString) in urlStrings.enumerated() {
+            guard let image = await fetchPhoto(urlString) else { continue }
+            TaskPhotoCache.save(image: image, taskId: taskId, date: date, index: index)
+            images.append(image)
         }
-        guard let data else { return nil }
-        guard let image = UIImage(data: data) else { return nil }
-        TaskPhotoCache.save(image: image, taskId: taskId, date: date)
+        guard !images.isEmpty else { return [] }
 
         if currentUser?.role == .manager {
             let docId = "\(taskId)_\(date)"
@@ -762,7 +756,18 @@ final class RosterRepository {
                     .updateData(["managerDownloadedAt": FieldValue.serverTimestamp()])
             }
         }
-        return image
+        return images
+    }
+
+    private func fetchPhoto(_ urlString: String) async -> UIImage? {
+        if urlString.hasPrefix("gs://") {
+            guard let ref = storageReference(for: urlString),
+                  let data = try? await ref.data(maxSize: Int64(ImageCompressor.maxBytes)) else { return nil }
+            return UIImage(data: data)
+        }
+        guard let url = URL(string: urlString),
+              let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
+        return UIImage(data: data)
     }
 
     // MARK: - Manager task management
@@ -841,17 +846,15 @@ final class RosterRepository {
     /// manager's local cache keeps a copy of what was rejected).
     func requestTaskRedo(completion: TaskCompletion, reason: String) async throws {
         guard let uid = activeUID else { throw AuthError.notAuthenticated }
-        if let url = completion.staffPhotoUrl, !url.isEmpty,
-           let ref = storageReference(for: url) {
-            try? await ref.delete()
-        }
+        await deleteCloudObjects(completion.photoUrls)
         try await db.collection("task_completions").document(completion.id).updateData([
             "completed": false,
             "status": "redo",
             "redoReason": reason,
             "reviewedBy": uid,
             "reviewedAt": FieldValue.serverTimestamp(),
-            "staffPhotoUrl": NSNull()
+            "staffPhotoUrl": NSNull(),
+            "staffPhotoUrls": NSNull()
         ])
     }
 
@@ -860,15 +863,21 @@ final class RosterRepository {
     /// history.
     func deleteTaskCloudPhoto(completion: TaskCompletion) async throws {
         guard let uid = activeUID else { throw AuthError.notAuthenticated }
-        if let url = completion.staffPhotoUrl, !url.isEmpty,
-           let ref = storageReference(for: url) {
-            try? await ref.delete()
-        }
+        await deleteCloudObjects(completion.photoUrls)
         try await db.collection("task_completions").document(completion.id).updateData([
             "staffPhotoUrl": NSNull(),
+            "staffPhotoUrls": NSNull(),
             "reviewedBy": uid,
             "reviewedAt": FieldValue.serverTimestamp()
         ])
+    }
+
+    private func deleteCloudObjects(_ urls: [String]) async {
+        for url in urls where !url.isEmpty {
+            if let ref = storageReference(for: url) {
+                try? await ref.delete()
+            }
+        }
     }
 
     /// 14-day backstop: any photo the manager downloaded over two weeks ago
@@ -879,17 +888,13 @@ final class RosterRepository {
         guard currentUser?.role == .manager else { return }
         let cutoff = now.addingTimeInterval(-14 * 24 * 3600)
         let expired = taskCompletions.filter { comp in
-            guard let downloadedAt = comp.managerDownloadedAt,
-                  let url = comp.staffPhotoUrl, !url.isEmpty else { return false }
+            guard let downloadedAt = comp.managerDownloadedAt, !comp.photoUrls.isEmpty else { return false }
             return downloadedAt < cutoff
         }
         for comp in expired {
-            if let url = comp.staffPhotoUrl,
-               let ref = storageReference(for: url) {
-                try? await ref.delete()
-            }
+            await deleteCloudObjects(comp.photoUrls)
             try? await db.collection("task_completions").document(comp.id)
-                .updateData(["staffPhotoUrl": NSNull()])
+                .updateData(["staffPhotoUrl": NSNull(), "staffPhotoUrls": NSNull()])
         }
     }
 

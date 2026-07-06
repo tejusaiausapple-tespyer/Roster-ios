@@ -70,7 +70,8 @@ struct TaskCompletion: Identifiable, Codable {
     let completed: Bool
     let completedAt: Date?
     let completedBy: String?
-    let staffPhotoUrl: String?
+    let staffPhotoUrl: String?      // legacy single photo (PWA-shared field; first photo mirrored here)
+    let staffPhotoUrls: [String]?   // all proof photos (gs:// references)
     // Review workflow (nil on legacy docs)
     let note: String?                // staff note on completion
     let status: String?              // "completed" | "redo"
@@ -82,4 +83,11 @@ struct TaskCompletion: Identifiable, Codable {
     let managerDownloadedAt: Date?
 
     var isRedoRequested: Bool { status == "redo" }
+
+    /// All proof-photo references, tolerating legacy single-photo docs.
+    var photoUrls: [String] {
+        if let staffPhotoUrls, !staffPhotoUrls.isEmpty { return staffPhotoUrls }
+        if let staffPhotoUrl, !staffPhotoUrl.isEmpty { return [staffPhotoUrl] }
+        return []
+    }
 }

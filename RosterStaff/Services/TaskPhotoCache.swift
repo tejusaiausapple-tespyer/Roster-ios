@@ -17,34 +17,56 @@ struct TaskPhotoCache {
         }
     }
     
-    static func save(image: UIImage, taskId: String, date: String) {
+    /// Index 0 keeps the legacy un-suffixed filename so pre-multi-photo
+    /// caches keep working; extra photos are "_p1", "_p2", ...
+    private static func fileURL(taskId: String, date: String, index: Int) -> URL {
+        let suffix = index == 0 ? "" : "_p\(index)"
+        return folderURL.appendingPathComponent("\(taskId)_\(date)\(suffix).jpg")
+    }
+
+    static func save(image: UIImage, taskId: String, date: String, index: Int = 0) {
         createFolderIfNeeded()
-        let fileURL = folderURL.appendingPathComponent("\(taskId)_\(date).jpg")
         if let data = image.jpegData(compressionQuality: 0.5) {
-            try? data.write(to: fileURL)
+            try? data.write(to: fileURL(taskId: taskId, date: date, index: index))
         }
     }
-    
+
     static func load(taskId: String, date: String) -> UIImage? {
-        let fileURL = folderURL.appendingPathComponent("\(taskId)_\(date).jpg")
-        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        guard let data = try? Data(contentsOf: fileURL(taskId: taskId, date: date, index: 0)) else { return nil }
         return UIImage(data: data)
     }
-    
+
+    /// All cached photos for a completion, in capture order.
+    static func loadAll(taskId: String, date: String) -> [UIImage] {
+        var images: [UIImage] = []
+        var index = 0
+        while let data = try? Data(contentsOf: fileURL(taskId: taskId, date: date, index: index)),
+              let image = UIImage(data: data) {
+            images.append(image)
+            index += 1
+        }
+        return images
+    }
+
     static func delete(taskId: String, date: String) {
-        let fileURL = folderURL.appendingPathComponent("\(taskId)_\(date).jpg")
-        try? FileManager.default.removeItem(at: fileURL)
+        var index = 0
+        while FileManager.default.fileExists(atPath: fileURL(taskId: taskId, date: date, index: index).path) {
+            try? FileManager.default.removeItem(at: fileURL(taskId: taskId, date: date, index: index))
+            index += 1
+        }
     }
 
     // MARK: - Retention sweeps
 
-    /// Filenames are "{taskId}_{yyyy-MM-dd}.jpg" — the date is the last
-    /// 10 characters of the stem.
+    /// Filenames are "{taskId}_{yyyy-MM-dd}.jpg" or "{taskId}_{yyyy-MM-dd}_pN.jpg"
+    /// — scan the underscore-separated components for the date.
     private static func dateKey(fromFilename name: String) -> String? {
         let stem = (name as NSString).deletingPathExtension
-        guard stem.count >= 10 else { return nil }
-        let key = String(stem.suffix(10))
-        return RosterCalendar.dateFromKey(key) != nil ? key : nil
+        for part in stem.split(separator: "_").reversed() where part.count == 10 {
+            let key = String(part)
+            if RosterCalendar.dateFromKey(key) != nil { return key }
+        }
+        return nil
     }
 
     /// Staff retention: photos are viewable only until the end of the week
