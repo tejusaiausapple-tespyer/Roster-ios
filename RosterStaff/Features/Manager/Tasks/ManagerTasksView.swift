@@ -268,13 +268,13 @@ struct ManagerTasksView: View {
     private func assigneeSummary(_ task: RosterTask) -> String {
         guard let ids = task.assignedTo, !ids.isEmpty else { return "All staff" }
         let names = ids.compactMap { id in
-            repository.allUsers.first(where: { $0.id == id })?.firstName
+            repository.user(id: id)?.firstName
         }
         return names.isEmpty ? "All staff" : names.joined(separator: ", ")
     }
 
     private func completerName(_ comp: TaskCompletion) -> String {
-        repository.allUsers.first(where: { $0.id == comp.completedBy })?.firstName ?? "Staff"
+        repository.user(id: comp.completedBy)?.firstName ?? "Staff"
     }
 
     private func chip(_ text: String, icon: String, tint: Color = Theme.textSecondary) -> some View {

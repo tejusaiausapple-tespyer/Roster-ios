@@ -9,12 +9,15 @@ enum RosterCalendar {
     static let timeZone = TimeZone(identifier: "Australia/Adelaide") ?? .current
 
     /// Gregorian calendar, Monday-first, pinned to the business timezone.
-    static var calendar: Calendar {
+    /// Cached: `Calendar` is a value type with no mutable shared state, and it
+    /// is read on virtually every date operation, so rebuilding it per access
+    /// was pure waste.
+    static let calendar: Calendar = {
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = timeZone
         cal.firstWeekday = 2 // Monday
         return cal
-    }
+    }()
 
     static let dayFormatter: DateFormatter = {
         let f = DateFormatter()

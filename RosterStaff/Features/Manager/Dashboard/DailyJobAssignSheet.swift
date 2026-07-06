@@ -16,7 +16,7 @@ struct DailyJobAssignSheet: View {
     @State private var errorMessage: String? = nil
 
     private var staffName: String {
-        repo.allUsers.first(where: { $0.id == shift.staffId })?.fullName ?? "Staff Member"
+        repo.user(id: shift.staffId)?.fullName ?? "Staff Member"
     }
 
     private var assignments: [DailyJobAssignment] {

@@ -35,7 +35,7 @@ struct ManagerTimesheetDetailSheet: View {
     }
 
     private var staffMember: AppUser? {
-        repo.allUsers.first(where: { $0.id == timesheet.staffId })
+        repo.user(id: timesheet.staffId)
     }
     
     private var rosteredHours: Double {

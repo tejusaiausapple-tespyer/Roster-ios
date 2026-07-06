@@ -155,7 +155,7 @@ struct ManagerRosterView: View {
 
     private var selectedStaffFilterName: String {
         selectedStaffFilterId.flatMap { id in
-            repo.allUsers.first(where: { $0.id == id })?.fullName
+            repo.user(id: id)?.fullName
         } ?? "All staff"
     }
     private var isStatusFilterActive: Bool { selectedStatusFilter != "All statuses" }
@@ -172,7 +172,7 @@ struct ManagerRosterView: View {
 
     private var grossWages: Double {
         weekShifts.reduce(0.0) { sum, shift in
-            let rate = repo.allUsers.first(where: { $0.id == shift.staffId })?.hourlyRate ?? BusinessRules.defaultHourlyRate
+            let rate = repo.user(id: shift.staffId)?.hourlyRate ?? BusinessRules.defaultHourlyRate
             return sum + (shift.scheduledHours * rate)
         }
     }
@@ -180,7 +180,7 @@ struct ManagerRosterView: View {
     private var superannuation: Double {
         // Per-staff super where set, otherwise the SG default (12%).
         weekShifts.reduce(0.0) { sum, shift in
-            let user = repo.allUsers.first(where: { $0.id == shift.staffId })
+            let user = repo.user(id: shift.staffId)
             let rate = user?.hourlyRate ?? BusinessRules.defaultHourlyRate
             let superPercent = user?.superRate ?? BusinessRules.defaultSuperRatePercent
             return sum + (shift.scheduledHours * rate * superPercent / 100)
@@ -288,7 +288,7 @@ struct ManagerRosterView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 if let action = activeDragDropAction {
-                    let staff = repo.allUsers.first(where: { $0.id == action.shift.staffId })?.fullName ?? "Staff"
+                    let staff = repo.user(id: action.shift.staffId)?.fullName ?? "Staff"
                     Text("Move or copy \(staff)'s shift to this day?")
                 }
             }
@@ -759,7 +759,7 @@ struct ManagerRosterView: View {
 
     // Shift card — CONTENT layer, deliberately solid (no glass) for legibility.
     private func gridShiftCard(_ shift: Shift) -> some View {
-        let staffMember = repo.allUsers.first(where: { $0.id == shift.staffId })
+        let staffMember = repo.user(id: shift.staffId)
         let ts = repo.timesheet(forShift: shift.id)
 
         let displayStatus: StaffShiftDisplayStatus = {
@@ -975,7 +975,7 @@ struct ManagerRosterView: View {
     }
 
     private func shiftCardRow(_ shift: Shift) -> some View {
-        let staffMember = repo.allUsers.first(where: { $0.id == shift.staffId })
+        let staffMember = repo.user(id: shift.staffId)
         let ts = repo.timesheet(forShift: shift.id)
 
         let displayStatus: StaffShiftDisplayStatus = {
@@ -1279,7 +1279,7 @@ struct ManagerRosterView: View {
         guard !targets.isEmpty else { return }
 
         let label: String
-        if let staffId, let name = repo.allUsers.first(where: { $0.id == staffId })?.fullName {
+        if let staffId, let name = repo.user(id: staffId)?.fullName {
             label = "\(targets.count) shift\(targets.count == 1 ? "" : "s") for \(name)"
         } else {
             label = "all \(targets.count) shift\(targets.count == 1 ? "" : "s")"

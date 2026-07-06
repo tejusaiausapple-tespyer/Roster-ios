@@ -41,12 +41,12 @@ struct ManagerReportsView: View {
     private var weekTimesheets: [Timesheet] { repo.timesheets.filter { weekShiftIds.contains($0.shiftId) } }
 
     private func rate(_ staffId: String) -> Double {
-        repo.allUsers.first(where: { $0.id == staffId })?.hourlyRate ?? BusinessRules.defaultHourlyRate
+        repo.user(id: staffId)?.hourlyRate ?? BusinessRules.defaultHourlyRate
     }
 
     /// Per-staff super where set, otherwise the SG default (12%).
     private func superMultiplier(_ staffId: String) -> Double {
-        let percent = repo.allUsers.first(where: { $0.id == staffId })?.superRate
+        let percent = repo.user(id: staffId)?.superRate
             ?? BusinessRules.defaultSuperRatePercent
         return 1 + percent / 100
     }
@@ -73,7 +73,7 @@ struct ManagerReportsView: View {
     private var perStaff: [StaffRow] {
         let groups = Dictionary(grouping: weekShifts, by: { $0.staffId })
         return groups.map { (staffId, shifts) in
-            let name = repo.allUsers.first(where: { $0.id == staffId })?.fullName ?? "Staff"
+            let name = repo.user(id: staffId)?.fullName ?? "Staff"
             let sched = shifts.reduce(0) { $0 + $1.scheduledHours }
             let ids = Set(shifts.map { $0.id })
             let worked = weekTimesheets.filter { ids.contains($0.shiftId) && $0.status == .approved }.reduce(0) { $0 + $1.workedHours }

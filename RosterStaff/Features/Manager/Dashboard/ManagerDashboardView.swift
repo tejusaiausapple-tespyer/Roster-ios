@@ -329,7 +329,7 @@ struct ManagerDashboardView: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(todaysShifts.enumerated()), id: \.element.id) { index, shift in
-                        let staffMember = repo.allUsers.first(where: { $0.id == shift.staffId })
+                        let staffMember = repo.user(id: shift.staffId)
                         let status = lifecycleStatus(for: shift)
 
                         Button {
@@ -430,7 +430,7 @@ struct ManagerDashboardView: View {
                 VStack(spacing: 0) {
                     ForEach(Array(recentCompletions.enumerated()), id: \.element.id) { index, completion in
                         let task = repo.tasks.first(where: { $0.id == completion.taskId })
-                        let staffMember = repo.allUsers.first(where: { $0.id == completion.completedBy })
+                        let staffMember = repo.user(id: completion.completedBy)
                         
                         taskLogRow(
                             name: staffMember?.fullName ?? "Staff",

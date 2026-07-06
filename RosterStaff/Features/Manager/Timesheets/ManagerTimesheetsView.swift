@@ -84,7 +84,7 @@ struct ManagerTimesheetsView: View {
 
     private var selectedStaffFilterName: String {
         selectedStaffFilterId.flatMap { id in
-            repo.allUsers.first(where: { $0.id == id })?.fullName
+            repo.user(id: id)?.fullName
         } ?? "All staff"
     }
 
@@ -379,7 +379,7 @@ struct ManagerTimesheetsView: View {
 
     // Content layer — solid card (no glass). Highlights when selected in bulk mode.
     private func timesheetCard(_ ts: Timesheet, isSelected: Bool = false) -> some View {
-        let staff = repo.allUsers.first(where: { $0.id == ts.staffId })
+        let staff = repo.user(id: ts.staffId)
         let shift = repo.shifts.first(where: { $0.id == ts.shiftId })
         let rosteredHours = shift?.scheduledHours ?? 0
         let actualHours = ts.workedHours

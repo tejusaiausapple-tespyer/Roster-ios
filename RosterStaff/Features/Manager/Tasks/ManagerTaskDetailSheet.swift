@@ -135,7 +135,7 @@ struct ManagerTaskDetailSheet: View {
 
             VStack(spacing: 8) {
                 reportRow("Completed By",
-                          repository.allUsers.first(where: { $0.id == comp.completedBy })?.fullName ?? "Staff")
+                          repository.user(id: comp.completedBy)?.fullName ?? "Staff")
                 reportRow("Completed Time", formatDateTime(comp.completedAt))
                 if let note = comp.note, !note.isEmpty {
                     reportRow("Staff Note", note)

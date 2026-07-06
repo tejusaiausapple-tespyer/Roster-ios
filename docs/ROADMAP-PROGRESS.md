@@ -171,11 +171,19 @@
   - [x] Staff shift card button label reflects state — "Update hours" for a
         pending (still-editable) timesheet, was stuck on "Submit hours" and
         read as a failed submission (Sura feedback 07-06)
-- [ ] **M8 — Performance** (NOT STARTED)
-  - Cache `RosterCalendar.calendar` (recomputed per access)
-  - Dictionary lookups (usersById, timesheetsByShiftId) in manager views
-  - `pendingFirstSnapshot` doesn't include role-listener labels → isLoading
-    clears before shifts/timesheets arrive
+- [ ] **M8 — Performance** — ✅ CODE COMPLETE on branch
+      `milestone-8-performance` (2026-07-06), ⏳ awaiting Sura's device
+      verification
+  - [x] `RosterCalendar.calendar` cached as `static let` (was a computed var
+        rebuilding a Calendar on every date operation)
+  - [x] `usersById` + `timesheetsByShiftId` indexes on RosterRepository,
+        maintained via didSet; new `user(id:)` helper. All 19 manager-view
+        `allUsers.first(where: id ==)` scans → O(1) (was O(n²) per list).
+        `timesheet(forShift:)` uses the index, keeping first-wins + the
+        legacy id fallback.
+  - [x] `pendingFirstSnapshot` now includes shifts + timesheets, so isLoading
+        stays true until the roster actually arrives (was flashing an empty
+        roster before role-listener data streamed in)
 - [ ] **M9 — Accessibility & design consistency** (NOT STARTED)
   - Fixed font sizes → Dynamic Type (LoginView, TasksView, Dashboard,
     ManagerAvailability cells); Reduce Motion on LoginView orbs/border sweep;

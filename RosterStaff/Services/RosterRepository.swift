@@ -14,7 +14,12 @@ final class RosterRepository {
     // Live state
     var currentUser: AppUser?
     var shifts: [Shift] = []
-    var timesheets: [Timesheet] = []
+    /// Cache maintained on assignment so manager list views can resolve a
+    /// timesheet-by-shift in O(1) instead of O(n) per row (O(n²) per list).
+    var timesheets: [Timesheet] = [] {
+        didSet { rebuildTimesheetIndex() }
+    }
+    private(set) var timesheetsByShiftId: [String: Timesheet] = [:]
     var messages: [Message] = []
     var appSettings: AppSettings = .fallback
     var tasks: [RosterTask] = []
@@ -23,7 +28,11 @@ final class RosterRepository {
     /// (manager-only listener) + shift-scoped assignments (both roles).
     var dailyJobTemplates: [DailyJobTemplate] = []
     var dailyJobAssignments: [DailyJobAssignment] = []
-    var allUsers: [AppUser] = []
+    /// Same O(1) treatment for staff-by-id, the most common manager lookup.
+    var allUsers: [AppUser] = [] {
+        didSet { usersById = Dictionary(allUsers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }) }
+    }
+    private(set) var usersById: [String: AppUser] = [:]
     /// Manager-defined work locations (settings/locations).
     var locations: [RosterLocation] = []
     /// Roster weeks whose staff availability a manager has locked
@@ -72,7 +81,13 @@ final class RosterRepository {
         loadClockSession(for: uid)
         isLoading = true
         loadError = nil
-        pendingFirstSnapshot = ["users", "tasks", "task_completions"]
+        // Include the role-specific listeners (shifts, timesheets) that every
+        // role registers — otherwise isLoading clears as soon as the
+        // always-on listeners arrive and the UI flashes an empty roster before
+        // shifts/timesheets stream in. They start after the user doc resolves
+        // the role, but Firestore always delivers an initial snapshot (even
+        // empty), so markArrived will fire for them.
+        pendingFirstSnapshot = ["users", "tasks", "task_completions", "shifts", "timesheets"]
 
         let range = BusinessRules.staffShiftDateRange()
 
@@ -551,11 +566,29 @@ final class RosterRepository {
     // MARK: - Derived lookups
 
     func timesheet(forShift shiftId: String) -> Timesheet? {
-        timesheets.first { $0.shiftId == shiftId || $0.id == shiftId }
+        // Fast path via the maintained index; fall back to the legacy
+        // id-match only if no shiftId hit (deep-link edge case).
+        timesheetsByShiftId[shiftId] ?? timesheets.first { $0.id == shiftId }
     }
 
     func shift(id: String) -> Shift? {
         shifts.first { $0.id == id }
+    }
+
+    /// O(1) staff lookup — prefer this over `allUsers.first(where:)` in list rows.
+    func user(id: String?) -> AppUser? {
+        guard let id else { return nil }
+        return usersById[id]
+    }
+
+    /// Keeps `timesheetsByShiftId` first-wins, matching the old `.first` scan.
+    private func rebuildTimesheetIndex() {
+        var index: [String: Timesheet] = [:]
+        index.reserveCapacity(timesheets.count)
+        for ts in timesheets where index[ts.shiftId] == nil {
+            index[ts.shiftId] = ts
+        }
+        timesheetsByShiftId = index
     }
 
     /// One-shot fetch for a shift outside the live window (deep links).
