@@ -180,9 +180,8 @@
     docs/tasks-feature.md.
   - ACTION REQUIRED: redeploy Firestore rules — task_completions tightened
     (docs/reference/firestore.rules.deployed).
-  - ACTION REQUIRED: deploy Firebase Storage rules — task proof/reference photo
-    paths are in docs/reference/storage.rules. Until deployed, photo uploads can
-    fail with "permission denied" on `gs://.../task_photos/...`.
+  - DEPLOYED 2026-07-06: Firebase Storage rules for task proof/reference photo
+    paths (`docs/reference/storage.rules`) are live in project `roster-8a270`.
   - VERIFY after Storage rules deploy: staff completes a photo-required task;
     Firebase Storage shows the object under `task_photos/{staffUid}/...`;
     `task_completions/{taskId}_{date}.staffPhotoUrl` starts with `gs://`;
@@ -221,11 +220,7 @@ Then: `git checkout main && git merge --no-ff milestone-4-data-integrity && git 
 2. RECOMMENDED: tighten `task_completions` rules so staff can't overwrite each
    other's completions (require create-only, or `resource.data.completedBy ==
    request.auth.uid` on update).
-3. REQUIRED for M11 task photos: deploy `docs/reference/storage.rules` to
-   Firebase Storage. If prompted, enable the Firebase Rules permission that
-   lets Storage rules read the default Firestore database for manager role
-   checks.
-4. When Firestore rules are redeployed, update
+3. When Firestore rules are redeployed, update
    `docs/reference/firestore.rules.deployed`.
 
 ## Open decisions (answers needed before the milestone that uses them)
