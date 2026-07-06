@@ -1,0 +1,58 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isActiveManager() {
+      return signedIn() &&
+        firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'manager' &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.status == 'active';
+    }
+
+    function isJpegUnderBudget() {
+      return request.resource.size <= 2 * 1024 * 1024 &&
+        request.resource.contentType == 'image/jpeg';
+    }
+
+    // Staff task verification photos. New iOS builds store these as gs://
+    // references, not public download-token URLs.
+    match /task_photos/{ownerId}/{fileName} {
+      allow create: if signedIn() &&
+        request.auth.uid == ownerId &&
+        isJpegUnderBudget() &&
+        request.resource.metadata.owner == ownerId &&
+        request.resource.metadata.taskId is string &&
+        request.resource.metadata.date is string &&
+        firestore.exists(/databases/(default)/documents/tasks/$(request.resource.metadata.taskId)) &&
+        fileName.matches('.*\\.jpg');
+
+      allow read: if isActiveManager() || (signedIn() && request.auth.uid == ownerId);
+      allow delete: if isActiveManager();
+      allow update: if false;
+    }
+
+    // Legacy flat proof-photo path used before owner-prefixed uploads. Keep
+    // manager read/delete so existing objects can still be reviewed and swept.
+    match /task_photos/{fileName} {
+      allow read, delete: if isActiveManager();
+      allow create, update: if false;
+    }
+
+    // Manager reference/instruction photos attached to task definitions.
+    match /task_ref_photos/{fileName} {
+      allow read: if signedIn();
+      allow create: if isActiveManager() &&
+        isJpegUnderBudget() &&
+        fileName.matches('.*\\.jpg');
+      allow update: if false;
+      allow delete: if isActiveManager();
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

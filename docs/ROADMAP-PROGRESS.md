@@ -173,10 +173,16 @@
       2026-07-06, awaiting owner verification; Tenure still placeholder)
   - Tasks: manager tab (list/editor/review + redo flow), staff upgrades
     (assignment, priority, due time, tick-only tasks, notes), photo lifecycle
-    (≤2 MB uploads, sandbox-only storage, staff week-end sweep, manager
-    14-day cloud backstop + 90-day local retention). See docs/tasks-feature.md.
+    (<=2 MB uploads, sandbox-only storage, staff week-end sweep, manager
+    14-day cloud backstop + 90-day local retention). New proof photos store
+    `gs://` Storage references under `task_photos/{uid}/...` so manager review
+    uses Storage rules instead of public download-token URLs. See
+    docs/tasks-feature.md.
   - ACTION REQUIRED: redeploy Firestore rules — task_completions tightened
     (docs/reference/firestore.rules.deployed).
+  - ACTION REQUIRED: deploy Firebase Storage rules — task proof/reference photo
+    paths are in docs/reference/storage.rules. Until deployed, photo uploads can
+    fail with "permission denied" on `gs://.../task_photos/...`.
   - FUTURE (owner request 2026-07-05): **Payslip feature** — staff-visible
     payslips rendering the business details from `settings/app` (company
     name, address, ABN, contact — already captured via Account → Company
@@ -210,7 +216,12 @@ Then: `git checkout main && git merge --no-ff milestone-4-data-integrity && git 
 2. RECOMMENDED: tighten `task_completions` rules so staff can't overwrite each
    other's completions (require create-only, or `resource.data.completedBy ==
    request.auth.uid` on update).
-3. When either is done, update `docs/reference/firestore.rules.deployed`.
+3. REQUIRED for M11 task photos: deploy `docs/reference/storage.rules` to
+   Firebase Storage. If prompted, enable the Firebase Rules permission that
+   lets Storage rules read the default Firestore database for manager role
+   checks.
+4. When Firestore rules are redeployed, update
+   `docs/reference/firestore.rules.deployed`.
 
 ## Open decisions (answers needed before the milestone that uses them)
 

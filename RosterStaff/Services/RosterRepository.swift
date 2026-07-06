@@ -52,6 +52,7 @@ final class RosterRepository {
     private var roleListenersInitialized = false
 
     private var db: Firestore { Firestore.firestore() }
+    private var storage: Storage { Storage.storage() }
 
     // MARK: - Lifecycle
 
@@ -690,13 +691,17 @@ final class RosterRepository {
             guard let data = ImageCompressor.jpegData(from: image) else {
                 throw NSError(domain: "RosterRepository", code: 400, userInfo: [NSLocalizedDescriptionKey: "Failed to compress image"])
             }
-            let storageRef = Storage.storage().reference().child("task_photos/\(taskId)_\(date)_\(UUID().uuidString).jpg")
+            let storageRef = storage.reference().child("task_photos/\(uid)/\(taskId)_\(date)_\(UUID().uuidString).jpg")
             let metadata = StorageMetadata()
             metadata.contentType = "image/jpeg"
+            metadata.customMetadata = [
+                "owner": uid,
+                "taskId": taskId,
+                "date": date
+            ]
 
             _ = try await storageRef.putDataAsync(data, metadata: metadata)
-            let downloadURL = try await storageRef.downloadURL()
-            photoUrl = downloadURL.absoluteString
+            photoUrl = storageRef.description
 
             TaskPhotoCache.save(image: image, taskId: taskId, date: date)
         }
@@ -725,8 +730,20 @@ final class RosterRepository {
     /// first download, stamp `managerDownloadedAt` — the 14-day cloud cleanup
     /// clock starts from that moment.
     func downloadAndCachePhoto(taskId: String, date: String, urlString: String) async -> UIImage? {
-        guard let url = URL(string: urlString) else { return nil }
-        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
+        let data: Data?
+        if urlString.hasPrefix("gs://") {
+            let ref = storage.reference(forURL: urlString)
+            data = try? await ref.data(maxSize: Int64(ImageCompressor.maxBytes))
+        } else if let url = URL(string: urlString) {
+            if let response = try? await URLSession.shared.data(from: url) {
+                data = response.0
+            } else {
+                data = nil
+            }
+        } else {
+            data = nil
+        }
+        guard let data else { return nil }
         guard let image = UIImage(data: data) else { return nil }
         TaskPhotoCache.save(image: image, taskId: taskId, date: date)
 

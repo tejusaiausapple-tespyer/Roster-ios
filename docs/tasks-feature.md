@@ -18,9 +18,17 @@ photo lifecycle below.
 day, shared across assignees): legacy fields plus optional `note`, `status`
 ("completed"/"redo"), `redoReason`, `reviewedBy/At`, `managerDownloadedAt`.
 
-Rules (docs/reference/firestore.rules.deployed — **redeploy after changes**):
-staff can only write completions as themselves and cannot overwrite another
-staff member's completion; tasks are manager-write-only.
+Rules:
+- Firestore (`docs/reference/firestore.rules.deployed`): staff can only write
+  completions as themselves and cannot overwrite another staff member's
+  completion; tasks are manager-write-only.
+- Storage (`docs/reference/storage.rules`): staff create proof photos only
+  under `task_photos/{uid}/...`, managers read/delete proof photos, and
+  authenticated users can read manager reference photos.
+
+`staffPhotoUrl` is kept as the shared field name for PWA/iOS compatibility.
+New iOS proof photos store a `gs://...` Firebase Storage reference; legacy
+HTTPS download-token URLs are still supported when reviewing older completions.
 
 ## Workflow
 
@@ -35,10 +43,12 @@ staff member's completion; tasks are manager-write-only.
 
 ## Photo lifecycle (Firebase free tier)
 
-- Uploads are compressed to **≤ 2 MB** (`Services/ImageCompressor.swift`:
+- Uploads are compressed to **<= 2 MB** (`Services/ImageCompressor.swift`:
   downscale to 1600 px + stepped JPEG quality).
 - Photos live only in the app sandbox (`Services/TaskPhotoCache.swift`),
   never the phone photo library.
+- New proof photo records store a `gs://` Storage reference so manager review
+  uses Firebase Storage rules instead of a broadly reusable download-token URL.
 - **Staff**: local copy is viewable until the end of the week it was taken;
   a launch-time sweep deletes older ones, after which staff see a
   "Photo submitted" placeholder (staff views never re-download from cloud).

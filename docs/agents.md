@@ -190,7 +190,7 @@ RosterStaff/
 | `timesheets` | Auto-generated | Both | shiftId, staffId, actualStart, actualEnd, actualBreakMinutes, workedHours, status, managerNotes |
 | `messages` | Auto-generated | Both | senderId, recipientId, body, sentAt, expiresAt, read |
 | `tasks` | Auto-generated | Both | title, description, frequency, date, dayOfWeek, active, managerPhotoUrl |
-| `task_completions` | `{taskId}_{date}` | Both | taskId, date, completed, completedAt, completedBy, staffPhotoUrl |
+| `task_completions` | `{taskId}_{date}` | Both | taskId, date, completed, completedAt, completedBy, staffPhotoUrl (`gs://...` for new iOS proof photos; legacy HTTPS URLs still supported) |
 | `settings` | `app` | Both | companyName |
 
 ---
@@ -222,6 +222,7 @@ RosterStaff/
 - **`saveShift` MUST write `shiftStartAt` + `submittableAfter` (Timestamps)** — the deployed Firestore rules refuse staff timesheet create/update unless the shift doc has `submittableAfter is timestamp`, and the Worker's shift-start/hours-reminder crons key off both fields. Recomputed on every save.
 - **Notification event names use hyphens** (from the Worker registry): `roster-published`, `timesheet-submitted/-approved/-rejected/-absent`, `timesheet-reminder`, `message-task`, `shift-start-6h/-30m`. The repo sends: submit/absence (staff), approve/reject/publish-week (manager).
 - **Deployed Firestore rules reference copy**: `docs/reference/firestore.rules.deployed` (the web repo's `firestore.rules` is stale — trust the reference copy).
+- **Firebase Storage rules reference copy**: `docs/reference/storage.rules`. Staff proof photos upload to `task_photos/{uid}/...` and store `gs://...` references in `staffPhotoUrl`; manager review downloads through the Firebase Storage SDK. Manager reference photos remain HTTPS download URLs so staff can load task instructions with `AsyncImage`.
 
 ---
 
