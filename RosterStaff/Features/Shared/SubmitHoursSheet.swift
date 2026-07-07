@@ -148,7 +148,7 @@ struct SubmitHoursSheet: View {
     }
 
     private var summaryHeader: some View {
-        GlassCard {
+        HeroCard {
             VStack(alignment: .leading, spacing: 10) {
                 Text(RosterFormat.date(shift.date))
                     .font(.subheadline.weight(.semibold))

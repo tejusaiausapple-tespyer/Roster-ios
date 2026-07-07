@@ -569,7 +569,9 @@ final class RosterRepository {
                 _ = try await (_user, _shifts, _timesheets)
             }
         } catch {
-            // Listeners keep serving cached data; surface nothing on a failed manual refresh.
+            // Listeners keep serving cached data, so a manual refresh failure is
+            // non-critical — but log it so a systematic issue isn't invisible.
+            Self.log.debug("manual refreshFromServer failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 

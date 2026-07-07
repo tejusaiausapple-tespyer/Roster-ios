@@ -49,6 +49,20 @@ mirroring the `timesheet-submitted` manager-notification path.
 
 The Worker should resolve the staff name from the shift, then deliver via the `messages` collection (visible now) and push (once the Apple Developer account is approved — haptics for delivery/tap are already wired, see `NotificationService`).
 
-### 3. Optional hardening (server-side geofence)
+### 3. Geofence trust model (advisory by design) + optional hardening
 
-Client geofence checks can be spoofed by fake-GPS tools. For stronger enforcement, move the verdict server-side: replace the direct Firestore write with a Worker endpoint (`/api/attendance/clock-in|clock-out`) that receives the raw coordinates, computes distance against the stored workplace, writes the record with its own clock, and can *reject* out-of-fence actions if business rules require a hard block. The iOS call sites (`RosterRepository.startShift/endShift`) are the single place to swap.
+**By design, the geofence verdict is advisory, not an access control.** What is
+tamper-*evident* and trusted are the pieces the server owns: `clockInAt`/`clockOutAt`
+are `FieldValue.serverTimestamp()` (a manipulated device clock can't forge them), the
+raw GPS `GeoPoint`s + accuracy are recorded verbatim, and the device clock is stored
+alongside so the manager portal flags >2 min skew. The manager reviews all of this on
+the Verified Attendance card and can sanity-check the recorded coordinates directly, so
+a spoofed `inside`/`outside` verdict does not, on its own, buy a staff member anything —
+this is a deliberate trust choice for a single-business deployment, not a gap.
+
+**Optional hardening (only if you later want a hard block):** move the verdict
+server-side — replace the direct Firestore write with a Worker endpoint
+(`/api/attendance/clock-in|clock-out`) that receives the raw coordinates, computes
+distance against the stored workplace, writes the record with its own clock, and can
+*reject* out-of-fence actions. The iOS call sites (`RosterRepository.startShift/endShift`)
+are the single place to swap.

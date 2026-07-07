@@ -25,7 +25,7 @@ struct ProfileCompletionView: View {
             _dob = State(initialValue: parsed)
             _hasDob = State(initialValue: true)
         } else {
-            _dob = State(initialValue: Calendar.current.date(byAdding: .year, value: -25, to: Date()) ?? Date())
+            _dob = State(initialValue: RosterCalendar.calendar.date(byAdding: .year, value: -25, to: Date()) ?? Date())
             _hasDob = State(initialValue: false)
         }
     }

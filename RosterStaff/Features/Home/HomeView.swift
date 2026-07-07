@@ -4,8 +4,18 @@ struct HomeView: View {
     @Environment(RosterRepository.self) private var repo
     @Environment(AppRouter.self) private var router
 
-    @State private var showMessages = false
-    @State private var shareURL: URL?
+    @State private var activeSheet: HomeSheet?
+
+    private enum HomeSheet: Identifiable {
+        case messages
+        case share(URL)
+        var id: String {
+            switch self {
+            case .messages: return "messages"
+            case .share(let url): return "share-\(url.absoluteString)"
+            }
+        }
+    }
     @State private var toastMessage: ToastMessage?
 
     private var now: Date { Date() }
@@ -61,11 +71,11 @@ struct HomeView: View {
                 }
             }
             .refreshable { await repo.refreshFromServer() }
-            .sheet(isPresented: $showMessages) {
-                NotificationsSheet()
-            }
-            .sheet(item: $shareURL) { url in
-                ShareSheet(items: [url])
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .messages: NotificationsSheet()
+                case .share(let url): ShareSheet(items: [url])
+                }
             }
             .toast($toastMessage)
         }
@@ -89,7 +99,7 @@ struct HomeView: View {
         // Badge counts unread messages + pending Daily Jobs for the current shift.
         let badgeCount = repo.unreadMessageCount + repo.pendingDailyJobCount
         return Button {
-            showMessages = true
+            activeSheet = .messages
         } label: {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: "bell")
@@ -223,7 +233,7 @@ struct HomeView: View {
             toastMessage = ToastMessage(kind: .success, text: "Added to Calendar")
             Haptics.success()
         case .sharedFile(let url):
-            shareURL = url
+            activeSheet = .share(url)
         case .failed(let message):
             toastMessage = ToastMessage(kind: .error, text: message)
             Haptics.error()

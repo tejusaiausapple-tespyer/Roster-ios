@@ -9,9 +9,18 @@ struct ManagerTasksView: View {
     @State private var weekOffset: Int = 0
     @State private var selectedDayKey: String = RosterCalendar.todayKey()
     @State private var filter: TaskFilter = .all
-    @State private var showingEditor = false
-    @State private var editingTask: RosterTask? = nil
-    @State private var reviewingTask: RosterTask? = nil
+    @State private var activeSheet: TasksSheet?
+
+    private enum TasksSheet: Identifiable {
+        case editor(RosterTask?)
+        case review(RosterTask)
+        var id: String {
+            switch self {
+            case .editor(let t): return "editor-\(t?.id ?? "new")"
+            case .review(let t): return "review-\(t.id)"
+            }
+        }
+    }
 
     enum TaskFilter: String, CaseIterable {
         case all = "All"
@@ -90,8 +99,7 @@ struct ManagerTasksView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        editingTask = nil
-                        showingEditor = true
+                        activeSheet = .editor(nil)
                     } label: {
                         Image(systemName: "plus.circle.fill")
                             .foregroundStyle(Theme.brand)
@@ -99,14 +107,14 @@ struct ManagerTasksView: View {
                     .accessibilityLabel("New task")
                 }
             }
-            .sheet(isPresented: $showingEditor) {
-                ManagerTaskEditorSheet(task: editingTask, defaultDateKey: selectedDayKey)
-            }
-            .sheet(item: $reviewingTask) { task in
-                ManagerTaskDetailSheet(task: task, dateKey: selectedDayKey) {
-                    reviewingTask = nil
-                    editingTask = task
-                    showingEditor = true
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .editor(let task):
+                    ManagerTaskEditorSheet(task: task, defaultDateKey: selectedDayKey)
+                case .review(let task):
+                    ManagerTaskDetailSheet(task: task, dateKey: selectedDayKey) {
+                        activeSheet = .editor(task)
+                    }
                 }
             }
         }
@@ -181,7 +189,7 @@ struct ManagerTasksView: View {
         let completion = completion(for: task)
 
         return Button {
-            reviewingTask = task
+            activeSheet = .review(task)
         } label: {
             Card(accentColor: completed ? Theme.accent : (overdue ? Theme.error : Theme.warning)) {
                 VStack(alignment: .leading, spacing: 8) {

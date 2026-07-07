@@ -4,9 +4,20 @@ import FirebaseAuth
 struct ManagerDashboardView: View {
     @Environment(RosterRepository.self) private var repo
 
-    @State private var showNewShiftEditor = false
-    @State private var showNewTaskEditor = false
-    @State private var assigningJobsShift: Shift? = nil
+    @State private var activeSheet: DashboardSheet?
+
+    private enum DashboardSheet: Identifiable {
+        case newShift
+        case newTask
+        case assignJobs(Shift)
+        var id: String {
+            switch self {
+            case .newShift: return "newShift"
+            case .newTask: return "newTask"
+            case .assignJobs(let shift): return "assignJobs-\(shift.id)"
+            }
+        }
+    }
 
     private var todayKey: String {
         RosterCalendar.todayKey()
@@ -151,14 +162,12 @@ struct ManagerDashboardView: View {
                     ScreenTitlePill(title: "Dashboard", icon: "square.grid.2x2.fill")
                 }
             }
-            .sheet(isPresented: $showNewShiftEditor) {
-                ManagerShiftEditorSheet(defaultDateKey: todayKey)
-            }
-            .sheet(isPresented: $showNewTaskEditor) {
-                ManagerTaskEditorSheet(task: nil, defaultDateKey: todayKey)
-            }
-            .sheet(item: $assigningJobsShift) { shift in
-                DailyJobAssignSheet(shift: shift)
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .newShift: ManagerShiftEditorSheet(defaultDateKey: todayKey)
+                case .newTask: ManagerTaskEditorSheet(task: nil, defaultDateKey: todayKey)
+                case .assignJobs(let shift): DailyJobAssignSheet(shift: shift)
+                }
             }
         }
     }
@@ -270,10 +279,10 @@ struct ManagerDashboardView: View {
             
             HStack(spacing: 12) {
                 actionButton(title: "New Shift", icon: "calendar.badge.plus", color: Theme.brand) {
-                    showNewShiftEditor = true
+                    activeSheet = .newShift
                 }
                 actionButton(title: "New Task", icon: "checkmark.circle.badge.questionmark", color: Theme.accent) {
-                    showNewTaskEditor = true
+                    activeSheet = .newTask
                 }
                 NavigationLink {
                     ManagerStaffView(embedInNavigationStack: false)
@@ -333,7 +342,7 @@ struct ManagerDashboardView: View {
                         let status = lifecycleStatus(for: shift)
 
                         Button {
-                            assigningJobsShift = shift
+                            activeSheet = .assignJobs(shift)
                         } label: {
                             rosterRow(
                                 name: staffMember?.fullName ?? "Staff Member",

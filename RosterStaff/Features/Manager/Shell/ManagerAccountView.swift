@@ -9,17 +9,19 @@ struct ManagerAccountView: View {
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage("preferredColorScheme") private var preferredColorSchemeSetting: String = "system"
 
-    @State private var showChangePassword = false
-    @State private var showChangeEmail = false
+    @State private var activeSheet: AccountSheet?
     @State private var isEmailVerified = false
     @State private var showSignOutConfirm = false
     @State private var deviceAuthOn = false
     @State private var deviceAuthWorking = false
     @State private var pushEnabled = false
     @State private var toastMessage: ToastMessage?
-    @State private var showPasswordPrompt = false
-    @State private var showImagePicker = false
     @State private var profileImage: UIImage? = nil
+
+    private enum AccountSheet: Identifiable {
+        case changePassword, changeEmail, verifyPassword, imagePicker
+        var id: String { String(describing: self) }
+    }
 
     private let device = DeviceAuthService.shared
     private var user: AppUser? { repo.currentUser }
@@ -49,32 +51,43 @@ struct ManagerAccountView: View {
                     ScreenTitlePill(title: "Account", icon: "person.crop.circle.fill")
                 }
             }
-            .sheet(isPresented: $showChangePassword) {
-                ChangePasswordView(isForced: false)
-            }
-            .sheet(isPresented: $showChangeEmail) {
-                ChangeEmailView { message in
-                    toastMessage = ToastMessage(kind: .success, text: message)
-                }
-            }
-            .sheet(isPresented: $showPasswordPrompt) {
-                if let email = user?.email {
-                    VerifyPasswordSheet(email: email) { verifiedPassword in
-                        Task {
-                            guard let uid = auth.uid else { return }
-                            do {
-                                try await device.enable(uid: uid)
-                                BiometricCredentialStore.save(email: email, password: verifiedPassword)
-                                auth.temporaryPassword = verifiedPassword
-                                deviceAuthOn = true
-                                auth.refreshDeviceAuthEnabled()
-                                Haptics.success()
-                                toastMessage = ToastMessage(kind: .success, text: "\(device.biometryLabel) enabled")
-                            } catch {
-                                toastMessage = ToastMessage(kind: .error, text: "Could not enable \(device.biometryLabel)")
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .changePassword:
+                    ChangePasswordView(isForced: false)
+                case .changeEmail:
+                    ChangeEmailView { message in
+                        toastMessage = ToastMessage(kind: .success, text: message)
+                    }
+                case .verifyPassword:
+                    if let email = user?.email {
+                        VerifyPasswordSheet(email: email) { verifiedPassword in
+                            Task {
+                                guard let uid = auth.uid else { return }
+                                do {
+                                    try await device.enable(uid: uid)
+                                    BiometricCredentialStore.save(email: email, password: verifiedPassword)
+                                    auth.temporaryPassword = verifiedPassword
+                                    deviceAuthOn = true
+                                    auth.refreshDeviceAuthEnabled()
+                                    Haptics.success()
+                                    toastMessage = ToastMessage(kind: .success, text: "\(device.biometryLabel) enabled")
+                                } catch {
+                                    toastMessage = ToastMessage(kind: .error, text: "Could not enable \(device.biometryLabel)")
+                                }
                             }
                         }
                     }
+                case .imagePicker:
+                    ImagePicker(image: Binding(
+                        get: { profileImage },
+                        set: { newImg in
+                            if let newImg {
+                                saveProfileImage(newImg)
+                                profileImage = newImg
+                            }
+                        }
+                    ))
                 }
             }
             .alert("Sign out?", isPresented: $showSignOutConfirm) {
@@ -88,17 +101,6 @@ struct ManagerAccountView: View {
                 await refreshStatuses()
                 loadLocalProfileImage()
             }
-            .sheet(isPresented: $showImagePicker) {
-                ImagePicker(image: Binding(
-                    get: { profileImage },
-                    set: { newImg in
-                        if let newImg {
-                            saveProfileImage(newImg)
-                            profileImage = newImg
-                        }
-                    }
-                ))
-            }
         }
     }
 
@@ -108,7 +110,7 @@ struct ManagerAccountView: View {
         Section {
             VStack(spacing: 12) {
                 Button {
-                    showImagePicker = true
+                    activeSheet = .imagePicker
                 } label: {
                     ZStack {
                         if let profileImage {
@@ -184,7 +186,7 @@ struct ManagerAccountView: View {
                     }
                     Spacer()
                     Button {
-                        showChangeEmail = true
+                        activeSheet = .changeEmail
                     } label: {
                         Image(systemName: "pencil")
                             .font(.footnote)
@@ -307,7 +309,7 @@ struct ManagerAccountView: View {
                 .disabled(deviceAuthWorking)
             }
             Button {
-                showChangePassword = true
+                activeSheet = .changePassword
             } label: {
                 Label("Change password", systemImage: "key")
             }
@@ -383,7 +385,7 @@ struct ManagerAccountView: View {
                 } else {
                     deviceAuthOn = false
                     auth.refreshDeviceAuthEnabled()
-                    showPasswordPrompt = true
+                    activeSheet = .verifyPassword
                 }
             } else {
                 device.disable(uid: uid)

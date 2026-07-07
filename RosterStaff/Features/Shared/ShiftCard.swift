@@ -49,7 +49,7 @@ struct ShiftCard: View {
     var body: some View {
         Group {
             if isHero {
-                GlassCard(accentColor: Theme.brand) { inner }
+                HeroCard(accentColor: Theme.brand) { inner }
             } else {
                 Card(padding: variant == .compact ? 14 : 16, accentColor: Theme.style(for: status).tint) { inner }
             }

@@ -36,7 +36,11 @@ struct Card<Content: View>: View {
 
 /// A card reserved for the single hero moment in the app (Home "today" card) and submission sheets.
 /// Features a neutral background with a distinct left-side vertical brand accent stripe.
-struct GlassCard<Content: View>: View {
+///
+/// NOTE: this is a *solid* card (`Theme.card` fill), NOT Liquid Glass — despite the
+/// legacy name. Renamed `GlassCard` → `HeroCard` so it isn't mistaken for a real
+/// glass surface (glass belongs on the navigation layer only; see `Theme.glassSurface`).
+struct HeroCard<Content: View>: View {
     var padding: CGFloat = 18
     var cornerRadius: CGFloat = Theme.cornerLarge
     var accentColor: Color = Theme.brand
