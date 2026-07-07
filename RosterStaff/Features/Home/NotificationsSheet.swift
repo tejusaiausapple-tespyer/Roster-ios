@@ -6,6 +6,7 @@ import SwiftUI
 struct NotificationsSheet: View {
     @Environment(RosterRepository.self) private var repo
     @Environment(\.dismiss) private var dismiss
+    @State private var selectedDetent: PresentationDetent = .medium
 
     private var activeMessages: [Message] {
         repo.messages.filter { $0.isActive() }.sorted { $0.sentAt > $1.sentAt }
@@ -15,6 +16,19 @@ struct NotificationsSheet: View {
         repo.activeDailyJobsForStaff
     }
 
+    private var dailyJobsOnly: Bool {
+        !dailyJobs.isEmpty && activeMessages.isEmpty
+    }
+
+    private var isLargeDetent: Bool {
+        selectedDetent == .large
+    }
+
+    private var dailyJobsLayout: DailyJobsLayout {
+        guard isLargeDetent else { return .compact }
+        return dailyJobsOnly ? .expandedFillingSheet : .expandedInScroll
+    }
+
     var body: some View {
         NavigationStack {
             Group {
@@ -22,11 +36,18 @@ struct NotificationsSheet: View {
                     EmptyStateView(icon: "bell.slash",
                                    title: "No notifications",
                                    message: "You're all caught up.")
+                } else if dailyJobsLayout == .expandedFillingSheet {
+                    VStack(spacing: 0) {
+                        dailyJobsSection(layout: .expandedFillingSheet)
+                    }
+                    .padding(20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .background(Theme.background.ignoresSafeArea())
                 } else {
-                    ScrollView {
+                    FadedScrollView("notificationsSheet") {
                         VStack(spacing: 12) {
                             if !dailyJobs.isEmpty {
-                                dailyJobsSection
+                                dailyJobsSection(layout: dailyJobsLayout)
                             }
                             ForEach(activeMessages) { message in
                                 messageCard(message)
@@ -34,19 +55,26 @@ struct NotificationsSheet: View {
                         }
                         .padding(20)
                     }
-                    .scrollIndicators(.hidden)
                     .background(Theme.background.ignoresSafeArea())
                 }
             }
-            .navigationTitle("Notifications")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 6) {
+                        Text("Notifications")
+                            .font(.headline)
+                        if !dailyJobs.isEmpty {
+                            dailyJobsProgressBadge
+                        }
+                    }
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.medium, .large], selection: $selectedDetent)
         .presentationDragIndicator(.visible)
         .task {
             let unread = activeMessages.filter { !$0.read }.map { $0.id }
@@ -55,37 +83,70 @@ struct NotificationsSheet: View {
     }
 
     // MARK: - Daily Jobs (assigned per shift by the manager; visible until
-    // the shift ends — see docs/daily-jobs-feature.md)
+    // end of day — see docs/daily-jobs-feature.md)
 
-    private var dailyJobsSection: some View {
+    private enum DailyJobsLayout {
+        /// Medium detent: capped nested scroll so the sheet stays usable.
+        case compact
+        /// Large detent, jobs only: card fills the sheet; list scrolls inside.
+        case expandedFillingSheet
+        /// Large detent with messages below: no nested scroll; outer scroll handles overflow.
+        case expandedInScroll
+    }
+
+    private var dailyJobsProgressBadge: some View {
+        let done = dailyJobs.filter(\.completed).count
+        let total = dailyJobs.count
+        let tint = repo.pendingDailyJobCount > 0 ? Theme.warning : Theme.accent
+
+        return Text("\(done)/\(total) Done")
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(tint.opacity(0.14)))
+            .accessibilityLabel("\(done) of \(total) daily jobs done")
+    }
+
+    private func dailyJobsSection(layout: DailyJobsLayout) -> some View {
         Card(accentColor: repo.pendingDailyJobCount > 0 ? Theme.warning : Theme.accent) {
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Label("Daily Jobs", systemImage: "checklist")
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Theme.textPrimary)
-                    Spacer()
-                    Text("\(dailyJobs.filter(\.completed).count)/\(dailyJobs.count) done")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(repo.pendingDailyJobCount > 0 ? Theme.warning : Theme.accent)
-                }
+                Label("Daily Jobs", systemImage: "checklist")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Theme.textPrimary)
 
-                // Jobs scroll independently so long lists work in the
-                // collapsed (medium) detent; indicators hidden by request.
-                // Rows keep their positions when completed — only the
-                // styling and button flip (Complete → Undo).
-                ScrollView {
-                    VStack(spacing: 10) {
-                        ForEach(dailyJobs) { job in
-                            jobRow(job)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-                .scrollIndicators(.hidden)
-                .frame(maxHeight: 320)
+                dailyJobsList(layout: layout)
+            }
+            .frame(maxHeight: layout == .expandedFillingSheet ? .infinity : nil, alignment: .top)
+        }
+        .frame(maxHeight: layout == .expandedFillingSheet ? .infinity : nil, alignment: .top)
+    }
+
+    @ViewBuilder
+    private func dailyJobsList(layout: DailyJobsLayout) -> some View {
+        switch layout {
+        case .compact:
+            FadedScrollView("dailyJobsCompact", fadeColor: Theme.card) {
+                dailyJobsListContent
+            }
+            .frame(maxHeight: 320)
+        case .expandedFillingSheet:
+            FadedScrollView("dailyJobsExpanded", fadeColor: Theme.card) {
+                dailyJobsListContent
+            }
+            .frame(maxHeight: .infinity)
+        case .expandedInScroll:
+            dailyJobsListContent
+        }
+    }
+
+    private var dailyJobsListContent: some View {
+        VStack(spacing: 10) {
+            ForEach(dailyJobs) { job in
+                jobRow(job)
             }
         }
+        .padding(.vertical, 4)
     }
 
     private func jobRow(_ job: DailyJobAssignment) -> some View {

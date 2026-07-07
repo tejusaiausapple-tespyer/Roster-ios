@@ -3,7 +3,7 @@ import FirebaseFirestore
 
 /// Daily Jobs are separate from Tasks: managers keep a permanent library of
 /// reusable job templates and assign a selection to a specific staff member's
-/// specific shift. Assignments expire with the shift; templates never do.
+/// specific shift. Staff see assignments for the full shift date; templates never do.
 /// See docs/daily-jobs-feature.md.
 struct DailyJobTemplate: Identifiable, Codable {
     @DocumentID var id: String?
@@ -32,10 +32,9 @@ struct DailyJobAssignment: Identifiable, Codable {
         "\(shiftId)_\(templateId)"
     }
 
-    /// Staff see an assignment from the moment it lands until the shift ends
-    /// (manager history keeps it forever).
-    func isVisibleToStaff(shiftEnd: Date?, now: Date = Date()) -> Bool {
-        guard let shiftEnd else { return date == RosterCalendar.todayKey(now) }
-        return now < shiftEnd
+    /// Staff see an assignment for the full shift date (Adelaide calendar day),
+    /// not just until rostered end time. Manager history keeps it forever.
+    func isVisibleToStaff(now: Date = Date()) -> Bool {
+        date == RosterCalendar.todayKey(now)
     }
 }

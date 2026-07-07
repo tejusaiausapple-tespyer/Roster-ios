@@ -15,18 +15,20 @@ final class DailyJobTests: XCTestCase {
         XCTAssertEqual(DailyJobAssignment.docId(shiftId: "s1", templateId: "t1"), "s1_t1")
     }
 
-    func testVisibleUntilShiftEnds() {
-        let assignment = makeAssignment(date: "2026-07-06")
-        let now = Date()
-        XCTAssertTrue(assignment.isVisibleToStaff(shiftEnd: now.addingTimeInterval(3600), now: now))
-        XCTAssertFalse(assignment.isVisibleToStaff(shiftEnd: now.addingTimeInterval(-60), now: now))
-    }
-
-    func testFallsBackToTodayWhenShiftUnknown() {
+    func testVisibleForEntireShiftDate() {
         let now = Date()
         let today = makeAssignment(date: RosterCalendar.todayKey(now))
+        XCTAssertTrue(today.isVisibleToStaff(now: now))
+
         let yesterday = makeAssignment(date: RosterCalendar.todayKey(RosterCalendar.addDays(-1, to: now)))
-        XCTAssertTrue(today.isVisibleToStaff(shiftEnd: nil, now: now))
-        XCTAssertFalse(yesterday.isVisibleToStaff(shiftEnd: nil, now: now))
+        XCTAssertFalse(yesterday.isVisibleToStaff(now: now))
+    }
+
+    func testHiddenAfterCalendarDayEnds() {
+        let now = Date()
+        let todayKey = RosterCalendar.todayKey(now)
+        let assignment = makeAssignment(date: todayKey)
+        // Still visible after rostered shift end — window is the full calendar day.
+        XCTAssertTrue(assignment.isVisibleToStaff(now: now))
     }
 }

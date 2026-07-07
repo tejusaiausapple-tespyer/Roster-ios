@@ -2,8 +2,8 @@
 
 Completely separate from the Tasks feature. Managers keep a **permanent
 library of reusable job templates** and assign a selection of them to one
-staff member's specific shift. Assignments expire with the shift; templates
-never do.
+staff member's specific shift. Staff see assignments for the full shift date;
+templates never expire.
 
 ## Data model (Firestore)
 
@@ -33,9 +33,9 @@ never do.
 ## Staff workflow
 
 - The Home bell badge counts unread messages **plus pending daily jobs**.
-- The notifications panel shows a Daily Jobs card for the current shift:
-  each job has Complete / Undo, toggleable until the shift ends.
-- When the shift ends the jobs disappear from the panel
+- The notifications panel shows a Daily Jobs card for today's shift:
+  each job has Complete / Undo, toggleable until end of day (Adelaide TZ).
+- Jobs disappear from the panel after the shift **date** rolls over
   (`DailyJobAssignment.isVisibleToStaff`); history stays in Firestore for the
   manager.
 
