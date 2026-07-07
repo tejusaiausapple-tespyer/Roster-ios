@@ -1,7 +1,7 @@
 # Backend reference snapshots
 
 Copies of the backend definition files from the PWA repo
-(`~/Desktop/Projects/Roster - 5 july /Roster`), which is the source of truth
+(`~/Desktop/Roster-old`), which is the source of truth
 and where deploys happen (`firebase deploy --only firestore,storage`, `wrangler deploy`).
 Re-copy after backend changes so this native repo documents what it runs against.
 
@@ -12,8 +12,8 @@ Re-copy after backend changes so this native repo documents what it runs against
 storage'" means that directory's firebase.json has no `storage` section, not
 that the command is wrong.
 
-- **Preferred:** deploy from the PWA repo root (`~/Desktop/Projects/Roster - 5
-  july /Roster`) — but its `firebase.json` and rules files must be current.
+- **Preferred:** deploy from the PWA repo root (`~/Desktop/Roster-old`) — but
+  its `firebase.json` and rules files must be current.
   The Storage rules work landed in THIS repo first, so the PWA repo's
   firebase.json was missing the `storage` target and the deploy failed there.
   Keep the PWA repo's `firebase.json` + `storage.rules` + `firestore.rules` in
