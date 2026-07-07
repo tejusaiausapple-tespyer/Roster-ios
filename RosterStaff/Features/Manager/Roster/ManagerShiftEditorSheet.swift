@@ -16,7 +16,7 @@ struct ManagerShiftEditorSheet: View {
     @State private var endDateTime: Date = Date()
     @State private var breakMinutes: Int = 0 // default: No break
     @State private var location: String = ""
-    @State private var department: String = ManagerShiftEditorSheet.roleOptions[0]
+    @State private var department: String = ManagerShiftEditorSheet.roleOptions.first ?? ""
     @State private var notes: String = ""
     @State private var isPublished: Bool = true
 
@@ -212,7 +212,7 @@ struct ManagerShiftEditorSheet: View {
             endDateTime = BusinessRules.shiftEndDateTime(date: shift.date, start: shift.rosteredStart, end: shift.rosteredEnd)
             breakMinutes = shift.breakMinutes
             location = shift.location ?? ""
-            department = (shift.department?.isEmpty == false) ? shift.department! : Self.roleOptions[0]
+            department = (shift.department?.isEmpty == false) ? (shift.department ?? "") : (Self.roleOptions.first ?? "")
             notes = shift.notes ?? ""
             isPublished = shift.status == .published
         } else {

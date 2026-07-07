@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import Observation
 import FirebaseFirestore
 import FirebaseAuth
@@ -13,7 +14,12 @@ import UIKit
 final class RosterRepository {
     // Live state
     var currentUser: AppUser?
-    var shifts: [Shift] = []
+    /// Index maintained on assignment so `shift(id:)` is O(1) instead of an
+    /// O(n) first-match scan per call (list rows call it repeatedly).
+    var shifts: [Shift] = [] {
+        didSet { shiftsById = Dictionary(shifts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }) }
+    }
+    private(set) var shiftsById: [String: Shift] = [:]
     /// Cache maintained on assignment so manager list views can resolve a
     /// timesheet-by-shift in O(1) instead of O(n) per row (O(n²) per list).
     var timesheets: [Timesheet] = [] {
@@ -52,7 +58,11 @@ final class RosterRepository {
     /// Verified shift attendance records (`shift_attendance` collection):
     /// server-authoritative clock-in/out timestamps + GPS fixes. Staff stream
     /// their own; managers stream all records in the shift window.
-    var attendanceRecords: [ShiftAttendance] = []
+    var attendanceRecords: [ShiftAttendance] = [] {
+        didSet { attendanceByShiftId = Dictionary(attendanceRecords.map { ($0.shiftId, $0) }, uniquingKeysWith: { first, _ in first }) }
+    }
+    /// O(1) attendance-by-shift lookup (doc id == shiftId, so unique).
+    private(set) var attendanceByShiftId: [String: ShiftAttendance] = [:]
 
     var isLoading = true
     var loadError: String?
@@ -442,7 +452,7 @@ final class RosterRepository {
     // MARK: - Verified attendance (server timestamps + GPS)
 
     func attendance(forShift shiftId: String) -> ShiftAttendance? {
-        attendanceRecords.first { $0.shiftId == shiftId }
+        attendanceByShiftId[shiftId]
     }
 
     /// The saved workplace matching a shift's location string, if it has
@@ -572,7 +582,7 @@ final class RosterRepository {
     }
 
     func shift(id: String) -> Shift? {
-        shifts.first { $0.id == id }
+        shiftsById[id]
     }
 
     /// O(1) staff lookup — prefer this over `allUsers.first(where:)` in list rows.
@@ -751,8 +761,25 @@ final class RosterRepository {
         currentUser = updated
     }
 
+    // MARK: - Best-effort background writes
+
+    private static let log = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.surainvestments.roster",
+        category: "RosterRepository"
+    )
+
+    /// Run a non-critical Firestore/Storage write that must never surface an
+    /// error to the user, but should not fail *silently* either — a systematic
+    /// failure (rules/index regression) is otherwise invisible.
+    private func bestEffort(_ label: String, _ op: () async throws -> Void) async {
+        do { try await op() }
+        catch { Self.log.error("bestEffort \(label, privacy: .public) failed: \(error.localizedDescription, privacy: .public)") }
+    }
+
     func markMessageRead(_ id: String) async {
-        try? await db.collection("messages").document(id).updateData(["read": true])
+        await bestEffort("markMessageRead") {
+            try await db.collection("messages").document(id).updateData(["read": true])
+        }
     }
 
     func markMessagesRead(_ ids: [String]) async {
@@ -761,7 +788,7 @@ final class RosterRepository {
         for id in ids {
             batch.updateData(["read": true], forDocument: db.collection("messages").document(id))
         }
-        try? await batch.commit()
+        await bestEffort("markMessagesRead") { try await batch.commit() }
     }
 
     /// Photos allowed per completion — each is ≤ 2 MB, so this caps a single
@@ -831,8 +858,10 @@ final class RosterRepository {
         if currentUser?.role == .manager {
             let docId = "\(taskId)_\(date)"
             if let comp = taskCompletions.first(where: { $0.id == docId }), comp.managerDownloadedAt == nil {
-                try? await db.collection("task_completions").document(docId)
-                    .updateData(["managerDownloadedAt": FieldValue.serverTimestamp()])
+                await bestEffort("stampManagerDownloadedAt") {
+                    try await db.collection("task_completions").document(docId)
+                        .updateData(["managerDownloadedAt": FieldValue.serverTimestamp()])
+                }
             }
         }
         return images
@@ -991,7 +1020,7 @@ final class RosterRepository {
     func deleteTask(id: String, managerPhotoUrl: String?) async throws {
         if let managerPhotoUrl, !managerPhotoUrl.isEmpty,
            let ref = storageReference(for: managerPhotoUrl) {
-            try? await ref.delete()
+            await bestEffort("deleteTaskPhoto") { try await ref.delete() }
         }
         try await db.collection("tasks").document(id).delete()
     }
@@ -1030,7 +1059,7 @@ final class RosterRepository {
     private func deleteCloudObjects(_ urls: [String]) async {
         for url in urls where !url.isEmpty {
             if let ref = storageReference(for: url) {
-                try? await ref.delete()
+                await bestEffort("deleteCloudObject") { try await ref.delete() }
             }
         }
     }
@@ -1048,8 +1077,10 @@ final class RosterRepository {
         }
         for comp in expired {
             await deleteCloudObjects(comp.photoUrls)
-            try? await db.collection("task_completions").document(comp.id)
-                .updateData(["staffPhotoUrl": NSNull(), "staffPhotoUrls": NSNull()])
+            await bestEffort("clearExpiredPhotoUrls") {
+                try await db.collection("task_completions").document(comp.id)
+                    .updateData(["staffPhotoUrl": NSNull(), "staffPhotoUrls": NSNull()])
+            }
         }
     }
 
