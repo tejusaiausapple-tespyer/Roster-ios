@@ -36,9 +36,7 @@ struct HomeView: View {
     }
 
     var body: some View {
-        // Read headerCompanyName in the view body (not only inside the toolbar
-        // closure) so the pill re-renders when settings/app streams in.
-        let pillTitle = headerCompanyName
+        let companyName = headerCompanyName
         return NavigationStack {
             TabScroll {
                 if repo.isLoading {
@@ -54,10 +52,9 @@ struct HomeView: View {
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // Company name owns the header pill, left-aligned so long
-                // names get room (truncated gracefully by the pill).
                 ToolbarItem(placement: .topBarLeading) {
-                    ScreenTitlePill(title: pillTitle, icon: "building.2.fill")
+                    ToolbarLeadingTitlePill(title: companyName)
+                        .accessibilityAddTraits(.isHeader)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     messagesButton
@@ -112,7 +109,7 @@ struct HomeView: View {
         .accessibilityLabel("Notifications, \(badgeCount) unread")
     }
 
-    // MARK: Greeting header (company name lives in the toolbar pill)
+    // MARK: Greeting header
 
     private var companyHeader: some View {
         Text(greetingTitle)

@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Sura Roster</string>
+	<string>Rosterra</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -25,13 +25,13 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Sura Roster uses the camera to capture task verification and reference photos. Photos stay inside the app and are never saved to your photo library.</string>
+	<string>Rosterra uses the camera to capture task verification and reference photos. Photos stay inside the app and are never saved to your photo library.</string>
 	<key>NSCalendarsUsageDescription</key>
-	<string>Sura Roster adds your rostered shifts to your calendar when you choose to.</string>
+	<string>Rosterra adds your rostered shifts to your calendar when you choose to.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Sura Roster records your location when you start or end a shift to verify attendance at your workplace.</string>
+	<string>Rosterra records your location when you start or end a shift to verify attendance at your workplace.</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Sura Roster uses Face ID to securely unlock the app on this device.</string>
+	<string>Rosterra uses Face ID to securely unlock the app on this device.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

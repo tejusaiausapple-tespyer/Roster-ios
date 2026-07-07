@@ -1,4 +1,4 @@
-# RosterStaff (Sura Roster)
+# RosterStaff (Rosterra)
 
 Native iOS app for staff rostering, shift management, timesheet submission, and task tracking. Built for Sura Investments Pty Ltd.
 

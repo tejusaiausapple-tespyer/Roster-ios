@@ -16,7 +16,7 @@
 
 ## Rename touchpoints (when applying)
 
-- `CFBundleDisplayName` in `RosterStaff/Resources/Info.plist` (currently "Sura Roster").
+- `CFBundleDisplayName` in `RosterStaff/Resources/Info.plist` — ✅ applied 2026-07-07 (now "Rosterra"). User-facing strings (Face ID / permission prompts, calendar PRODID, `AppSettings.companyName` fallback) also updated.
 - `bundleIdPrefix` in `project.yml` (currently `com.sura.roster`).
 - `PRODUCT_BUNDLE_IDENTIFIER` in `project.yml` for app + tests targets (currently `com.surainvestments.roster`). **Lock this before the first upload — bundle IDs cannot change after shipping.**
 - App Store Connect app name + subtitle when the listing is created.

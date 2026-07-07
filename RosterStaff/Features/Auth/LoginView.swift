@@ -319,7 +319,7 @@ struct LoginView: View {
             triggerShake()
             return // cancelled / failed passkey assertion
         }
-        guard let savedPassword = await PasskeyStore.readPassword(reason: "Sign in to Sura Roster") else {
+        guard let savedPassword = await PasskeyStore.readPassword(reason: "Sign in to Rosterra") else {
             PasskeyStore.clear()
             email = savedEmail
             return
@@ -345,7 +345,7 @@ struct LoginView: View {
         biometricWorking = true
         defer { biometricWorking = false }
         guard let savedPassword = await BiometricCredentialStore.readPassword(
-            reason: "Sign in to Sura Roster"
+            reason: "Sign in to Rosterra"
         ) else {
             return // cancelled or failed biometric
         }

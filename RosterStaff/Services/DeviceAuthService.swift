@@ -45,7 +45,7 @@ struct DeviceAuthService {
 
     /// Prompt for biometrics and, on success, persist the enablement flag.
     func enable(uid: String) async throws {
-        try await evaluate(reason: "Enable secure unlock for Sura Roster")
+        try await evaluate(reason: "Enable secure unlock for Rosterra")
         KeychainHelper.set(ISO8601DateFormatter().string(from: Date()), for: keychainKey(uid))
     }
 
@@ -56,7 +56,7 @@ struct DeviceAuthService {
     /// Prompt to unlock. Returns true on success, false on cancel/failure.
     func verify(uid: String) async -> Bool {
         do {
-            try await evaluate(reason: "Unlock Sura Roster")
+            try await evaluate(reason: "Unlock Rosterra")
             return true
         } catch {
             return false

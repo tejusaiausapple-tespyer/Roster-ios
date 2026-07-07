@@ -35,7 +35,8 @@ service cloud.firestore {
         'emergencyContact',
         'theme',
         'profileUpdateRequired',
-        'updatedAt'
+        'updatedAt',
+        'lastLoginAt'
       ];
       return changedKeys.hasOnly(allowedKeys);
     }

@@ -71,7 +71,7 @@ enum CalendarService {
         let ics = """
         BEGIN:VCALENDAR
         VERSION:2.0
-        PRODID:-//Sura Roster//Staff//EN
+        PRODID:-//Rosterra//Staff//EN
         BEGIN:VEVENT
         UID:\(shift.id)@sura-roster
         DTSTAMP:\(stamp(Date()))
