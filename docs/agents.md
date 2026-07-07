@@ -6,7 +6,8 @@
 
 ## Last Updated
 
-2026-07-05 by AI agent (accuracy pass: corrected collection names, staff tab bar, password rules, listener descriptions).
+2026-07-07 by AI agent (accuracy pass: Rosterra rename, manager Tasks + Wage now built,
+added shift_attendance / daily-jobs / wages collections, manager tabs, single-tenant note).
 
 ---
 
@@ -14,7 +15,7 @@
 
 | Field | Value |
 |-------|-------|
-| Name | RosterStaff (display name: "Sura Roster") |
+| Name | RosterStaff (Xcode target) — app display name: "Rosterra" (`Info.plist` `CFBundleDisplayName`, applied 2026-07-07; see `docs/BRANDING.md`) |
 | Type | Native iOS app (SwiftUI) |
 | Platform | iOS 17.0+, iPhone + iPad + Mac Catalyst |
 | Language | Swift 5.0 |
@@ -36,6 +37,12 @@ RosterStaff is a staff rostering and scheduling app for a single business (Sura 
 2. **Manager** — Create/edit/publish shifts, approve/reject timesheets, view dashboard metrics, manage the roster across all staff.
 
 Both roles share a single codebase. The app routes to the correct UI based on `AppUser.role` after login.
+
+> **Tenancy (deliberate):** the app is **intentionally single-tenant** — one business per
+> Firebase project, so there is no `businessId`/tenant partition key in the models or Firestore
+> rules. Multi-tenant scoping is deferred to the future SaaS phase (do not add `businessId`
+> plumbing until then). Access control is role-based (`isManager()` in the deployed rules),
+> not tenant-based.
 
 ---
 
@@ -60,6 +67,12 @@ RosterStaffApp (entry point)
         ├── ManagerDashboardView
         ├── ManagerRosterView
         ├── ManagerTimesheetsView
+        ├── ManagerStaffView
+        ├── ManagerAvailabilityView
+        ├── ManagerReportsView
+        ├── ManagerWageView
+        ├── ManagerTasksView
+        ├── ManagerSettings (Locations, Company Details)
         └── ManagerAccountView
 ```
 
@@ -82,9 +95,15 @@ RosterStaff/
 │   ├── Account/            # Staff account/settings
 │   ├── Shared/             # Reusable view components (ShiftCard, sheets)
 │   └── Manager/            # All manager-side views
-│       ├── Dashboard/
+│       ├── Dashboard/      # (+ DailyJobAssignSheet)
 │       ├── Roster/
-│       ├── Timesheets/
+│       ├── Timesheets/     # (+ Verified Attendance card)
+│       ├── Staff/
+│       ├── Availability/
+│       ├── Reports/
+│       ├── Tasks/          # manager task management (list/editor/review)
+│       ├── Wage/           # wages module (awards, earnings lines, profiles)
+│       ├── Settings/       # Locations + Company Details
 │       └── Shell/          # Manager tab bar + navigation
 ├── DesignSystem/           # Theme + reusable UI components
 │   ├── Theme.swift
@@ -147,7 +166,7 @@ RosterStaff/
 | `AppConfig.swift` | Static config (API URL, relying party, timeouts) |
 | `TaskPhotoCache.swift` | Local file system cache for task completion photos |
 | `Haptics.swift` | Haptic feedback convenience methods |
-| `NotificationService.swift` | Push notification registration (stub — waiting for developer account) |
+| `NotificationService.swift` | Registers/syncs FCM push tokens (`fcmToken` + `notificationTokens` subcollection on the user doc). Token plumbing is live; end-to-end push **delivery** is still gated on the paid Apple Developer account (APNs) |
 | `AddressSearchCompleter.swift` | MapKit address autocomplete for profile |
 
 ### ViewModels
@@ -171,7 +190,7 @@ RosterStaff/
 - **Pattern**: `@MainActor @Observable` class injected via SwiftUI `.environment()`
 - **Listeners**: Real-time Firestore `onSnapshot` for shifts, timesheets, messages, tasks, task completions, user profile, app settings
 - **Role Awareness**: Manager gets all-staff data (shifts windowed to the ±shift window, timesheets windowed to `submittedAt` ≥ 90 days back, users unwindowed); Staff gets only own data. Tasks + task completions listeners are shared by both roles (all active tasks; all completions in the shift date window — no per-user filter).
-- **Key Collections**: `shifts`, `timesheets`, `users`, `messages`, `tasks`, `task_completions`, `settings` (doc `app`)
+- **Key Collections**: `shifts`, `timesheets`, `users` (+ `notificationTokens` subcollection), `messages`, `tasks`, `task_completions`, `shift_attendance`, `daily_job_templates`, `daily_job_assignments`, `wages`, `settings` (docs `app` / `locations` / `availabilityLocks`)
 - **Write Operations**: Submit/resubmit timesheets, report absence, update profile, save availability, complete tasks, manager CRUD for shifts/timesheets
 
 ### API Layer (WorkerAPIClient)
@@ -189,9 +208,17 @@ RosterStaff/
 | `shifts` | Auto-generated | Both | staffId, date (yyyy-MM-dd), rosteredStart, rosteredEnd, breakMinutes, scheduledHours, status, location |
 | `timesheets` | Auto-generated | Both | shiftId, staffId, actualStart, actualEnd, actualBreakMinutes, workedHours, status, managerNotes |
 | `messages` | Auto-generated | Both | senderId, recipientId, body, sentAt, expiresAt, read |
-| `tasks` | Auto-generated | Both | title, description, frequency, date, dayOfWeek, active, managerPhotoUrl |
-| `task_completions` | `{taskId}_{date}` | Both | taskId, date, completed, completedAt, completedBy, staffPhotoUrl (`gs://...` for new iOS proof photos; legacy HTTPS URLs still supported) |
-| `settings` | `app` | Both | companyName |
+| `tasks` | Auto-generated | Both | title, description, frequency, date, dayOfWeek, active, managerPhotoUrl, assignedTo, dueTime, priority, requiresPhoto |
+| `task_completions` | `{taskId}_{date}` | Both | taskId, date, completed, completedAt, completedBy, staffPhotoUrl / staffPhotoUrls (`gs://...` for new iOS proof photos; legacy HTTPS URLs still supported), status, redoReason, reviewedBy/At, managerDownloadedAt |
+| `shift_attendance` | `{shiftId}` | Both | shiftId, staffId, date, clockInAt/clockOutAt (server timestamps), clockInDeviceAt/clockOutDeviceAt, GPS fixes + geofence verdict/distance. Append-only audit trail (see `docs/shift-attendance.md`) |
+| `daily_job_templates` | Auto-generated | Manager | title, active, createdAt, createdBy — permanent reusable job library (see `docs/daily-jobs-feature.md`) |
+| `daily_job_assignments` | `{shiftId}_{templateId}` | Both | shiftId, staffId, templateId, title, date, assignedAt/By, completed, completedAt/By |
+| `wages` | Auto-generated | Manager only | awards (classifications), earnings lines (rate types + super/tax), per-staff wage profiles. **Unreadable by staff** under deployed rules |
+| `settings` | `app` / `locations` / `availabilityLocks` | Both (read) / Manager (write) | companyName + ABN/address; manager work locations; roster availability week locks |
+| `users/{uid}/notificationTokens` | Auto-generated | Owner | token, platform, userAgent, enabled — FCM push tokens |
+
+> Rules also define `auditLogs`, `masterSheets`, and `importBatches`, but those are
+> **web/Worker-only** collections — the iOS app does not read or write them.
 
 ---
 
@@ -287,15 +314,24 @@ Defined in `project.yml` under `packages:` using the Firebase GitHub URL.
 - ✅ Manager Staff directory (searchable, status filters). Detail edits are **per-field** — pencil to unlock, checkmark to save just that field via `repo.updateStaffFields(staffId:, [key:value])` (direct `users/{id}` write; needs manager-write Firestore rules). **Email = request-and-self-confirm**: manager taps "Ask {name} to change their email" → `repo.requestStaffEmailChange` sets `emailChangeRequired`; staff sees a banner in Account → `ChangeEmailView` (`verifyBeforeUpdateEmail`, Firebase link) → clears the flag. Also "require new address" → `repo.requestStaffAddressUpdate` → `ProfileCompletionView` gate (with Sign out).
 - ✅ Manager Availability (week selector; staff × 7-day matrix on iPad/Mac, per-staff cards on iPhone)
 - ✅ Manager Reports (weekly analytics: scheduled/worked hours, labour cost + super, timesheet status, per-staff breakdown)
+- ✅ Manager Tasks management (create/edit/assign tasks, live completion review, request-redo flow, photo lifecycle)
+- ✅ Manager Wage module (Xero-AU-style awards + classifications, earnings lines, per-staff wage/super profiles; manager-only `wages` collection)
+- ✅ Daily Jobs (manager per-shift job assignments from the roster; staff Complete/Undo via the Home bell panel)
+- ✅ Verified shift attendance (server-timestamped clock-in/out + GPS/geofence capture; manager Verified Attendance card)
 - ✅ Device auth gate (biometric lock)
 - ✅ Forced password change flow
 - ✅ Profile completion flow
 
 ### Not Yet Implemented / Disabled
-- ❌ Push notifications (waiting for paid Apple Developer account — see `docs/WHEN_DEVELOPER_ACCOUNT_READY.md`)
-- ❌ Manager tasks management UI (uses placeholder view)
-- ❌ Manager wage & tenure/hours views (placeholders)
+- ❌ Push **delivery** (FCM token registration/sync is live, but end-to-end delivery waits on
+  a paid Apple Developer account / APNs — see `docs/WHEN_DEVELOPER_ACCOUNT_READY.md`)
+- ❌ Manager **Tenure / hours** view (still a placeholder — the Wage module beside it is built)
 - ❌ Passkey-based auth (code exists but not wired into main flow)
+
+> Previously listed here but now BUILT (2026-07-06/07): **Manager Tasks management UI**
+> (`Features/Manager/Tasks/` — list/editor/review + redo flow) and the **Manager Wage module**
+> (`Features/Manager/Wage/ManagerWageView.swift`, `Models/WageModels.swift`). See Working
+> Features above.
 
 ---
 
