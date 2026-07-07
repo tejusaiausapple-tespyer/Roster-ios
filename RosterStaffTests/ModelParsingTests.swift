@@ -156,7 +156,8 @@ final class ModelParsingTests: XCTestCase {
     }
 
     func testAppSettingsFallbackName() {
-        XCTAssertEqual(AppSettings(data: [:]).companyName, "Sura Roster")
+        XCTAssertEqual(AppSettings(data: [:]).companyName, "Rosterra")
+        XCTAssertEqual(AppSettings(data: ["companyName": ""]).companyName, "Rosterra")
     }
 
     // MARK: - RosterLocation

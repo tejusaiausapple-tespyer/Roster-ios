@@ -29,8 +29,17 @@ struct HomeView: View {
         HoursMetrics.compute(timesheets: repo.timesheets, shifts: repo.shifts, now: now)
     }
 
+    /// Manager → Company details → Company Name (`settings/app.companyName`).
+    private var headerCompanyName: String {
+        let name = repo.appSettings.companyName.trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? AppSettings.fallback.companyName : name
+    }
+
     var body: some View {
-        NavigationStack {
+        // Read headerCompanyName in the view body (not only inside the toolbar
+        // closure) so the pill re-renders when settings/app streams in.
+        let pillTitle = headerCompanyName
+        return NavigationStack {
             TabScroll {
                 if repo.isLoading {
                     SkeletonCard()
@@ -48,9 +57,7 @@ struct HomeView: View {
                 // Company name owns the header pill, left-aligned so long
                 // names get room (truncated gracefully by the pill).
                 ToolbarItem(placement: .topBarLeading) {
-                    ScreenTitlePill(title: repo.appSettings.companyName.isEmpty
-                                    ? "Home" : repo.appSettings.companyName,
-                                    icon: "house.fill")
+                    ScreenTitlePill(title: pillTitle, icon: "building.2.fill")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     messagesButton
