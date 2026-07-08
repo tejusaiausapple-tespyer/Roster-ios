@@ -206,6 +206,23 @@
     Tiny fixed badges in size-constrained chrome (bell count, calendar count
     dots) intentionally left fixed to avoid layout breakage at accessibility
     sizes.
+- [ ] **`audit-remediation` branch** — quality/bug-fix pass (2026-07-08), ⏳ awaiting Sura's device verification
+  - [x] One-sheet-per-view navigation: `HeroCard` rename, TZ polish, logging
+  - [x] O(1) shift+attendance indexes, best-effort writes, safe `roleOptions`
+  - [x] BUG FIX: Manager Availability tab not reflecting staff saves — two root causes:
+        (1) `WorkerAPIClient.saveAvailability` discarded the Worker response (`_ = try await post(...)`)
+        so any 200 with non-JSON body (e.g. SPA HTML fallback if endpoint unreachable)
+        was treated as success; now validates `{ ok: true }` and throws a user-visible
+        error if the Worker does not confirm the write.
+        (2) `ManagerAvailabilityView` only accessed `repo.allUsers` inside the `GeometryReader`
+        closure, which executes during layout — outside SwiftUI's `@Observable` tracking
+        window — so the view never re-rendered when staff saved. Added
+        `.onChange(of: repo.allUsers) { _, _ in }` to anchor the dependency
+        outside the closure and trigger re-renders on any user availability change.
+  - VERIFY: staff saves availability for next week → manager navigates to that
+    week in Manager Portal → data appears without navigating away/back. Check
+    that saving availability shows a real error toast (not false success) if the
+    network is down.
 - [ ] **M10 — CI** (NOT STARTED)
   - GitHub Actions: xcodegen → build → test on PRs (web repo has a CI to copy
     patterns from). pbxproj is gitignored so no drift check needed.

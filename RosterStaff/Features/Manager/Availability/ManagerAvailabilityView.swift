@@ -79,6 +79,9 @@ struct ManagerAvailabilityView: View {
                 ScreenTitlePill(title: "Availability", icon: "calendar.badge.clock")
             }
         }
+        // GeometryReader evaluates its closure during layout, outside @Observable tracking.
+        // This anchors repo.allUsers as a dependency so the view re-renders when staff save.
+        .onChange(of: repo.allUsers) { _, _ in }
     }
 
     // MARK: - Control bar

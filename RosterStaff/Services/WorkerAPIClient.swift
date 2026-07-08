@@ -65,8 +65,12 @@ struct WorkerAPIClient {
         for (key, value) in weeklyAvailability {
             weekly[key] = value.asDictionary
         }
-        _ = try await post(path: "api/staff/availability",
-                           body: ["userId": userId, "weeklyAvailability": weekly])
+        let result = try await post(path: "api/staff/availability",
+                                    body: ["userId": userId, "weeklyAvailability": weekly])
+        guard result["ok"] as? Bool == true else {
+            throw WorkerAPIError.server(
+                (result["error"] as? String) ?? "Availability could not be saved. Please try again.")
+        }
     }
 
     /// POST /api/complete-password-change — clears the first-login flag.
