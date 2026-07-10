@@ -259,12 +259,11 @@ struct ManagerStaffDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     let user: AppUser
 
-    private enum Field: Hashable { case name, phone, employment, superRate }
+    private enum Field: Hashable { case name, phone, employment }
 
     @State private var fullName: String
     @State private var phone: String
     @State private var employmentType: EmploymentType
-    @State private var superRateText: String
     @State private var unlocked: Set<Field> = []
     @State private var savingField: Field?
     @State private var emailRequested: Bool
@@ -277,7 +276,6 @@ struct ManagerStaffDetailSheet: View {
         _fullName = State(initialValue: user.fullName)
         _phone = State(initialValue: user.phone ?? "")
         _employmentType = State(initialValue: user.employmentType ?? .casual)
-        _superRateText = State(initialValue: user.superRate.map { String(format: "%g", $0) } ?? "")
         _emailRequested = State(initialValue: user.emailChangeRequired)
     }
 
@@ -311,13 +309,10 @@ struct ManagerStaffDetailSheet: View {
                 // Manager-only pay settings. Earnings-line assignments live in
                 // the `wages` collection (staff can't read it); the super %
                 // sits on the user doc but is never rendered in the staff UI.
+                // Superannuation (toggle + %) is managed EXCLUSIVELY in the
+                // Wage Assignment sheet — single source of truth, no
+                // duplicate controls here.
                 Section {
-                    Toggle("Superannuation", isOn: superEnabledBinding.animation())
-                        .tint(Theme.brand)
-                        .font(.subheadline)
-                    if superEnabledBinding.wrappedValue {
-                        superRateRow
-                    }
                     Button {
                         showWageAssignment = true
                     } label: {
@@ -333,9 +328,7 @@ struct ManagerStaffDetailSheet: View {
                 } header: {
                     Text("Pay (manager only)")
                 } footer: {
-                    Text(superEnabledBinding.wrappedValue
-                         ? "Award, classification and earnings lines are only visible to managers. Set up awards and lines in the Wage tab first."
-                         : "Super is OFF — e.g. staff under 18 working 30 hours or less per week are not entitled to super guarantee. New payslips will show no superannuation. Award, classification and earnings lines are only visible to managers.")
+                    Text("Award, classification, earnings lines and superannuation are managed in the wage assignment — only visible to managers. Set up awards and lines in the Wage tab first.")
                 }
 
                 Section("Record") {
@@ -398,51 +391,6 @@ struct ManagerStaffDetailSheet: View {
         }
     }
 
-    /// Super on/off lives on the staff wage profile (`wages/staff_{id}`) —
-    /// the same flag payroll generation reads. Toggling saves immediately.
-    private var superEnabledBinding: Binding<Bool> {
-        Binding(
-            get: { repo.staffWageProfile(for: user.id)?.superEnabled ?? true },
-            set: { enabled in
-                var profile = repo.staffWageProfile(for: user.id)
-                    ?? StaffWageProfile(staffId: user.id)
-                profile.superEnabled = enabled
-                Task {
-                    do {
-                        try await repo.saveStaffWageProfile(profile)
-                        Haptics.light()
-                    } catch {
-                        toast = ToastMessage(kind: .error, text: "Couldn't update super. \(error.localizedDescription)")
-                        Haptics.error()
-                    }
-                }
-            }
-        )
-    }
-
-    private var superRateRow: some View {
-        HStack {
-            Text("Superannuation")
-                .font(.subheadline)
-                .foregroundStyle(Theme.textSecondary)
-            Spacer()
-            if unlocked.contains(.superRate) {
-                TextField("12", text: $superRateText)
-                    .multilineTextAlignment(.trailing)
-                    .keyboardType(.decimalPad)
-                    .frame(width: 64)
-                    .foregroundStyle(Theme.textPrimary)
-                Text("%").foregroundStyle(Theme.textSecondary)
-                commitButton(.superRate)
-            } else {
-                Text(superRateText.isEmpty ? "—" : "\(superRateText)%")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                editButton(.superRate)
-            }
-        }
-    }
-
     private var wageAssignmentSummary: String {
         guard let profile = repo.staffWageProfile(for: user.id) else { return "Not set" }
         var parts: [String] = []
@@ -455,6 +403,9 @@ struct ManagerStaffDetailSheet: View {
         }
         if !profile.earningsLineIds.isEmpty {
             parts.append("\(profile.earningsLineIds.count) line\(profile.earningsLineIds.count == 1 ? "" : "s")")
+        }
+        if !profile.superEnabled {
+            parts.append("No super")
         }
         return parts.isEmpty ? "Not set" : parts.joined(separator: " · ")
     }
@@ -565,14 +516,6 @@ struct ManagerStaffDetailSheet: View {
             key = "phone"; value = phone.trimmingCharacters(in: .whitespaces)
         case .employment:
             key = "employmentType"; value = employmentType.rawValue
-        case .superRate:
-            let trimmed = superRateText.trimmingCharacters(in: .whitespaces)
-            guard trimmed.isEmpty || Double(trimmed) != nil else {
-                toast = ToastMessage(kind: .error, text: "Super must be a number (e.g. 12).")
-                Haptics.error()
-                return
-            }
-            key = "superRate"; value = Double(trimmed).map { $0 as Any } ?? NSNull()
         }
         savingField = field
         Task {
