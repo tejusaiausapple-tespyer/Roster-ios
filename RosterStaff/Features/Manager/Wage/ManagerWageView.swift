@@ -246,6 +246,7 @@ private struct WageAwardEditorSheet: View {
         var level: String
         var title: String
         var rateText: String
+        var weekendRateText: String = ""
     }
 
     init(award: WageAward?, onSave: @escaping (WageAward) -> Void) {
@@ -257,7 +258,9 @@ private struct WageAwardEditorSheet: View {
         _active = State(initialValue: award?.active ?? true)
         _classifications = State(initialValue: (award?.classifications ?? []).map {
             EditableClassification(level: $0.level, title: $0.title,
-                                   rateText: String(format: "%.2f", $0.baseHourlyRate))
+                                   rateText: String(format: "%.2f", $0.baseHourlyRate),
+                                   weekendRateText: $0.weekendHourlyRate > 0
+                                       ? String(format: "%.2f", $0.weekendHourlyRate) : "")
         })
     }
 
@@ -285,18 +288,30 @@ private struct WageAwardEditorSheet: View {
 
                 Section {
                     ForEach($classifications) { $classification in
-                        HStack(spacing: 8) {
-                            TextField("Lvl", text: $classification.level)
-                                .frame(width: 40)
-                            TextField("Title", text: $classification.title)
-                            HStack(spacing: 2) {
-                                Text("$").foregroundStyle(Theme.textTertiary)
-                                TextField("0.00", text: $classification.rateText)
-                                    .keyboardType(.decimalPad)
-                                    .frame(width: 64)
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 8) {
+                                TextField("Lvl", text: $classification.level)
+                                    .frame(width: 44)
+                                TextField("Title (e.g. Under 17)", text: $classification.title)
+                            }
+                            HStack(spacing: 10) {
+                                HStack(spacing: 2) {
+                                    Text("M–F $").font(.caption).foregroundStyle(Theme.textTertiary)
+                                    TextField("0.00", text: $classification.rateText)
+                                        .keyboardType(.decimalPad)
+                                        .frame(width: 60)
+                                }
+                                HStack(spacing: 2) {
+                                    Text("Wknd/PH $").font(.caption).foregroundStyle(Theme.textTertiary)
+                                    TextField("optional", text: $classification.weekendRateText)
+                                        .keyboardType(.decimalPad)
+                                        .frame(width: 60)
+                                }
+                                Spacer()
                             }
                         }
                         .font(.subheadline)
+                        .padding(.vertical, 2)
                     }
                     .onDelete { classifications.remove(atOffsets: $0) }
 
@@ -305,10 +320,22 @@ private struct WageAwardEditorSheet: View {
                     } label: {
                         Label("Add classification level", systemImage: "plus.circle")
                     }
+                    if classifications.isEmpty {
+                        Button {
+                            classifications = WageAward.consoleTemplateClassifications.map {
+                                EditableClassification(level: $0.level, title: $0.title,
+                                                       rateText: String(format: "%.2f", $0.baseHourlyRate),
+                                                       weekendRateText: String(format: "%.2f", $0.weekendHourlyRate))
+                            }
+                            if name.trimmingCharacters(in: .whitespaces).isEmpty { name = "Console" }
+                        } label: {
+                            Label("Use Console age-rate template", systemImage: "tablecells")
+                        }
+                    }
                 } header: {
                     Text("Classification levels")
                 } footer: {
-                    Text("Level, title and base hourly rate — e.g. 2 / Retail Employee Level 2 / $26.18. Swipe to remove.")
+                    Text("Each level has a Mon–Fri base rate and an optional Weekend & Public Holiday rate (used by payroll when set — otherwise payroll defaults to base × 1.5 weekend / × 2.25 public holiday). Swipe to remove.")
                 }
             }
             .navigationTitle(award == nil ? "New Award" : "Edit Award")
@@ -329,7 +356,8 @@ private struct WageAwardEditorSheet: View {
                                 guard !title.isEmpty else { return nil }
                                 return AwardClassification(level: $0.level.trimmingCharacters(in: .whitespaces),
                                                            title: title,
-                                                           baseHourlyRate: Double($0.rateText) ?? 0)
+                                                           baseHourlyRate: Double($0.rateText) ?? 0,
+                                                           weekendHourlyRate: Double($0.weekendRateText) ?? 0)
                             },
                             active: active
                         ))

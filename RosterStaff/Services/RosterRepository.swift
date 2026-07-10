@@ -1317,10 +1317,15 @@ final class RosterRepository {
             baseHourlyRate: baseRate,
             ordinaryHours: PayrollCalculator.round2(buckets.ordinary),
             weekendHours: PayrollCalculator.round2(buckets.weekend),
-            // Default penalty rates seed from the base rate — every award
-            // differs, so the manager reviews/edits them per payslip.
-            weekendRate: PayrollCalculator.round2(baseRate * 1.5),
-            publicHolidayRate: PayrollCalculator.round2(baseRate * 2.25),
+            // Weekend & PH: the classification's explicit rate wins (the
+            // owner's rate table has one combined Weekend & PH column);
+            // otherwise seed defaults from the base rate for manager review.
+            weekendRate: (classification?.weekendHourlyRate ?? 0) > 0
+                ? classification!.weekendHourlyRate
+                : PayrollCalculator.round2(baseRate * 1.5),
+            publicHolidayRate: (classification?.weekendHourlyRate ?? 0) > 0
+                ? classification!.weekendHourlyRate
+                : PayrollCalculator.round2(baseRate * 2.25),
             overtimeRate: PayrollCalculator.round2(baseRate * 1.5),
             extraEarnings: extras,
             // Profile controls super: OFF (e.g. under-18) ⇒ 0%, payslip and

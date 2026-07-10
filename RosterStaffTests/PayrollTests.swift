@@ -225,6 +225,36 @@ final class PayrollTests: XCTestCase {
         XCTAssertEqual(profile.resolvedHourlyRate(award: award, earningsLines: lines), 26.18)
     }
 
+    // MARK: - Console age-rate table (owner-supplied 2026-07)
+
+    func testConsoleTemplateMatchesOwnerRateTable() {
+        let template = WageAward.consoleTemplateClassifications
+        XCTAssertEqual(template.count, 5)
+        let expected: [(String, Double, Double)] = [
+            ("U17", 17.50, 22.83), ("17", 18.43, 24.04), ("18", 23.03, 30.04),
+            ("19", 27.64, 36.05), ("20+", 36.85, 48.07),
+        ]
+        for (index, (level, base, weekend)) in expected.enumerated() {
+            XCTAssertEqual(template[index].level, level)
+            XCTAssertEqual(template[index].baseHourlyRate, base)
+            XCTAssertEqual(template[index].weekendHourlyRate, weekend)
+        }
+    }
+
+    func testClassificationWeekendRateRoundTrip() {
+        let award = WageAward(id: "a1", name: "Console",
+                              classifications: WageAward.consoleTemplateClassifications)
+        let parsed = WageAward(id: "a1", data: award.asDictionary)
+        XCTAssertEqual(parsed?.classifications, WageAward.consoleTemplateClassifications)
+    }
+
+    func testLegacyClassificationParsesWithoutWeekendRate() {
+        let classification = AwardClassification(dict: [
+            "level": "2", "title": "L2", "baseHourlyRate": 26.18,
+        ])
+        XCTAssertEqual(classification.weekendHourlyRate, 0) // → payroll falls back to multipliers
+    }
+
     // MARK: - Superannuation toggle (under-18 staff)
 
     func testResolvedSuperRateWhenDisabled() {

@@ -642,7 +642,9 @@ struct StaffWageAssignmentSheet: View {
                         Picker("Classification", selection: $classificationLevel) {
                             Text("None").tag("")
                             ForEach(award.classifications) { classification in
-                                Text("L\(classification.level) — \(classification.title) ($\(String(format: "%.2f", classification.baseHourlyRate))/h)")
+                                Text(classification.weekendHourlyRate > 0
+                                 ? "\(classification.title) ($\(String(format: "%.2f", classification.baseHourlyRate)) M–F · $\(String(format: "%.2f", classification.weekendHourlyRate)) Wknd/PH)"
+                                 : "L\(classification.level) — \(classification.title) ($\(String(format: "%.2f", classification.baseHourlyRate))/h)")
                                     .tag(classification.level)
                             }
                         }

@@ -64,28 +64,36 @@ enum EarningsRateType: String, CaseIterable, Identifiable {
     }
 }
 
-/// A classification level within an award (e.g. "Level 2 — Retail Employee").
+/// A classification level within an award (e.g. "Level 2 — Retail Employee",
+/// or an age bracket like "Under 17" / "Adult 20+").
 struct AwardClassification: Equatable, Identifiable {
-    var level: String          // e.g. "2"
-    var title: String          // e.g. "Retail Employee Level 2"
-    var baseHourlyRate: Double // ordinary hourly rate for this level
+    var level: String          // e.g. "2", "U17", "20+"
+    var title: String          // e.g. "Retail Employee Level 2", "Under 17"
+    var baseHourlyRate: Double // ordinary (Mon–Fri) hourly rate for this level
+    /// Weekend & public holiday hourly rate. 0 ⇒ not specified — payroll
+    /// generation falls back to its default multipliers of the base rate.
+    var weekendHourlyRate: Double
 
     var id: String { level + title }
 
-    init(level: String, title: String, baseHourlyRate: Double) {
+    init(level: String, title: String, baseHourlyRate: Double,
+         weekendHourlyRate: Double = 0) {
         self.level = level
         self.title = title
         self.baseHourlyRate = baseHourlyRate
+        self.weekendHourlyRate = weekendHourlyRate
     }
 
     init(dict: [String: Any]) {
         self.level = FS.stringValue(dict, "level")
         self.title = FS.stringValue(dict, "title")
         self.baseHourlyRate = FS.double(dict, "baseHourlyRate")
+        self.weekendHourlyRate = FS.double(dict, "weekendHourlyRate")
     }
 
     var asDictionary: [String: Any] {
-        ["level": level, "title": title, "baseHourlyRate": baseHourlyRate]
+        ["level": level, "title": title, "baseHourlyRate": baseHourlyRate,
+         "weekendHourlyRate": weekendHourlyRate]
     }
 }
 
@@ -131,6 +139,18 @@ struct WageAward: Identifiable, Equatable {
             "active": active,
         ]
     }
+
+    /// Owner-supplied Console age-rate table (2026-07): Mon–Fri base rate and
+    /// the combined Weekend & Public Holiday rate per age bracket. Offered as
+    /// a one-tap prefill in the award editor — the manager still reviews and
+    /// saves manually.
+    static let consoleTemplateClassifications: [AwardClassification] = [
+        AwardClassification(level: "U17", title: "Under 17", baseHourlyRate: 17.50, weekendHourlyRate: 22.83),
+        AwardClassification(level: "17", title: "17 years", baseHourlyRate: 18.43, weekendHourlyRate: 24.04),
+        AwardClassification(level: "18", title: "18 years", baseHourlyRate: 23.03, weekendHourlyRate: 30.04),
+        AwardClassification(level: "19", title: "19 years", baseHourlyRate: 27.64, weekendHourlyRate: 36.05),
+        AwardClassification(level: "20+", title: "Adult 20+", baseHourlyRate: 36.85, weekendHourlyRate: 48.07),
+    ]
 }
 
 /// A pay item ("earnings rate" in Xero terms).
