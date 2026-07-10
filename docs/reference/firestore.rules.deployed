@@ -33,8 +33,13 @@ service cloud.firestore {
         'dob',
         'address',
         'emergencyContact',
+        'emergencyContactName',
+        'emergencyContactPhone',
+        'emergencyContactAddress',
+        'emergencyContactEmail',
         'theme',
         'profileUpdateRequired',
+        'emailChangeRequired',
         'updatedAt',
         'lastLoginAt'
       ];
@@ -220,6 +225,20 @@ service cloud.firestore {
     // Wages collection
     match /wages/{wageId} {
       allow read: if isManager();
+      allow write: if isManager();
+    }
+
+    // Payslips: manager-controlled payroll. Staff may ONLY read their own
+    // SUBMITTED (or archived, i.e. superseded-but-published) payslips —
+    // drafts, reviews and approvals are invisible to them. Staff can never
+    // write. This is the security boundary for the whole payroll feature;
+    // the client-side filtering is UX only.
+    match /payslips/{payslipId} {
+      allow read: if isManager() || (
+        isAuthenticated() &&
+        resource.data.staffId == request.auth.uid &&
+        resource.data.status in ['submitted', 'archived']
+      );
       allow write: if isManager();
     }
     

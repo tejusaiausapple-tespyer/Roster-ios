@@ -13,7 +13,12 @@ struct AppUser: Identifiable, Equatable {
     var startDate: String?
     var dob: String?
     var address: String?
+    /// Legacy single-field emergency contact (kept in sync with name for PWA compat).
     var emergencyContact: String?
+    var emergencyContactName: String?
+    var emergencyContactPhone: String?
+    var emergencyContactAddress: String?
+    var emergencyContactEmail: String?
     var notes: String?
     var defaultLocation: String?
     var needsSetup: Bool
@@ -55,6 +60,14 @@ struct AppUser: Identifiable, Equatable {
         self.dob = FS.string(data, "dob")
         self.address = FS.string(data, "address")
         self.emergencyContact = FS.string(data, "emergencyContact")
+        self.emergencyContactName = FS.string(data, "emergencyContactName")
+        self.emergencyContactPhone = FS.string(data, "emergencyContactPhone")
+        self.emergencyContactAddress = FS.string(data, "emergencyContactAddress")
+        self.emergencyContactEmail = FS.string(data, "emergencyContactEmail")
+        if self.emergencyContactName?.isEmpty != false,
+           let legacy = self.emergencyContact, !legacy.isEmpty {
+            self.emergencyContactName = legacy
+        }
         self.notes = FS.string(data, "notes")
         self.defaultLocation = FS.string(data, "defaultLocation")
         self.needsSetup = FS.bool(data, "needsSetup")

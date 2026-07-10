@@ -215,6 +215,17 @@ final class PayrollTests: XCTestCase {
         XCTAssertNil(profile.resolvedHourlyRate(award: nil, earningsLines: lines))
     }
 
+    func testResolvedHourlyRateFromClassificationEarningsLine() {
+        let lines = [
+            EarningsLine(id: "l1", name: "Adult 20+", category: .ordinaryHours,
+                         rateType: .fixedAmount, fixedRate: 36.85,
+                         awardId: "a1", level: "20+", baseHourlyRate: 36.85),
+        ]
+        let profile = StaffWageProfile(staffId: "s", awardId: "a1", classificationLevel: "20+")
+        XCTAssertEqual(profile.resolvedHourlyRate(award: nil, earningsLines: lines), 36.85)
+        XCTAssertEqual(profile.resolvedClassificationTitle(award: nil, earningsLines: lines), "Adult 20+")
+    }
+
     func testClassificationBeatsEarningsLineRate() {
         let award = WageAward(id: "a1", name: "Retail",
                               classifications: [AwardClassification(level: "2", title: "L2", baseHourlyRate: 26.18)])

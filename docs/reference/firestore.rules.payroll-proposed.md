@@ -1,15 +1,7 @@
-# Payroll — proposed Firestore rules addition (NOT yet deployed)
+# Payroll — Firestore rules addition (deployed 2026-07-10)
 
-**Status: ⏳ awaiting Sura's deployment.** The Payroll module ships client-side
-in branch `audit-remediation`, but staff cannot see payslips (and managers
-cannot read/write the `payslips` collection) until this block is added to the
-deployed rules and pushed with `firebase deploy --only firestore:rules` from
-`docs/reference` (the working deploy root).
-
-Until deployed:
-- Manager Payroll tab: all reads/writes fail (surfaces as a load error toast).
-- Staff Payslips page: shows the empty state (the listener treats
-  permission-denied as "feature not enabled").
+**Status: ✅ deployed** to `roster-8a270` via `firebase deploy --only firestore:rules`
+from `docs/reference`. The block lives in `firestore.rules.deployed` alongside `wages`.
 
 ## Rules block
 
@@ -49,3 +41,5 @@ later, tighten the manager `update` to reject changes when
 
 After deploying: update `docs/reference/firestore.rules.deployed` to match,
 and tick this off in the workspace MEMORY "Pending Owner Actions".
+
+**Done 2026-07-10** — also added `emailChangeRequired` to `isValidSelfUserUpdate`.

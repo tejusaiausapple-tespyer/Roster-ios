@@ -1178,9 +1178,65 @@ final class RosterRepository {
         try await ref.setData(line.asDictionary)
     }
 
+    /// Save a classification earnings line and optionally remove the matching
+    /// legacy level embedded on a wage award doc.
+    func saveClassificationLine(
+        _ line: EarningsLine,
+        migrateFromAwardId: String? = nil,
+        removeLegacyLevel: String? = nil
+    ) async throws {
+        try await saveEarningsLine(line)
+        guard let awardId = migrateFromAwardId,
+              let removeLevel = removeLegacyLevel,
+              var award = wageAwards.first(where: { $0.id == awardId }) else { return }
+        let before = award.classifications.count
+        award.classifications.removeAll { $0.level == removeLevel }
+        guard award.classifications.count != before else { return }
+        try await saveWageAward(award)
+    }
+
+    /// Batch-create Console age-rate classification levels for an award, skipping
+    /// levels that already exist as earnings lines for that award.
+    @discardableResult
+    func addConsoleClassificationLevels(for awardId: String) async throws -> Int {
+        let existing = Set(
+            earningsLines
+                .filter { $0.awardId == awardId && $0.isClassificationLevel }
+                .map(\.level)
+        )
+        let toCreate = EarningsLine.consoleTemplateLines(awardId: awardId)
+            .filter { !existing.contains($0.level) }
+        for line in toCreate {
+            try await saveEarningsLine(line)
+        }
+        return toCreate.count
+    }
+
+    /// Ensure a wage award named "Console" exists; returns its id.
+    func ensureConsoleAward() async throws -> String {
+        if let existing = wageAwards.first(where: {
+            $0.name.caseInsensitiveCompare("Console") == .orderedSame
+        }) {
+            return existing.id
+        }
+        let ref = db.collection("wages").document()
+        let award = WageAward(id: ref.documentID, name: "Console", industry: "Retail")
+        try await ref.setData(award.asDictionary)
+        return ref.documentID
+    }
+
     /// Save a staff member's wage assignment (award/classification/lines).
     func saveStaffWageProfile(_ profile: StaffWageProfile) async throws {
         try await db.collection("wages").document(profile.id).setData(profile.asDictionary)
+    }
+
+    /// Delete a classification level embedded on a wage award document.
+    func deleteLegacyClassification(awardId: String, level: String) async throws {
+        guard var award = wageAwards.first(where: { $0.id == awardId }) else { return }
+        let before = award.classifications.count
+        award.classifications.removeAll { $0.level == level }
+        guard award.classifications.count != before else { return }
+        try await saveWageAward(award)
     }
 
     /// Delete any wages-collection document (award or earnings line).
@@ -1265,9 +1321,7 @@ final class RosterRepository {
                                    workedHoursByDate: [String: Double],
                                    generatedBy manager: AppUser) -> Payslip {
         let award = profile?.awardId.flatMap { id in wageAwards.first { $0.id == id } }
-        let classification = award?.classifications.first { $0.level == profile?.classificationLevel }
-        // Rate precedence: override → award classification → assigned
-        // ordinary-hours earnings line with its own $ rate → users.hourlyRate.
+        // Classification levels live on earnings lines; award.classifications is legacy.
         let resolvedRate = profile?.resolvedHourlyRate(award: award, earningsLines: earningsLines)
         let baseRate = resolvedRate ?? user.hourlyRate ?? 0
         // Trace the resolution — a $0 payslip must be diagnosable from logs.
@@ -1311,21 +1365,25 @@ final class RosterRepository {
             employmentType: profile?.employmentType ?? user.employmentType?.rawValue ?? "",
             awardName: award?.name ?? "",
             awardCode: award?.code ?? "",
-            classification: classification?.title ?? "",
+            classification: profile?.resolvedClassificationTitle(award: award, earningsLines: earningsLines) ?? "",
             periodStart: periodStart,
             periodEnd: periodEnd,
             baseHourlyRate: baseRate,
             ordinaryHours: PayrollCalculator.round2(buckets.ordinary),
             weekendHours: PayrollCalculator.round2(buckets.weekend),
-            // Weekend & PH: the classification's explicit rate wins (the
-            // owner's rate table has one combined Weekend & PH column);
-            // otherwise seed defaults from the base rate for manager review.
-            weekendRate: (classification?.weekendHourlyRate ?? 0) > 0
-                ? classification!.weekendHourlyRate
-                : PayrollCalculator.round2(baseRate * 1.5),
-            publicHolidayRate: (classification?.weekendHourlyRate ?? 0) > 0
-                ? classification!.weekendHourlyRate
-                : PayrollCalculator.round2(baseRate * 2.25),
+            // Weekend & PH: explicit classification rate wins; otherwise defaults.
+            weekendRate: {
+                let explicit = profile?.resolvedWeekendRate(award: award, earningsLines: earningsLines)
+                return (explicit ?? 0) > 0
+                    ? explicit!
+                    : PayrollCalculator.round2(baseRate * 1.5)
+            }(),
+            publicHolidayRate: {
+                let explicit = profile?.resolvedWeekendRate(award: award, earningsLines: earningsLines)
+                return (explicit ?? 0) > 0
+                    ? explicit!
+                    : PayrollCalculator.round2(baseRate * 2.25)
+            }(),
             overtimeRate: PayrollCalculator.round2(baseRate * 1.5),
             extraEarnings: extras,
             // Profile controls super: OFF (e.g. under-18) ⇒ 0%, payslip and

@@ -77,14 +77,18 @@ struct TitlePillCollapseReporter: View {
     var body: some View {
         Color.clear
             .frame(height: 0)
-            .background(
+            .overlay(alignment: .top) {
+                // GeometryReader must be height-constrained — an unconstrained
+                // reader inside a List row expands to the viewport and creates
+                // huge empty gaps (Wage / Payroll tabs).
                 GeometryReader { geo in
                     Color.clear.preference(
                         key: TitlePillOffsetKey.self,
                         value: geo.frame(in: .scrollView).minY
                     )
                 }
-            )
+                .frame(height: 0)
+            }
             .onPreferenceChange(TitlePillOffsetKey.self) { minY in
                 model.fraction = min(1, max(0, -minY / travel))
             }

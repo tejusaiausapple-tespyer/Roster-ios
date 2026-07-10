@@ -31,7 +31,11 @@
       "Bash(grep -n \"function \\\\|export \" /Users/sura/Desktop/Roster-old/worker/lib/firebase.ts | head -40)",
       "Read(//Users/sura/Desktop/Roster-old/worker/handlers/**)",
       "Read(//Users/sura/Desktop/Roster-old/worker/lib/**)",
-      "Bash(mv \"/Users/sura/Desktop/Projects/Roster - 5 july \" \"/Users/sura/Desktop/_roster-cleanup-backup-2026-07-07/projects-roster-5july/Roster - 5 july\" *)"
+      "Bash(mv \"/Users/sura/Desktop/Projects/Roster - 5 july \" \"/Users/sura/Desktop/_roster-cleanup-backup-2026-07-07/projects-roster-5july/Roster - 5 july\" *)",
+      "Bash(grep -rnE \"catch \\\\{ *\\\\}|catch \\\\{ *$\" --include=\"*.swift\" RosterStaff/)",
+      "Bash(grep -rn \"!\\\\s*$\\\\|try!\\\\|as!\\\\|\\\\.first!\\\\|\\\\[0\\\\]\" /Users/sura/Desktop/RosterStaff/RosterStaff --include=\"*.swift\")",
+      "Bash(grep -rn \"!\\\\$\\\\|try!\" /Users/sura/Desktop/RosterStaff/RosterStaff --include=\"*.swift\")",
+      "Bash(grep -rn \"var.*:.*!$\\\\|let.*:.*!$\" /Users/sura/Desktop/RosterStaff/RosterStaff --include=\"*.swift\")"
     ]
   }
 }

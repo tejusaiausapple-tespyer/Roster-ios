@@ -153,10 +153,12 @@ struct WageAward: Identifiable, Equatable {
     ]
 }
 
-/// A pay item ("earnings rate" in Xero terms).
+/// A pay item ("earnings rate" in Xero terms). For **ordinary hours**, each
+/// line is also a **classification level** (level code + M–F / weekend rates)
+/// — the award editor no longer carries classifications; they live here.
 struct EarningsLine: Identifiable, Equatable {
     let id: String
-    var name: String            // internal name, e.g. "Overtime 1.5x"
+    var name: String            // internal name, e.g. "Under 17"
     var displayName: String     // shown on payslips (defaults to name)
     var category: EarningsCategory
     var rateType: EarningsRateType
@@ -166,6 +168,14 @@ struct EarningsLine: Identifiable, Equatable {
     var exemptFromSuper: Bool
     var exemptFromTax: Bool
     var active: Bool
+    /// Parent award (optional). Classification-level lines are grouped here.
+    var awardId: String?
+    /// Classification level code, e.g. "2", "U17", "20+" (ordinary-hours lines).
+    var level: String
+    /// Mon–Fri ordinary hourly rate for this classification level.
+    var baseHourlyRate: Double
+    /// Weekend & public holiday hourly rate. 0 ⇒ payroll uses default multipliers.
+    var weekendHourlyRate: Double
 
     static let kind = "earningsLine"
 
@@ -174,7 +184,9 @@ struct EarningsLine: Identifiable, Equatable {
          rateType: EarningsRateType = .multipleOfOrdinary,
          multiplier: Double = 1.0, fixedRate: Double = 0, unitName: String = "",
          exemptFromSuper: Bool = false, exemptFromTax: Bool = false,
-         active: Bool = true) {
+         active: Bool = true, awardId: String? = nil,
+         level: String = "", baseHourlyRate: Double = 0,
+         weekendHourlyRate: Double = 0) {
         self.id = id
         self.name = name
         self.displayName = displayName.isEmpty ? name : displayName
@@ -186,6 +198,10 @@ struct EarningsLine: Identifiable, Equatable {
         self.exemptFromSuper = exemptFromSuper
         self.exemptFromTax = exemptFromTax
         self.active = active
+        self.awardId = awardId
+        self.level = level
+        self.baseHourlyRate = baseHourlyRate
+        self.weekendHourlyRate = weekendHourlyRate
     }
 
     init?(id: String, data: [String: Any]) {
@@ -202,10 +218,18 @@ struct EarningsLine: Identifiable, Equatable {
         self.exemptFromSuper = FS.bool(data, "exemptFromSuper")
         self.exemptFromTax = FS.bool(data, "exemptFromTax")
         self.active = FS.bool(data, "active", default: true)
+        self.awardId = FS.string(data, "awardId")
+        self.level = FS.stringValue(data, "level")
+        self.baseHourlyRate = FS.double(data, "baseHourlyRate")
+        self.weekendHourlyRate = FS.double(data, "weekendHourlyRate")
+        // Legacy docs may only have fixedRate on ordinary-hours lines.
+        if self.baseHourlyRate <= 0, self.category == .ordinaryHours, self.fixedRate > 0 {
+            self.baseHourlyRate = self.fixedRate
+        }
     }
 
     var asDictionary: [String: Any] {
-        [
+        var dict: [String: Any] = [
             "kind": Self.kind,
             "name": name,
             "displayName": displayName,
@@ -217,11 +241,39 @@ struct EarningsLine: Identifiable, Equatable {
             "exemptFromSuper": exemptFromSuper,
             "exemptFromTax": exemptFromTax,
             "active": active,
+            "level": level,
+            "baseHourlyRate": baseHourlyRate,
+            "weekendHourlyRate": weekendHourlyRate,
         ]
+        dict["awardId"] = awardId ?? NSNull()
+        return dict
     }
 
-    /// Short human description of the rate, e.g. "1.5× ordinary" or "$0.96/km".
+    /// Whether this line defines a pay classification level (ordinary hours).
+    var isClassificationLevel: Bool {
+        guard category == .ordinaryHours else { return false }
+        return !level.trimmingCharacters(in: .whitespaces).isEmpty
+            || baseHourlyRate > 0
+            || fixedRate > 0
+    }
+
+    /// Classification title for payslips / pickers.
+    var classificationTitle: String {
+        let title = displayName.trimmingCharacters(in: .whitespaces)
+        return title.isEmpty ? name : title
+    }
+
+    /// Short human description of the rate, e.g. "1.5× ordinary" or "$36.85/h M–F".
     var rateSummary: String {
+        if isClassificationLevel {
+            let base = baseHourlyRate > 0 ? baseHourlyRate : fixedRate
+            if base > 0 {
+                if weekendHourlyRate > 0 {
+                    return String(format: "$%.2f M–F · $%.2f Wknd/PH", base, weekendHourlyRate)
+                }
+                return String(format: "$%.2f/h", base)
+            }
+        }
         switch rateType {
         case .multipleOfOrdinary:
             return String(format: "%.2g× ordinary", multiplier)
@@ -229,6 +281,40 @@ struct EarningsLine: Identifiable, Equatable {
             return String(format: "$%.2f fixed", fixedRate)
         case .ratePerUnit:
             return String(format: "$%.2f/%@", fixedRate, unitName.isEmpty ? "unit" : unitName)
+        }
+    }
+
+    /// Build an editable earnings line from a legacy award classification row.
+    static func from(classification: AwardClassification, awardId: String) -> EarningsLine {
+        EarningsLine(
+            id: "",
+            name: classification.title,
+            displayName: classification.title,
+            category: .ordinaryHours,
+            rateType: .fixedAmount,
+            fixedRate: classification.baseHourlyRate,
+            awardId: awardId,
+            level: classification.level,
+            baseHourlyRate: classification.baseHourlyRate,
+            weekendHourlyRate: classification.weekendHourlyRate
+        )
+    }
+
+    /// Console age-rate rows as earnings lines (one per level).
+    static func consoleTemplateLines(awardId: String?) -> [EarningsLine] {
+        WageAward.consoleTemplateClassifications.map { classification in
+            EarningsLine(
+                id: "",
+                name: classification.title,
+                displayName: classification.title,
+                category: .ordinaryHours,
+                rateType: .fixedAmount,
+                fixedRate: classification.baseHourlyRate,
+                awardId: awardId,
+                level: classification.level,
+                baseHourlyRate: classification.baseHourlyRate,
+                weekendHourlyRate: classification.weekendHourlyRate
+            )
         }
     }
 }
@@ -330,15 +416,21 @@ struct StaffWageProfile: Identifiable, Equatable {
 
     /// The ordinary hourly rate this profile resolves to. Precedence:
     /// 1. explicit rate override,
-    /// 2. the award classification's base hourly rate,
-    /// 3. an ASSIGNED ordinary-hours earnings line that carries its own
-    ///    dollar rate (fixed amount or rate-per-unit — a manager who defines
-    ///    "Ordinary Hours $30.00" expects that to BE the wage; a
-    ///    multiple-of-ordinary line can't bootstrap a rate from nothing).
+    /// 2. assigned ordinary-hours earnings line matching `classificationLevel`,
+    /// 3. legacy award classification on the award doc,
+    /// 4. any assigned ordinary-hours line with its own dollar rate.
     /// Returns nil when no source yields a positive rate — callers must
     /// surface that, never silently pay $0.
     func resolvedHourlyRate(award: WageAward?, earningsLines: [EarningsLine] = []) -> Double? {
         if let override = hourlyRateOverride, override > 0 { return override }
+        if let level = classificationLevel,
+           let line = earningsLines.first(where: {
+               $0.active && $0.isClassificationLevel && $0.level == level
+                   && (awardId == nil || $0.awardId == nil || $0.awardId == awardId)
+           }),
+           line.baseHourlyRate > 0 {
+            return line.baseHourlyRate
+        }
         if let award,
            let level = classificationLevel,
            let classification = award.classifications.first(where: { $0.level == level }),
@@ -348,10 +440,47 @@ struct StaffWageProfile: Identifiable, Equatable {
         if let line = earningsLines.first(where: {
             earningsLineIds.contains($0.id) && $0.active
                 && $0.category == .ordinaryHours
-                && $0.rateType != .multipleOfOrdinary && $0.fixedRate > 0
+                && $0.rateType != .multipleOfOrdinary
+                && ($0.baseHourlyRate > 0 || $0.fixedRate > 0)
         }) {
-            return line.fixedRate
+            return line.baseHourlyRate > 0 ? line.baseHourlyRate : line.fixedRate
         }
         return nil
+    }
+
+    /// Weekend/PH rate for payslip generation from the assigned classification.
+    func resolvedWeekendRate(award: WageAward?, earningsLines: [EarningsLine] = []) -> Double? {
+        if let level = classificationLevel,
+           let line = earningsLines.first(where: {
+               $0.active && $0.isClassificationLevel && $0.level == level
+                   && (awardId == nil || $0.awardId == nil || $0.awardId == awardId)
+           }),
+           line.weekendHourlyRate > 0 {
+            return line.weekendHourlyRate
+        }
+        if let award,
+           let level = classificationLevel,
+           let classification = award.classifications.first(where: { $0.level == level }),
+           classification.weekendHourlyRate > 0 {
+            return classification.weekendHourlyRate
+        }
+        return nil
+    }
+
+    /// Classification title for payslip snapshot.
+    func resolvedClassificationTitle(award: WageAward?, earningsLines: [EarningsLine] = []) -> String {
+        if let level = classificationLevel,
+           let line = earningsLines.first(where: {
+               $0.isClassificationLevel && $0.level == level
+                   && (awardId == nil || $0.awardId == nil || $0.awardId == awardId)
+           }) {
+            return line.classificationTitle
+        }
+        if let award,
+           let level = classificationLevel,
+           let classification = award.classifications.first(where: { $0.level == level }) {
+            return classification.title
+        }
+        return ""
     }
 }

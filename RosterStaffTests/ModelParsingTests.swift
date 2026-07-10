@@ -59,6 +59,24 @@ final class ModelParsingTests: XCTestCase {
         XCTAssertFalse(user.mustChangePassword)
     }
 
+    func testEmergencyContactFieldsAndLegacyFallback() {
+        let legacy = AppUser(id: "u2", data: [
+            "fullName": "Bob", "email": "bob@x.com",
+            "emergencyContact": "Jane Doe",
+        ])!
+        XCTAssertEqual(legacy.emergencyContactName, "Jane Doe")
+
+        let structured = AppUser(id: "u3", data: [
+            "fullName": "Carol", "email": "carol@x.com",
+            "emergencyContactName": "Pat",
+            "emergencyContactPhone": "0400000000",
+            "emergencyContactAddress": "1 Main St",
+            "emergencyContactEmail": "pat@example.com",
+        ])!
+        XCTAssertEqual(structured.emergencyContactPhone, "0400000000")
+        XCTAssertEqual(structured.emergencyContactEmail, "pat@example.com")
+    }
+
     func testStaffProfileCompletionGate() {
         let incomplete = TestSupport.user()
         XCTAssertTrue(incomplete.needsProfileCompletion, "staff missing dob/address/phone")
@@ -204,6 +222,14 @@ final class ModelParsingTests: XCTestCase {
                                     category: .overtime, rateType: .multipleOfOrdinary, multiplier: 1.5)
         XCTAssertEqual(EarningsLine(id: "e1", data: overtime.asDictionary), overtime)
         XCTAssertEqual(overtime.rateSummary, "1.5× ordinary")
+
+        let level = EarningsLine(id: "e3", name: "Adult 20+", category: .ordinaryHours,
+                                 rateType: .fixedAmount, fixedRate: 36.85,
+                                 awardId: "a1", level: "20+", baseHourlyRate: 36.85,
+                                 weekendHourlyRate: 48.07)
+        XCTAssertTrue(level.isClassificationLevel)
+        XCTAssertEqual(level.rateSummary, "$36.85 M–F · $48.07 Wknd/PH")
+        XCTAssertEqual(EarningsLine(id: "e3", data: level.asDictionary), level)
 
         let kmAllowance = EarningsLine(id: "e2", name: "Vehicle allowance",
                                        category: .allowance, rateType: .ratePerUnit,
