@@ -264,6 +264,11 @@ struct ManagerAccountView: View {
             } label: {
                 Label("Wage", systemImage: "dollarsign.circle")
             }
+            NavigationLink {
+                ManagerPayrollView(embedInNavigationStack: false)
+            } label: {
+                Label("Payroll", systemImage: "banknote")
+            }
         }
     }
 
