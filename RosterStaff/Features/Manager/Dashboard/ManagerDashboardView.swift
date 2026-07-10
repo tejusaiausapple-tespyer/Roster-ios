@@ -150,6 +150,7 @@ struct ManagerDashboardView: View {
                     .padding(.horizontal, Theme.screenPadding)
                     .padding(.top, 12)
                     .padding(.bottom, 32)
+                    .tracksTitlePillCollapse()
                 }
                 .refreshable {
                     await repo.refreshFromServer()

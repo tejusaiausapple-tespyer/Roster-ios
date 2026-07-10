@@ -203,12 +203,14 @@ struct ManagerAvailabilityView: View {
                 }
             }
             .padding(hPad)
+            .tracksTitlePillCollapse()
         }
     }
 
     // Narrow: per-staff cards
     private var narrowList: some View {
         ScrollView {
+            TitlePillCollapseReporter()
             LazyVStack(spacing: 12) {
                 ForEach(staff) { user in
                     let avail = availability(for: user)

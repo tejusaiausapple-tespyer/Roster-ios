@@ -8,6 +8,7 @@ struct RosterStaffApp: App {
     @State private var repository = RosterRepository()
     @State private var auth = AuthViewModel()
     @State private var router = AppRouter()
+    @State private var titlePillCollapse = TitlePillCollapse()
 
     private var preferredColorScheme: ColorScheme? {
         switch preferredColorSchemeSetting {
@@ -23,6 +24,7 @@ struct RosterStaffApp: App {
                 .environment(repository)
                 .environment(auth)
                 .environment(router)
+                .environment(titlePillCollapse)
                 .preferredColorScheme(preferredColorScheme)
                 .tint(Theme.brand)
                 .onOpenURL { url in router.handle(url: url) }

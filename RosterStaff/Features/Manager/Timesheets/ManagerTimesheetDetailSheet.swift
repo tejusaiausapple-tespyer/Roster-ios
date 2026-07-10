@@ -59,7 +59,22 @@ struct ManagerTimesheetDetailSheet: View {
     }
     
     private var hoursMismatch: Bool {
-        abs(rosteredHours - actualHours) > 0.01
+        !isAbsence && abs(rosteredHours - actualHours) > 0.01
+    }
+
+    /// Staff-reported (awaiting review) OR manager-confirmed absence.
+    private var isAbsence: Bool {
+        timesheet.status == .absentReported || timesheet.status == .absent
+    }
+
+    /// A staff absence report still awaiting the manager's decision.
+    private var isAbsenceReported: Bool {
+        timesheet.status == .absentReported
+    }
+
+    /// Whether the manager can act (approve/confirm + reject) on this record.
+    private var isActionable: Bool {
+        timesheet.status == .pending || timesheet.status == .absentReported
     }
     
     var body: some View {
@@ -71,21 +86,32 @@ struct ManagerTimesheetDetailSheet: View {
                     VStack(spacing: 20) {
                         // Staff Profile Card
                         staffHeaderCard
-                        
-                        // Comparison Dashboard Grid
-                        comparisonCard
-                        
-                        // Financial Variance Widget
-                        financialVarianceCard
+
+                        // Absence context — clearly distinguishes a no-show
+                        // report from a worked-hours submission.
+                        if isAbsence {
+                            absenceBanner
+                        }
+
+                        // Comparison Dashboard Grid (worked-hours submissions only)
+                        if !isAbsence {
+                            comparisonCard
+
+                            // Financial Variance Widget
+                            financialVarianceCard
+                        }
 
                         // Verified attendance (server times + GPS), when recorded
                         if let attendance = repo.attendance(forShift: timesheet.shiftId) {
                             AttendanceCard(attendance: attendance, shift: shift)
                         }
                         
-                        // Staff Notes Card
+                        // Staff Notes Card — the absence reason for a no-show,
+                        // otherwise free-text notes on a worked-hours submission.
                         if let staffNotes = timesheet.staffNotes, !staffNotes.isEmpty {
-                            notesCard(title: "Staff Notes", content: staffNotes, icon: "note.text")
+                            notesCard(title: isAbsence ? "Absence Reason" : "Staff Notes",
+                                      content: staffNotes,
+                                      icon: isAbsence ? "person.fill.xmark" : "note.text")
                         }
                         
                         // Manager Notes Editor
@@ -97,7 +123,7 @@ struct ManagerTimesheetDetailSheet: View {
                     .padding(Theme.screenPadding)
                 }
                 .safeAreaInset(edge: .bottom) {
-                    if timesheet.status == .pending {
+                    if isActionable {
                         pinnedActionBar
                     }
                 }
@@ -155,6 +181,31 @@ struct ManagerTimesheetDetailSheet: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.cornerLarge).strokeBorder(Theme.separator, lineWidth: 1))
     }
     
+    /// Banner shown for absence records so the manager immediately sees this is
+    /// a no-show, not a worked-hours submission.
+    private var absenceBanner: some View {
+        let tint = Theme.warning
+        return HStack(spacing: 12) {
+            Image(systemName: "person.fill.xmark")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(isAbsenceReported ? "Absence reported" : "Absence confirmed")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(isAbsenceReported
+                     ? "Staff reported they did not attend this shift. Confirm the absence or reject to ask for worked hours."
+                     : "You confirmed this shift as a no-show.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            Spacer()
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: Theme.cornerLarge).fill(tint.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cornerLarge).strokeBorder(tint.opacity(0.3), lineWidth: 1))
+    }
+
     private var comparisonCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("SHIFT COMPARISON")
@@ -357,7 +408,7 @@ struct ManagerTimesheetDetailSheet: View {
                 .padding(8)
                 .background(RoundedRectangle(cornerRadius: Theme.cornerMedium).fill(Theme.background))
                 .overlay(RoundedRectangle(cornerRadius: Theme.cornerMedium).strokeBorder(Theme.separator, lineWidth: 1))
-                .disabled(timesheet.status != .pending || isSubmitting)
+                .disabled(!isActionable || isSubmitting)
         }
         .padding(16)
         .background(RoundedRectangle(cornerRadius: Theme.cornerLarge).fill(Theme.card))
@@ -451,14 +502,14 @@ struct ManagerTimesheetDetailSheet: View {
             .disabled(isSubmitting)
 
             Button {
-                approve()
+                if isAbsenceReported { confirmAbsence() } else { approve() }
             } label: {
                 HStack {
                     if isSubmitting {
                         ProgressView().tint(.white)
                     } else {
-                        Image(systemName: "checkmark.circle")
-                        Text("Approve")
+                        Image(systemName: isAbsenceReported ? "person.fill.checkmark" : "checkmark.circle")
+                        Text(isAbsenceReported ? "Confirm absence" : "Approve")
                     }
                 }
                 .font(.subheadline.weight(.bold))
@@ -556,6 +607,21 @@ struct ManagerTimesheetDetailSheet: View {
             } catch {
                 // Keep the sheet open so nothing the manager typed is lost.
                 toast = ToastMessage(kind: .error, text: "Approve failed. \(error.localizedDescription)")
+                Haptics.error()
+            }
+        }
+    }
+
+    private func confirmAbsence() {
+        isSubmitting = true
+        Task {
+            defer { isSubmitting = false }
+            do {
+                try await repo.confirmAbsence(id: timesheet.id, managerNotes: managerNotes.isEmpty ? nil : managerNotes)
+                Haptics.success()
+                dismiss()
+            } catch {
+                toast = ToastMessage(kind: .error, text: "Couldn't confirm absence. \(error.localizedDescription)")
                 Haptics.error()
             }
         }

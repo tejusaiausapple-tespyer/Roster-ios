@@ -17,7 +17,7 @@ struct ManagerTasksView: View {
         var id: String {
             switch self {
             case .editor(let t): return "editor-\(t?.id ?? "new")"
-            case .review(let t): return "review-\(t.id)"
+            case .review(let t): return "review-\(t.id ?? "review")"
             }
         }
     }
@@ -87,6 +87,7 @@ struct ManagerTasksView: View {
                             }
                             .padding(.horizontal, Theme.screenPadding)
                             .padding(.bottom, 24)
+                            .tracksTitlePillCollapse()
                         }
                     }
                 }

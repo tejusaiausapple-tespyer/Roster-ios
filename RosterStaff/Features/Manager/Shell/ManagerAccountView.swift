@@ -29,6 +29,10 @@ struct ManagerAccountView: View {
     var body: some View {
         NavigationStack {
             List {
+                TitlePillCollapseReporter()
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 photoSection
                 detailsSection
                 businessSection

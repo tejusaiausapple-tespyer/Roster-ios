@@ -183,6 +183,7 @@ struct TasksView: View {
                             }
                             .padding(.horizontal, Theme.screenPadding)
                             .padding(.bottom, 24)
+                            .tracksTitlePillCollapse()
                         }
                     }
                 }

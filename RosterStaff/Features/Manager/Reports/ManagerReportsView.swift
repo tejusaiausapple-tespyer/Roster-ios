@@ -180,6 +180,7 @@ struct ManagerReportsView: View {
                 perStaffCard
             }
             .padding(16)
+            .tracksTitlePillCollapse()
         }
         .refreshable { await repo.refreshFromServer() }
     }

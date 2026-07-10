@@ -26,6 +26,10 @@ struct ManagerLocationsView: View {
 
     var body: some View {
         List {
+            TitlePillCollapseReporter()
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             if repo.locations.isEmpty {
                 Section {
                     Text("No locations yet. Add the suburbs your staff work in — they'll appear as a dropdown when creating shifts.")

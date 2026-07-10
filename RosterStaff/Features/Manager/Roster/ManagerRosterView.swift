@@ -624,6 +624,7 @@ struct ManagerRosterView: View {
 
             // Shared vertical scroll — all columns scroll together
             ScrollView(.vertical, showsIndicators: false) {
+                TitlePillCollapseReporter()
                 HStack(alignment: .top, spacing: 0) {
                     ForEach(0..<7, id: \.self) { i in
                         dayColumn(index: i).frame(width: colWidth)
@@ -916,6 +917,7 @@ struct ManagerRosterView: View {
                     .padding(.horizontal, Theme.screenPadding)
                     .padding(.top, 12)
                     .padding(.bottom, 80)
+                    .tracksTitlePillCollapse()
                 }
                 .refreshable {
                     await repo.refreshFromServer()

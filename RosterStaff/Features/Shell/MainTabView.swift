@@ -37,8 +37,6 @@ struct TabScroll<Content: View>: View {
     var topPadding: CGFloat = 8
     @ViewBuilder var content: Content
 
-    private let scrollSpace = "tabScroll"
-
     var body: some View {
         ScrollView {
             VStack(spacing: 18) {
@@ -47,10 +45,9 @@ struct TabScroll<Content: View>: View {
             .padding(.horizontal, Theme.screenPadding)
             .padding(.top, topPadding)
             .padding(.bottom, 24)
-            .scrollFadeContentTracking(in: scrollSpace)
+            .tracksTitlePillCollapse()
         }
         .scrollIndicators(.hidden)
-        .fadedScrollHints(coordinateSpace: scrollSpace)
         .background(Theme.background.ignoresSafeArea())
     }
 }

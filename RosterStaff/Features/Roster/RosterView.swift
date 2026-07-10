@@ -45,6 +45,10 @@ struct RosterView: View {
         NavigationStack {
             ScrollViewReader { proxy in
                 List {
+                    TitlePillCollapseReporter()
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                     if !actionNeeded.isEmpty {
                         actionNeededSection
                     }
@@ -239,28 +243,35 @@ struct RosterView: View {
         } header: {
             dayHeader(key, count: dayShifts.count)
                 .id(key)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
         }
     }
 
     private func dayHeader(_ key: String, count: Int) -> some View {
         HStack {
-            Text(RosterFormat.date(key))
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(key == RosterCalendar.todayKey() ? Theme.brand : Theme.textPrimary)
-                .textCase(nil)
-            if count > 0 {
-                Text("\(count)")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(Theme.textSecondary)
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(Capsule().fill(Theme.card))
+            HStack(spacing: 6) {
+                Text(RosterFormat.date(key))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(key == RosterCalendar.todayKey() ? Theme.brand : Theme.textPrimary)
+                    .textCase(nil)
+                if count > 0 {
+                    Text("\(count)")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(Capsule().fill(Theme.background))
+                }
             }
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background(Capsule().fill(Theme.card))
+            .shadow(color: .black.opacity(0.06), radius: 3, y: 1)
             Spacer()
         }
         .padding(.horizontal, Theme.screenPadding)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity)
-        .background(Theme.background)
+        .background(Color.clear)
     }
 
     private var emptyDayRow: some View {

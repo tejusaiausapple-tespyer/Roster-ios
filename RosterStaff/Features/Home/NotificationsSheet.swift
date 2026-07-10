@@ -44,18 +44,8 @@ struct NotificationsSheet: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .background(Theme.background.ignoresSafeArea())
                 } else {
-                    FadedScrollView("notificationsSheet") {
-                        VStack(spacing: 12) {
-                            if !dailyJobs.isEmpty {
-                                dailyJobsSection(layout: dailyJobsLayout)
-                            }
-                            ForEach(activeMessages) { message in
-                                messageCard(message)
-                            }
-                        }
-                        .padding(20)
-                    }
-                    .background(Theme.background.ignoresSafeArea())
+                    notificationsContent
+                        .background(Theme.background.ignoresSafeArea())
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
@@ -106,6 +96,32 @@ struct NotificationsSheet: View {
             .padding(.vertical, 6)
             .background(Capsule().fill(tint.opacity(0.14)))
             .accessibilityLabel("\(done) of \(total) daily jobs done")
+    }
+
+    @ViewBuilder
+    private var notificationsContent: some View {
+        if dailyJobsLayout == .expandedInScroll {
+            FadedScrollView("notificationsSheet") {
+                notificationsContentStack
+            }
+        } else {
+            ScrollView {
+                notificationsContentStack
+            }
+            .scrollIndicators(.hidden)
+        }
+    }
+
+    private var notificationsContentStack: some View {
+        VStack(spacing: 12) {
+            if !dailyJobs.isEmpty {
+                dailyJobsSection(layout: dailyJobsLayout)
+            }
+            ForEach(activeMessages) { message in
+                messageCard(message)
+            }
+        }
+        .padding(20)
     }
 
     private func dailyJobsSection(layout: DailyJobsLayout) -> some View {

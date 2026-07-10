@@ -54,6 +54,10 @@ struct ManagerWageView: View {
             .padding(.vertical, 12)
 
             List {
+                TitlePillCollapseReporter()
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 switch segment {
                 case .awards: awardsSection
                 case .lines: linesSection
