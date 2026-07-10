@@ -397,15 +397,11 @@ struct AccountView: View {
                     Text(location).foregroundStyle(Theme.textSecondary)
                 }
             }
-            NavigationLink {
-                AppVersionHistoryView()
-            } label: {
-                HStack {
-                    Label("Version", systemImage: "info.circle")
-                    Spacer()
-                    Text(ReleaseHistory.current.versionString)
-                        .foregroundStyle(Theme.textSecondary)
-                }
+            HStack {
+                Label("Version", systemImage: "info.circle")
+                Spacer()
+                Text(ReleaseHistory.current.versionString)
+                    .foregroundStyle(Theme.textSecondary)
             }
         }
     }
