@@ -94,7 +94,7 @@ RosterStaff/
 │   ├── History/            # Timesheet history
 │   ├── Tasks/              # Staff task completion
 │   ├── Account/            # Staff account/settings
-│   ├── Shared/             # Reusable view components (ShiftCard, sheets)
+│   ├── Shared/             # Reusable view components (ShiftCard, sheets, AppVersionHistoryView)
 │   └── Manager/            # All manager-side views
 │       ├── Dashboard/      # (+ DailyJobAssignSheet)
 │       ├── Roster/
@@ -151,6 +151,7 @@ RosterStaff/
 | `RosterFormat.swift` | Formatting helpers for dates, times, hours display |
 | `FirestoreValue.swift` | `FS` enum — safe Firestore document field extraction |
 | `AppSettings.swift` | `AppSettings` — company name from Firestore |
+| `AppRelease.swift` | `AppRelease` struct + `ReleaseHistory` enum — static in-app release registry (version, build, date, features, bug fixes, commit hash). `ReleaseHistory.current` returns the latest entry; `ReleaseHistory.all` is the full history newest-first. To add a release: prepend to `all` and bump `MARKETING_VERSION` + `CURRENT_PROJECT_VERSION` in `project.yml`. |
 | `RosterLocation.swift` | `RosterLocation` — manager-defined work location (suburb + AU state + auto capital city). Stored as an array on `settings/locations`; `shifts.location` stays a plain string (`"Suburb, STATE"`) for PWA compatibility |
 
 ### Services (all in `Services/`)

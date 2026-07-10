@@ -9,7 +9,7 @@
 **Repo:** https://github.com/tejusaiausapple-tespyer/Roster-ios.git
 **Web/PWA repo (reference):** https://github.com/tejusaiausapple-tespyer/Roster.git
 **Deployed Firestore rules (authoritative):** `docs/reference/firestore.rules.deployed`
-**Test suite status:** 130 passed / 0 failed (last run 2026-07-10, iPhone 17 Pro sim)
+**Test suite status:** 149 passed / 0 failed (last run 2026-07-10, iPhone 17 Pro sim)
 
 ---
 
@@ -223,6 +223,19 @@
     week in Manager Portal → data appears without navigating away/back. Check
     that saving availability shows a real error toast (not false success) if the
     network is down.
+  - [x] Version management system (2026-07-10):
+        `Models/AppRelease.swift` — `AppRelease` struct + `ReleaseHistory` enum
+        (static registry, newest-first). `Features/Shared/AppVersionHistoryView.swift`
+        — App Store-style changelog pushed from both portals.
+        Account → About → Version row is now a `NavigationLink` (both portals);
+        removed the local `appVersion` computed var from both Account views.
+        `project.yml` remains the single source of truth for version/build numbers;
+        to cut a new release: prepend to `ReleaseHistory.all`, bump
+        `MARKETING_VERSION` + `CURRENT_PROJECT_VERSION` in `project.yml`, run
+        `xcodegen generate`. No Firestore, no extra dependencies.
+  - VERIFY: tap Version in Staff Account → About → changelog opens; tap Version
+    in Manager Account → About → same view. "v1.0.0" shown in the row label.
+    Long-press the commit hash row → "Copy commit hash" context menu appears.
 - [ ] **M10 — CI** (NOT STARTED)
   - GitHub Actions: xcodegen → build → test on PRs (web repo has a CI to copy
     patterns from). pbxproj is gitignored so no drift check needed.

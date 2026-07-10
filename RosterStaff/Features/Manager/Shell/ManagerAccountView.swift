@@ -333,10 +333,15 @@ struct ManagerAccountView: View {
 
     private var infoSection: some View {
         Section("About") {
-            HStack {
-                Label("Version", systemImage: "info.circle")
-                Spacer()
-                Text(appVersion).foregroundStyle(Theme.textSecondary)
+            NavigationLink {
+                AppVersionHistoryView()
+            } label: {
+                HStack {
+                    Label("Version", systemImage: "info.circle")
+                    Spacer()
+                    Text(ReleaseHistory.current.versionString)
+                        .foregroundStyle(Theme.textSecondary)
+                }
             }
         }
     }
@@ -353,12 +358,6 @@ struct ManagerAccountView: View {
     }
 
     // MARK: - Helpers
-
-    private var appVersion: String {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
-        return "\(version) (\(build))"
-    }
 
     private func refreshStatuses() async {
         try? await Auth.auth().currentUser?.reload()
