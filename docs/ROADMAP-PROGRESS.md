@@ -349,6 +349,18 @@ Then: `git checkout main && git merge --no-ff milestone-4-data-integrity && git 
   and the PDF; snapshotted onto payslips at generation
   (`payslips.employeeId`) with live fallback for older slips
   (`repo.displayEmployeeId(for:)`). Replaces the truncated-uid "Employee ID".
+- Round 4 (2026-07-10): Staff Account → Payslips month filter with cache-first
+  loading. Month pill ("July 2026") + chevrons + wheel month/year picker; the
+  staff full-history payslips **listener is removed** — the screen fetches one
+  month at a time via `staffPayslips(monthKey:)`: session memory → Firestore
+  persistent disk cache (`source: .cache`, zero reads, offline-capable) →
+  server (only never-downloaded months, the current month once per session,
+  or pull-to-refresh). The month query keeps the rule-proven equality pair
+  (staffId + status-in) and bounds by documentID (`{periodStart}_` prefix) —
+  no composite index; a fallback to the old equality-only query guards
+  against FAILED_PRECONDITION. "Downloaded months" tracked per-uid in
+  UserDefaults so empty months don't re-hit the server. Account tab's payslip
+  count badge removed (it required full history). +4 month-key tests.
 - **DEVICE VERIFICATION**: (1) Wage tab: both segments start right under the
   segmented control (no dead space); no Console age-rate button anywhere;
   swipe an award / classification level / pay item → centered dialog; Cancel

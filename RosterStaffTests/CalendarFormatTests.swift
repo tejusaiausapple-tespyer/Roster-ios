@@ -124,4 +124,41 @@ final class CalendarFormatTests: XCTestCase {
         XCTAssertEqual(RosterFormat.dateFull(instant), "Monday, 6 July 2026")
         XCTAssertEqual(RosterFormat.dateTime(instant), "6 Jul 2026, 2:05 PM")
     }
+
+    // MARK: - Month keys (payslip month filter)
+
+    func testMonthKeyFromDateAndComponents() {
+        let instant = TestSupport.instant("2026-07-06", "14:05")
+        XCTAssertEqual(RosterCalendar.monthKey(instant), "2026-07")
+        XCTAssertEqual(RosterCalendar.monthKey(year: 2026, month: 1), "2026-01")
+        XCTAssertEqual(RosterCalendar.monthKeyComponents("2026-07")?.year, 2026)
+        XCTAssertEqual(RosterCalendar.monthKeyComponents("2026-07")?.month, 7)
+        XCTAssertNil(RosterCalendar.monthKeyComponents("garbage"))
+        XCTAssertNil(RosterCalendar.monthKeyComponents("2026-13"))
+    }
+
+    func testMonthDayKeyBoundsIncludingYearRollover() {
+        let july = RosterCalendar.monthDayKeyBounds("2026-07")
+        XCTAssertEqual(july?.start, "2026-07-01")
+        XCTAssertEqual(july?.end, "2026-08-01")
+        let december = RosterCalendar.monthDayKeyBounds("2026-12")
+        XCTAssertEqual(december?.end, "2027-01-01")
+        XCTAssertNil(RosterCalendar.monthDayKeyBounds("nope"))
+    }
+
+    func testMonthBoundsContainPayslipDocIdsLexicographically() {
+        // Payslip doc ids are "{periodStart}_{staffId}" — a month is an id range.
+        let bounds = RosterCalendar.monthDayKeyBounds("2026-07")!
+        XCTAssertTrue("2026-07-06_abc123" >= bounds.start && "2026-07-06_abc123" < bounds.end)
+        XCTAssertTrue("2026-07-27_abc123_c2" < bounds.end)
+        XCTAssertFalse("2026-06-29_abc123" >= bounds.start)
+        XCTAssertFalse("2026-08-03_abc123" < bounds.end)
+    }
+
+    func testMonthKeyStepping() {
+        XCTAssertEqual(RosterCalendar.monthKey(byAdding: 1, to: "2026-12"), "2027-01")
+        XCTAssertEqual(RosterCalendar.monthKey(byAdding: -1, to: "2026-01"), "2025-12")
+        XCTAssertEqual(RosterCalendar.monthKey(byAdding: 0, to: "2026-07"), "2026-07")
+        XCTAssertNil(RosterCalendar.monthKey(byAdding: 1, to: "bad"))
+    }
 }

@@ -51,10 +51,18 @@ final class RosterRepository {
     var earningsLines: [EarningsLine] = []
     var staffWageProfiles: [StaffWageProfile] = []
 
-    // Payroll (managers: all payslips in window; staff: own submitted only —
-    // enforced by rules, the client filter is UX).
+    // Payroll (managers only: all payslips in a rolling window). Staff fetch
+    // their own payslips one month at a time via staffPayslips(monthKey:).
     var payslips: [Payslip] = []
     private var payrollAutoGenAttempted = false
+
+    /// Staff payslips, month-keyed ("yyyy-MM"), for the Account → Payslips
+    /// filter. In-memory for the session; Firestore's persistent disk cache
+    /// (unlimited, see FirebaseBootstrap) backs it across launches.
+    private var staffPayslipMonthCache: [String: [Payslip]] = [:]
+    /// Months confirmed against the SERVER this session (freshness gate for
+    /// the current month; older months are immutable in practice).
+    private var staffPayslipMonthsRefreshed: Set<String> = []
 
     /// Live clock-in session for the signed-in staff member (device-local;
     /// see ClockSession for why this can't be written to Firestore live).
@@ -415,26 +423,10 @@ final class RosterRepository {
                     }
             )
 
-            // 5. Own SUBMITTED payslips. Both filters are equalities (`in`
-            //    counts as equality), so no composite index is needed, and the
-            //    query provably satisfies the payslips security rule (staff
-            //    reads require staffId == uid AND a staff-visible status).
-            //    NOTE: until Sura deploys the payslips rules this listener is
-            //    permission-denied — treat that as "feature not enabled yet",
-            //    not a load error.
-            roleListeners.append(
-                db.collection("payslips")
-                    .whereField("staffId", isEqualTo: uid)
-                    .whereField("status", in: [PayslipStatus.submitted.rawValue, PayslipStatus.archived.rawValue])
-                    .addSnapshotListener { [weak self] snap, error in
-                        guard let self else { return }
-                        if error != nil { self.payslips = []; return }
-                        self.payslips = (snap?.documents ?? [])
-                            .compactMap { Payslip(id: $0.documentID, data: $0.data()) }
-                            .filter { $0.status.isStaffVisible }
-                            .sorted { $0.periodStart > $1.periodStart }
-                    }
-            )
+            // 5. Payslips are deliberately NOT streamed for staff. The Account
+            //    → Payslips screen fetches one month at a time on demand via
+            //    staffPayslips(monthKey:) — cache-first, so previously viewed
+            //    months cost zero Firestore reads (see that method).
         }
     }
 
@@ -459,6 +451,8 @@ final class RosterRepository {
         earningsLines = []
         staffWageProfiles = []
         payslips = []
+        staffPayslipMonthCache = [:]
+        staffPayslipMonthsRefreshed = []
         payrollAutoGenAttempted = false
         attendanceRecords = []
         roleListenersInitialized = false
@@ -1430,6 +1424,100 @@ final class RosterRepository {
                                              userName: manager.fullName,
                                              detail: "Recalculated from current timesheets and wage assignment"))
         try await db.collection("payslips").document(slip.id).setData(fresh.asDictionary)
+    }
+
+    // MARK: - Staff payslips (month-keyed, cache-first)
+
+    /// Staff-visible payslips for one "yyyy-MM" month, cheapest source first:
+    /// 1. session memory, 2. Firestore's on-disk cache (zero reads, works
+    /// offline), 3. the server. The server is consulted only for months never
+    /// fetched on this device, the current month (once per session — new
+    /// payslips land there), or `forceRefresh` (pull-to-refresh).
+    func staffPayslips(monthKey: String, forceRefresh: Bool = false) async throws -> [Payslip] {
+        guard let uid = activeUID else { return [] }
+        let isCurrentMonth = monthKey == RosterCalendar.monthKey()
+        let needsServer = forceRefresh
+            || (isCurrentMonth && !staffPayslipMonthsRefreshed.contains(monthKey))
+
+        if !needsServer, let cached = staffPayslipMonthCache[monthKey] {
+            return cached
+        }
+
+        guard let query = staffPayslipMonthQuery(uid: uid, monthKey: monthKey) else { return [] }
+
+        if !needsServer {
+            // Firestore disk cache: instant and free. An empty result is only
+            // trustworthy if this device has downloaded the month before —
+            // otherwise the cache just doesn't have it yet.
+            if let snap = try? await query.getDocuments(source: .cache) {
+                let slips = parseStaffPayslips(snap)
+                if !slips.isEmpty || payslipMonthsDownloaded(uid: uid).contains(monthKey) {
+                    staffPayslipMonthCache[monthKey] = slips
+                    return slips
+                }
+            }
+        }
+
+        let slips: [Payslip]
+        do {
+            let snap = try await query.getDocuments(source: .server)
+            slips = parseStaffPayslips(snap)
+        } catch {
+            // Defensive: the documentID range should need no composite index
+            // (equalities + __name__ bounds), but if the backend ever rejects
+            // it, fall back to the equality-only query — the exact shape the
+            // old listener used — and bucket the whole history client-side.
+            let snap = try await db.collection("payslips")
+                .whereField("staffId", isEqualTo: uid)
+                .whereField("status", in: [PayslipStatus.submitted.rawValue, PayslipStatus.archived.rawValue])
+                .getDocuments(source: .server)
+            let all = parseStaffPayslips(snap)
+            let byMonth = Dictionary(grouping: all) { String($0.periodStart.prefix(7)) }
+            for (month, monthSlips) in byMonth {
+                staffPayslipMonthCache[month] = monthSlips
+                staffPayslipMonthsRefreshed.insert(month)
+                markPayslipMonthDownloaded(month, uid: uid)
+            }
+            slips = byMonth[monthKey] ?? []
+        }
+
+        staffPayslipMonthCache[monthKey] = slips
+        staffPayslipMonthsRefreshed.insert(monthKey)
+        markPayslipMonthDownloaded(monthKey, uid: uid)
+        return slips
+    }
+
+    /// Equalities prove the payslips security rule (staffId == uid AND a
+    /// staff-visible status); the documentID bounds ride on doc ids being
+    /// "{periodStart}_{staffId}" so a month is a lexicographic id range —
+    /// no composite index required (__name__ terminates every index).
+    private func staffPayslipMonthQuery(uid: String, monthKey: String) -> Query? {
+        guard let bounds = RosterCalendar.monthDayKeyBounds(monthKey) else { return nil }
+        return db.collection("payslips")
+            .whereField("staffId", isEqualTo: uid)
+            .whereField("status", in: [PayslipStatus.submitted.rawValue, PayslipStatus.archived.rawValue])
+            .whereField(FieldPath.documentID(), isGreaterThanOrEqualTo: bounds.start)
+            .whereField(FieldPath.documentID(), isLessThan: bounds.end)
+    }
+
+    private func parseStaffPayslips(_ snap: QuerySnapshot) -> [Payslip] {
+        snap.documents
+            .compactMap { Payslip(id: $0.documentID, data: $0.data()) }
+            .filter { $0.status.isStaffVisible }
+            .sorted { $0.periodStart > $1.periodStart }
+    }
+
+    /// Months this device has downloaded at least once (per user) — lets an
+    /// EMPTY cache result be trusted instead of re-hitting the server.
+    private func payslipMonthsDownloaded(uid: String) -> Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: "payslipMonthsDownloaded.\(uid)") ?? [])
+    }
+
+    private func markPayslipMonthDownloaded(_ monthKey: String, uid: String) {
+        var months = payslipMonthsDownloaded(uid: uid)
+        guard !months.contains(monthKey) else { return }
+        months.insert(monthKey)
+        UserDefaults.standard.set(Array(months).sorted(), forKey: "payslipMonthsDownloaded.\(uid)")
     }
 
     /// Display employee ID for a payslip: the generation snapshot, else the

@@ -65,4 +65,47 @@ enum RosterCalendar {
     static func dateFromKey(_ key: String) -> Date? {
         dayFormatter.date(from: key)
     }
+
+    // MARK: - Months (payslip month filter)
+
+    /// "yyyy-MM" key of the month containing `date` (business timezone).
+    static func monthKey(_ date: Date = Date()) -> String {
+        let comps = calendar.dateComponents([.year, .month], from: date)
+        return monthKey(year: comps.year ?? 1970, month: comps.month ?? 1)
+    }
+
+    static func monthKey(year: Int, month: Int) -> String {
+        String(format: "%04d-%02d", year, month)
+    }
+
+    /// (year, month) of a "yyyy-MM" key; nil when malformed.
+    static func monthKeyComponents(_ key: String) -> (year: Int, month: Int)? {
+        let parts = key.split(separator: "-")
+        guard parts.count == 2, let year = Int(parts[0]), let month = Int(parts[1]),
+              (1...12).contains(month) else { return nil }
+        return (year, month)
+    }
+
+    /// First instant of the month for a "yyyy-MM" key (business timezone).
+    static func monthStartDate(_ key: String) -> Date? {
+        guard let comps = monthKeyComponents(key) else { return nil }
+        return calendar.date(from: DateComponents(year: comps.year, month: comps.month, day: 1))
+    }
+
+    /// Half-open day-key bounds of a month: ("yyyy-MM-01", first day of the
+    /// next month). Because `yyyy-MM-dd` sorts lexicographically — and so do
+    /// document ids prefixed with it — these bounds drive string range queries.
+    static func monthDayKeyBounds(_ key: String) -> (start: String, end: String)? {
+        guard let comps = monthKeyComponents(key) else { return nil }
+        let next = comps.month == 12 ? (comps.year + 1, 1) : (comps.year, comps.month + 1)
+        return ("\(monthKey(year: comps.year, month: comps.month))-01",
+                "\(monthKey(year: next.0, month: next.1))-01")
+    }
+
+    /// The "yyyy-MM" key `offset` months from `key` (e.g. -1 = previous month).
+    static func monthKey(byAdding offset: Int, to key: String) -> String? {
+        guard let start = monthStartDate(key),
+              let shifted = calendar.date(byAdding: .month, value: offset, to: start) else { return nil }
+        return monthKey(shifted)
+    }
 }

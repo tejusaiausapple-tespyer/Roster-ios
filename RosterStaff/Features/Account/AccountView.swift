@@ -314,15 +314,9 @@ struct AccountView: View {
             NavigationLink {
                 PayslipsView()
             } label: {
-                HStack {
-                    Label("Payslips", systemImage: "banknote")
-                    Spacer()
-                    if !repo.payslips.isEmpty {
-                        Text("\(repo.payslips.count)")
-                            .font(.subheadline)
-                            .foregroundStyle(Theme.textTertiary)
-                    }
-                }
+                // No count badge: payslips load one month at a time on demand,
+                // so the full history is deliberately never fetched here.
+                Label("Payslips", systemImage: "banknote")
             }
         }
     }
