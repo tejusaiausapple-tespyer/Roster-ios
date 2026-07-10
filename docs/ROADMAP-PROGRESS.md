@@ -278,7 +278,7 @@ Then: `git checkout main && git merge --no-ff milestone-4-data-integrity && git 
 ---
 
 ## Payroll module (owner request 2026-07-09) — ✅ CODE COMPLETE on branch
-`audit-remediation`, ⏳ awaiting Sura's device verification + RULES DEPLOYMENT
+`audit-remediation`, ⏳ awaiting Sura's device verification (rules deployed 2026-07-10)
 
 - New `payslips` collection (doc id `{periodStart}_{staffId}`; corrections `_c{n}`).
   Weekly DRAFT payslips auto-generate idempotently (client-side, first manager
@@ -301,26 +301,44 @@ Then: `git checkout main && git merge --no-ff milestone-4-data-integrity && git 
   `audit[]` + best-effort `auditLogs` entries.
 - Tests: +15 (`PayrollTests`) — calculator totals (super excludes overtime +
   exempt rows), weekend bucketing, status flags, Firestore round-trips.
-- **DEVICE VERIFICATION**: (1) Sura deploys the payslips rules block from
-  `docs/reference/firestore.rules.payroll-proposed.md`, then updates the
-  deployed-rules reference copy. (2) Manager: open Payroll, generate drafts
+- **DEVICE VERIFICATION**: (1) ~~Sura deploys the payslips rules block~~ ✅
+  deployed 2026-07-10 (`payslips` + `emailChangeRequired` in
+  `firestore.rules.deployed`). (2) Manager: open Payroll, generate drafts
   for a week with approved timesheets, edit hours/rates, preview PDF, approve,
   submit. (3) Staff account: payslip appears ONLY after submit; PDF opens,
   share/save works. (4) Confirm staff sees nothing pre-submit (drafts) and
   cannot read another staff member's payslips.
 
+## Manager Portal UI restore (owner request 2026-07-10) — ✅ on `audit-remediation`
+
+- Wage & Payroll tabs back on native `List` + `.insetGrouped` (a Cursor session
+  had rewritten them as ScrollView cards with fixed-height nested lists —
+  clipped rows, broken Dynamic Type). Kept from that session: the
+  `TitlePillCollapseReporter` height-constrained-GeometryReader fix and all
+  wage/classification features.
+- Swipe-to-delete on Wage Awards, Classification Levels, Other pay items and
+  draft/under-review payslips — every delete goes through a **centered alert**
+  (Cancel/Delete); nothing deletes unconfirmed. Unused `ManagerInsetSection`
+  removed.
+- Staff tab grid: top/bottom gradient fade while scrolling
+  (`ScrollFadeHints` gained `showsChevrons: false` mode) — geometry-driven,
+  device-size independent.
+- **DEVICE VERIFICATION**: (1) Wage tab: both segments render as grouped lists;
+  swipe an award / classification level / pay item → centered dialog; Cancel
+  keeps it, Delete removes with toast. (2) Payroll: sections styled like the
+  rest of the module; swipe a draft payslip → centered confirm. (3) Staff:
+  scroll the grid — content fades under the filter chips (top) and glass
+  summary bar (bottom); check iPhone + iPad. (4) Title pill still collapses on
+  scroll in all three tabs, no giant blank gaps in Wage/Payroll lists.
+
 ## Owner (Sura) actions pending — Firebase console
 
-0. REQUIRED for Payroll: deploy the `payslips` rules block
-   (`docs/reference/firestore.rules.payroll-proposed.md`), then update
-   `docs/reference/firestore.rules.deployed`.
-1. RECOMMENDED: add `'emailChangeRequired'` to the `isValidSelfUserUpdate`
-   allowlist in Firestore rules (restores manager email-request flow fully).
+0. ~~REQUIRED for Payroll: deploy the `payslips` rules block~~ ✅ 2026-07-10
+1. ~~RECOMMENDED: add `'emailChangeRequired'` to the `isValidSelfUserUpdate`~~ ✅ 2026-07-10
 2. RECOMMENDED: tighten `task_completions` rules so staff can't overwrite each
    other's completions (require create-only, or `resource.data.completedBy ==
-   request.auth.uid` on update).
-3. When Firestore rules are redeployed, update
-   `docs/reference/firestore.rules.deployed`.
+   request.auth.uid` on update). *(Already in `firestore.rules.deployed` — verify on device.)*
+3. ~~When Firestore rules are redeployed, update `firestore.rules.deployed`~~ ✅ 2026-07-10
 
 ## Open decisions (answers needed before the milestone that uses them)
 

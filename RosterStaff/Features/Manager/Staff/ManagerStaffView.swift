@@ -127,24 +127,32 @@ struct ManagerStaffView: View {
 
     private var rosterGrid: some View {
         ScrollView {
-            TitlePillCollapseReporter()
-            if filtered.isEmpty {
-                emptyState.padding(.top, 40)
-            } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 300, maximum: 480), spacing: 12)], spacing: 12) {
-                    ForEach(filtered) { user in
-                        Button {
-                            selected = user
-                            Haptics.selection()
-                        } label: {
-                            staffCard(user)
+            // One container so the fade tracking sees the full scroll content.
+            VStack(spacing: 0) {
+                TitlePillCollapseReporter()
+                if filtered.isEmpty {
+                    emptyState.padding(.top, 40)
+                } else {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 300, maximum: 480), spacing: 12)], spacing: 12) {
+                        ForEach(filtered) { user in
+                            Button {
+                                selected = user
+                                Haptics.selection()
+                            } label: {
+                                staffCard(user)
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
+                    .padding(16)
                 }
-                .padding(16)
             }
+            .scrollFadeContentTracking(in: "manager-staff-grid")
         }
+        // Content fades out beneath the filter bar (top) and summary bar
+        // (bottom) while scrolling — geometry-driven, so it holds on any
+        // device size or orientation.
+        .fadedScrollHints(coordinateSpace: "manager-staff-grid", showsChevrons: false)
         .refreshable { await repo.refreshFromServer() }
     }
 
@@ -259,37 +267,102 @@ struct ManagerStaffDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     let user: AppUser
 
-    private enum Field: Hashable { case name, phone, employment }
-
     @State private var fullName: String
     @State private var phone: String
     @State private var employmentType: EmploymentType
-    @State private var unlocked: Set<Field> = []
-    @State private var savingField: Field?
+    @State private var status: UserStatus
+    @State private var startDate: Date?
+    @State private var dob: Date?
+    @State private var emergencyName: String
+    @State private var emergencyPhone: String
+    @State private var emergencyAddress: String
+    @State private var emergencyEmail: String
+
+    @State private var isEditMode = false
+    @State private var isSaving = false
     @State private var emailRequested: Bool
     @State private var showAddressConfirm = false
     @State private var showWageAssignment = false
     @State private var toast: ToastMessage?
 
+    @State private var savedBaseline: Baseline
+
+    private struct Baseline: Equatable {
+        let fullName: String
+        let phone: String
+        let employmentType: EmploymentType
+        let status: UserStatus
+        let startDateKey: String?
+        let dobKey: String?
+        let emergencyName: String
+        let emergencyPhone: String
+        let emergencyAddress: String
+        let emergencyEmail: String
+    }
+
     init(user: AppUser) {
         self.user = user
+        let phoneValue = user.phone ?? ""
+        let emergencyNameValue = user.emergencyContactName ?? user.emergencyContact ?? ""
         _fullName = State(initialValue: user.fullName)
-        _phone = State(initialValue: user.phone ?? "")
+        _phone = State(initialValue: phoneValue)
         _employmentType = State(initialValue: user.employmentType ?? .casual)
+        _status = State(initialValue: user.status)
+        _startDate = State(initialValue: user.startDate.flatMap { RosterFormat.parseISODate($0) })
+        _dob = State(initialValue: user.dob.flatMap { RosterFormat.parseISODate($0) })
+        _emergencyName = State(initialValue: emergencyNameValue)
+        _emergencyPhone = State(initialValue: user.emergencyContactPhone ?? "")
+        _emergencyAddress = State(initialValue: user.emergencyContactAddress ?? "")
+        _emergencyEmail = State(initialValue: user.emergencyContactEmail ?? "")
         _emailRequested = State(initialValue: user.emailChangeRequired)
+        _savedBaseline = State(initialValue: Baseline(
+            fullName: user.fullName,
+            phone: phoneValue,
+            employmentType: user.employmentType ?? .casual,
+            status: user.status,
+            startDateKey: user.startDate,
+            dobKey: user.dob,
+            emergencyName: emergencyNameValue,
+            emergencyPhone: user.emergencyContactPhone ?? "",
+            emergencyAddress: user.emergencyContactAddress ?? "",
+            emergencyEmail: user.emergencyContactEmail ?? ""
+        ))
+    }
+
+    private var hasChanges: Bool {
+        currentBaseline != savedBaseline
+    }
+
+    private var currentBaseline: Baseline {
+        Baseline(
+            fullName: fullName,
+            phone: phone,
+            employmentType: employmentType,
+            status: status,
+            startDateKey: dateKey(startDate),
+            dobKey: dateKey(dob),
+            emergencyName: emergencyName,
+            emergencyPhone: emergencyPhone,
+            emergencyAddress: emergencyAddress,
+            emergencyEmail: emergencyEmail
+        )
+    }
+
+    private var valueColor: Color {
+        isEditMode ? Theme.textPrimary : Theme.textTertiary
+    }
+
+    private var primaryActionTitle: String {
+        isEditMode && hasChanges ? "Save" : "Edit"
     }
 
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    textRow(.name, label: "Full name", text: $fullName)
-                    textRow(.phone, label: "Phone", text: $phone, keyboard: .phonePad)
+                Section("Details") {
+                    editableTextRow(label: "Full name", text: $fullName, capitalization: .words)
+                    editableTextRow(label: "Phone", text: $phone, keyboard: .phonePad)
                     employmentRow
-                } header: {
-                    Text("Details")
-                } footer: {
-                    Text("Tap the pencil to edit a field, then the checkmark to save it.")
                 }
 
                 emailSection
@@ -297,7 +370,7 @@ struct ManagerStaffDetailSheet: View {
                 Section("Address") {
                     Text(user.address?.isEmpty == false ? user.address! : "No address on file")
                         .font(.subheadline)
-                        .foregroundStyle(Theme.textSecondary)
+                        .foregroundStyle(Theme.textTertiary)
                     Button {
                         showAddressConfirm = true
                     } label: {
@@ -306,12 +379,6 @@ struct ManagerStaffDetailSheet: View {
                     }
                 }
 
-                // Manager-only pay settings. Earnings-line assignments live in
-                // the `wages` collection (staff can't read it); the super %
-                // sits on the user doc but is never rendered in the staff UI.
-                // Superannuation (toggle + %) is managed EXCLUSIVELY in the
-                // Wage Assignment sheet — single source of truth, no
-                // duplicate controls here.
                 Section {
                     Button {
                         showWageAssignment = true
@@ -332,12 +399,17 @@ struct ManagerStaffDetailSheet: View {
                 }
 
                 Section("Record") {
-                    infoRow("Status", user.status.rawValue.capitalized)
-                    infoRow("Hourly rate", user.hourlyRate.map { String(format: "$%.2f", $0) } ?? "—")
-                    infoRow("Member since", user.memberSince ?? "—")
-                    infoRow("Start date", user.startDate ?? "—")
-                    infoRow("Date of birth", user.dob ?? "—")
-                    infoRow("Emergency", user.emergencyContact ?? "—")
+                    statusRow
+                    readOnlyRow("Member since", displayValue(displayedMemberSince))
+                    editableDateRow(label: "Start date", date: $startDate)
+                    editableDateRow(label: "Date of birth", date: $dob)
+                }
+
+                Section("Emergency contact") {
+                    editableTextRow(label: "Name", text: $emergencyName, capitalization: .words)
+                    editableTextRow(label: "Phone", text: $emergencyPhone, keyboard: .phonePad)
+                    editableTextRow(label: "Address", text: $emergencyAddress, capitalization: .words)
+                    editableTextRow(label: "Email", text: $emergencyEmail, keyboard: .emailAddress, capitalization: .never)
                 }
             }
             .scrollContentBackground(.hidden)
@@ -347,6 +419,14 @@ struct ManagerStaffDetailSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if isSaving {
+                        ProgressView()
+                    } else {
+                        Button(primaryActionTitle) { handlePrimaryAction() }
+                            .fontWeight(.semibold)
+                    }
                 }
             }
             .toast($toast)
@@ -366,27 +446,113 @@ struct ManagerStaffDetailSheet: View {
         }
     }
 
-    // MARK: - Rows (locked by default; pencil unlocks a single field)
+    // MARK: - Rows
 
-    private func textRow(_ field: Field, label: String, text: Binding<String>, keyboard: UIKeyboardType = .default) -> some View {
+    private func editableTextRow(
+        label: String,
+        text: Binding<String>,
+        keyboard: UIKeyboardType = .default,
+        capitalization: TextInputAutocapitalization = .sentences
+    ) -> some View {
         HStack {
             Text(label)
                 .font(.subheadline)
                 .foregroundStyle(Theme.textSecondary)
             Spacer()
-            if unlocked.contains(field) {
+            if isEditMode {
                 TextField(label, text: text)
                     .multilineTextAlignment(.trailing)
                     .keyboardType(keyboard)
-                    .textInputAutocapitalization(field == .name ? .words : .never)
+                    .textInputAutocapitalization(capitalization)
                     .foregroundStyle(Theme.textPrimary)
-                commitButton(field)
             } else {
-                Text(text.wrappedValue.isEmpty ? "—" : text.wrappedValue)
+                Text(displayValue(text.wrappedValue))
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                editButton(field)
+                    .foregroundStyle(valueColor)
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(2)
+            }
+        }
+    }
+
+    private func editableDateRow(label: String, date: Binding<Date?>) -> some View {
+        HStack {
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(Theme.textSecondary)
+            Spacer()
+            if isEditMode {
+                DatePicker(
+                    "",
+                    selection: Binding(
+                        get: { date.wrappedValue ?? Date() },
+                        set: { date.wrappedValue = $0 }
+                    ),
+                    displayedComponents: .date
+                )
+                .labelsHidden()
+                .environment(\.timeZone, RosterCalendar.timeZone)
+            } else {
+                Text(displayValue(date.wrappedValue.map { RosterFormat.date(RosterCalendar.dayFormatter.string(from: $0)) }))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(valueColor)
+                    .multilineTextAlignment(.trailing)
+            }
+        }
+    }
+
+    private func readOnlyRow(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(Theme.textSecondary)
+            Spacer()
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.textTertiary)
+                .multilineTextAlignment(.trailing)
+        }
+    }
+
+    private var statusRow: some View {
+        HStack {
+            Text("Status")
+                .font(.subheadline)
+                .foregroundStyle(Theme.textSecondary)
+            Spacer()
+            if isEditMode, user.status != .locked {
+                Picker("", selection: $status) {
+                    Text("Active").tag(UserStatus.active)
+                    Text("Inactive").tag(UserStatus.inactive)
+                }
+                .labelsHidden()
+                .tint(Theme.textPrimary)
+            } else {
+                Text(status.rawValue.capitalized)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(valueColor)
+            }
+        }
+    }
+
+    private var employmentRow: some View {
+        HStack {
+            Text("Employment")
+                .font(.subheadline)
+                .foregroundStyle(Theme.textSecondary)
+            Spacer()
+            if isEditMode {
+                Picker("", selection: $employmentType) {
+                    ForEach(EmploymentType.allCases, id: \.self) { type in
+                        Text(type.label).tag(type)
+                    }
+                }
+                .labelsHidden()
+                .tint(Theme.textPrimary)
+            } else {
+                Text(employmentType.label)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(valueColor)
             }
         }
     }
@@ -410,34 +576,11 @@ struct ManagerStaffDetailSheet: View {
         return parts.isEmpty ? "Not set" : parts.joined(separator: " · ")
     }
 
-    private var employmentRow: some View {
-        HStack {
-            Text("Employment")
-                .font(.subheadline)
-                .foregroundStyle(Theme.textSecondary)
-            Spacer()
-            if unlocked.contains(.employment) {
-                Picker("", selection: $employmentType) {
-                    ForEach(EmploymentType.allCases, id: \.self) { type in
-                        Text(type.label).tag(type)
-                    }
-                }
-                .labelsHidden()
-                commitButton(.employment)
-            } else {
-                Text(employmentType.label)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                editButton(.employment)
-            }
-        }
-    }
-
     // Email is a sign-in credential, so the manager only *requests* a change;
     // the staff member changes their own email via Firebase's verified flow.
     private var emailSection: some View {
         Section {
-            infoRow("Email", user.email)
+            readOnlyRow("Email", user.email)
             if emailRequested {
                 Label("Change requested — waiting for \(user.firstName) to update it", systemImage: "clock.badge")
                     .font(.caption)
@@ -458,72 +601,99 @@ struct ManagerStaffDetailSheet: View {
         }
     }
 
-    private func editButton(_ field: Field) -> some View {
-        Button {
-            unlocked.insert(field)
-            Haptics.selection()
-        } label: {
-            Image(systemName: "pencil")
-                .font(.footnote)
-                .foregroundStyle(Theme.brand)
-                .padding(.leading, 6)
+    // MARK: - Helpers
+
+    private var displayedMemberSince: String? {
+        if let startDate {
+            return RosterFormat.monthYear(startDate)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Edit \(String(describing: field))")
+        return user.memberSince
     }
 
-    private func commitButton(_ field: Field) -> some View {
-        Button {
-            commit(field)
-        } label: {
-            if savingField == field {
-                ProgressView()
-            } else {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(Theme.accent)
-            }
-        }
-        .buttonStyle(.plain)
-        .disabled(savingField != nil)
-        .padding(.leading, 6)
-        .accessibilityLabel("Save \(String(describing: field))")
+    private func displayValue(_ value: String?) -> String {
+        guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "—" }
+        return value
     }
 
-    private func infoRow(_ label: String, _ value: String) -> some View {
-        HStack {
-            Text(label).font(.subheadline).foregroundStyle(Theme.textSecondary)
-            Spacer()
-            Text(value).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textPrimary)
-                .multilineTextAlignment(.trailing)
-        }
+    private func dateKey(_ date: Date?) -> String? {
+        guard let date else { return nil }
+        return RosterCalendar.dayFormatter.string(from: date)
     }
 
     // MARK: - Actions
 
-    private func commit(_ field: Field) {
-        let key: String
-        let value: Any
-        switch field {
-        case .name:
-            let trimmed = fullName.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else {
-                toast = ToastMessage(kind: .error, text: "Name can't be empty.")
-                Haptics.error()
-                return
+    private func handlePrimaryAction() {
+        if isEditMode {
+            if hasChanges {
+                saveChanges()
+            } else {
+                isEditMode = false
+                Haptics.selection()
             }
-            key = "fullName"; value = trimmed
-        case .phone:
-            key = "phone"; value = phone.trimmingCharacters(in: .whitespaces)
-        case .employment:
-            key = "employmentType"; value = employmentType.rawValue
+        } else {
+            isEditMode = true
+            Haptics.selection()
         }
-        savingField = field
+    }
+
+    private func saveChanges() {
+        let trimmedName = fullName.trimmingCharacters(in: .whitespaces)
+        guard !trimmedName.isEmpty else {
+            toast = ToastMessage(kind: .error, text: "Name can't be empty.")
+            Haptics.error()
+            return
+        }
+
+        let trimmedEmail = emergencyEmail.trimmingCharacters(in: .whitespaces)
+        if !trimmedEmail.isEmpty, !trimmedEmail.contains("@") {
+            toast = ToastMessage(kind: .error, text: "Enter a valid emergency contact email.")
+            Haptics.error()
+            return
+        }
+
+        var fields: [String: Any] = [:]
+        if trimmedName != savedBaseline.fullName { fields["fullName"] = trimmedName }
+        let trimmedPhone = phone.trimmingCharacters(in: .whitespaces)
+        if trimmedPhone != savedBaseline.phone { fields["phone"] = trimmedPhone }
+        if employmentType != savedBaseline.employmentType { fields["employmentType"] = employmentType.rawValue }
+        if status != savedBaseline.status, user.status != .locked { fields["status"] = status.rawValue }
+
+        let startKey = dateKey(startDate)
+        if startKey != savedBaseline.startDateKey { fields["startDate"] = startKey ?? "" }
+        let dobKeyValue = dateKey(dob)
+        if dobKeyValue != savedBaseline.dobKey { fields["dob"] = dobKeyValue ?? "" }
+
+        let trimmedEmergencyName = emergencyName.trimmingCharacters(in: .whitespaces)
+        if trimmedEmergencyName != savedBaseline.emergencyName {
+            fields["emergencyContactName"] = trimmedEmergencyName
+            fields["emergencyContact"] = trimmedEmergencyName
+        }
+        let trimmedEmergencyPhone = emergencyPhone.trimmingCharacters(in: .whitespaces)
+        if trimmedEmergencyPhone != savedBaseline.emergencyPhone { fields["emergencyContactPhone"] = trimmedEmergencyPhone }
+        let trimmedEmergencyAddress = emergencyAddress.trimmingCharacters(in: .whitespaces)
+        if trimmedEmergencyAddress != savedBaseline.emergencyAddress { fields["emergencyContactAddress"] = trimmedEmergencyAddress }
+        if trimmedEmail != savedBaseline.emergencyEmail { fields["emergencyContactEmail"] = trimmedEmail }
+
+        guard !fields.isEmpty else {
+            isEditMode = false
+            return
+        }
+
+        isSaving = true
         Task {
-            defer { savingField = nil }
+            defer { isSaving = false }
             do {
-                try await repo.updateStaffFields(staffId: user.id, [key: value])
-                unlocked.remove(field)
+                try await repo.updateStaffFields(staffId: user.id, fields)
+                fullName = trimmedName
+                phone = trimmedPhone
+                emergencyName = trimmedEmergencyName
+                emergencyPhone = trimmedEmergencyPhone
+                emergencyAddress = trimmedEmergencyAddress
+                emergencyEmail = trimmedEmail
+                savedBaseline = currentBaseline
+                isEditMode = false
                 Haptics.success()
+                toast = ToastMessage(kind: .success, text: "Staff details saved.")
             } catch {
                 toast = ToastMessage(kind: .error, text: "Couldn't save. \(error.localizedDescription)")
                 Haptics.error()
@@ -600,6 +770,41 @@ struct StaffWageAssignmentSheet: View {
         repo.wageAwards.first { $0.id == awardId }
     }
 
+    /// Classification levels for the selected award (earnings lines first, legacy award fallback).
+    private var classificationOptions: [(level: String, label: String)] {
+        let lines = repo.earningsLines.filter {
+            $0.isClassificationLevel && ($0.active || $0.level == classificationLevel)
+                && ($0.awardId == awardId || (awardId.isEmpty && $0.awardId == nil))
+        }
+        if !lines.isEmpty {
+            return lines.map { line in
+                (level: line.level, label: line.rateSummary.isEmpty
+                    ? line.classificationTitle
+                    : "\(line.classificationTitle) (\(line.rateSummary))")
+            }
+        }
+        return (selectedAward?.classifications ?? []).map { classification in
+            let rateLabel = classification.weekendHourlyRate > 0
+                ? String(format: "$%.2f M–F · $%.2f Wknd/PH", classification.baseHourlyRate, classification.weekendHourlyRate)
+                : String(format: "$%.2f/h", classification.baseHourlyRate)
+            return (level: classification.level, label: "\(classification.title) (\(rateLabel))")
+        }
+    }
+
+    /// Overtime, allowances, and other non-classification pay items.
+    private var supplementalLines: [EarningsLine] {
+        repo.earningsLines.filter {
+            ($0.active || selectedLineIds.contains($0.id)) && !$0.isClassificationLevel
+        }
+    }
+
+    private func classificationLineId(for level: String) -> String? {
+        repo.earningsLines.first {
+            $0.isClassificationLevel && $0.level == level
+                && ($0.awardId == awardId || (awardId.isEmpty && $0.awardId == nil))
+        }?.id
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -610,16 +815,21 @@ struct StaffWageAssignmentSheet: View {
                             Text(award.code.isEmpty ? award.name : "\(award.name) (\(award.code))").tag(award.id)
                         }
                     }
-                    if let award = selectedAward, !award.classifications.isEmpty {
+                    if !classificationOptions.isEmpty {
                         Picker("Classification", selection: $classificationLevel) {
                             Text("None").tag("")
-                            ForEach(award.classifications) { classification in
-                                Text(classification.weekendHourlyRate > 0
-                                 ? "\(classification.title) ($\(String(format: "%.2f", classification.baseHourlyRate)) M–F · $\(String(format: "%.2f", classification.weekendHourlyRate)) Wknd/PH)"
-                                 : "L\(classification.level) — \(classification.title) ($\(String(format: "%.2f", classification.baseHourlyRate))/h)")
-                                    .tag(classification.level)
+                            ForEach(classificationOptions, id: \.level) { option in
+                                Text(option.label).tag(option.level)
                             }
                         }
+                        .onChange(of: classificationLevel) { _, newLevel in
+                            guard !newLevel.isEmpty, let lineId = classificationLineId(for: newLevel) else { return }
+                            selectedLineIds.insert(lineId)
+                        }
+                    } else if awardId.isEmpty == false {
+                        Text("No classification levels for this award — add them in Wage → Classification Levels.")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
                     }
                 }
 
@@ -650,7 +860,7 @@ struct StaffWageAssignmentSheet: View {
                 } header: {
                     Text("Payroll settings")
                 } footer: {
-                    Text("A rate override replaces the award classification rate. Inactive assignments are skipped by automatic draft payslip generation. Changes only affect future payroll — already generated payslips keep their snapshot.")
+                    Text("A rate override replaces the classification level rate. Inactive assignments are skipped by automatic draft payslip generation. Changes only affect future payroll — already generated payslips keep their snapshot.")
                 }
 
                 Section {
@@ -673,12 +883,12 @@ struct StaffWageAssignmentSheet: View {
                 }
 
                 Section {
-                    if repo.earningsLines.isEmpty {
-                        Text("No earnings lines yet — create them in the Wage tab first.")
+                    if supplementalLines.isEmpty {
+                        Text("No additional pay items — add overtime or allowances in Wage → Classification Levels if needed.")
                             .font(.subheadline)
                             .foregroundStyle(Theme.textSecondary)
                     } else {
-                        ForEach(repo.earningsLines.filter { $0.active || selectedLineIds.contains($0.id) }) { line in
+                        ForEach(supplementalLines) { line in
                             Toggle(isOn: Binding(
                                 get: { selectedLineIds.contains(line.id) },
                                 set: { on in
@@ -696,9 +906,9 @@ struct StaffWageAssignmentSheet: View {
                         }
                     }
                 } header: {
-                    Text("Earnings lines")
+                    Text("Additional pay items")
                 } footer: {
-                    Text("Only managers can see these. They'll drive \(user.firstName)'s payroll calculations in the upcoming Wages/Payslip features.")
+                    Text("Optional overtime multipliers, allowances, or bonuses — assigned alongside the classification level above.")
                 }
             }
             .navigationTitle("Wage Assignment")
@@ -750,11 +960,15 @@ struct StaffWageAssignmentSheet: View {
     private func save() {
         isSaving = true
         let override = Double(rateOverrideText)
+        var lineIds = selectedLineIds
+        if !classificationLevel.isEmpty, let lineId = classificationLineId(for: classificationLevel) {
+            lineIds.insert(lineId)
+        }
         let profile = StaffWageProfile(
             staffId: user.id,
             awardId: awardId.isEmpty ? nil : awardId,
             classificationLevel: classificationLevel.isEmpty ? nil : classificationLevel,
-            earningsLineIds: Array(selectedLineIds),
+            earningsLineIds: Array(lineIds),
             hourlyRateOverride: (override ?? 0) > 0 ? override : nil,
             employmentType: employmentType.isEmpty ? nil : employmentType,
             ageGroup: ageGroup.trimmingCharacters(in: .whitespaces).isEmpty ? nil : ageGroup.trimmingCharacters(in: .whitespaces),

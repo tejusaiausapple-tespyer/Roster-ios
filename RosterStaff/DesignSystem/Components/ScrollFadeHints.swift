@@ -35,10 +35,13 @@ private struct ScrollFadeContentHeightKey: PreferenceKey {
 // MARK: - Overlay
 
 /// Faded chevron hints at the top and bottom of a scroll container.
+/// With `showsChevrons: false` it degrades to plain edge gradients — content
+/// smoothly fades out beneath the container's top/bottom edges while scrolling.
 struct ScrollFadeHintsOverlay: View {
     let showsTop: Bool
     let showsBottom: Bool
     var fadeColor: Color = Theme.background
+    var showsChevrons: Bool = true
 
     var body: some View {
         ZStack {
@@ -51,10 +54,12 @@ struct ScrollFadeHintsOverlay: View {
                     )
                     .frame(height: 30)
                     .overlay(alignment: .bottom) {
-                        Image(systemName: "chevron.up")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(Theme.textTertiary.opacity(0.75))
-                            .padding(.bottom, 2)
+                        if showsChevrons {
+                            Image(systemName: "chevron.up")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(Theme.textTertiary.opacity(0.75))
+                                .padding(.bottom, 2)
+                        }
                     }
                     Spacer(minLength: 0)
                 }
@@ -71,10 +76,12 @@ struct ScrollFadeHintsOverlay: View {
                     )
                     .frame(height: 34)
                     .overlay(alignment: .top) {
-                        Image(systemName: "chevron.down")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(Theme.textTertiary.opacity(0.75))
-                            .padding(.top, 2)
+                        if showsChevrons {
+                            Image(systemName: "chevron.down")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(Theme.textTertiary.opacity(0.75))
+                                .padding(.top, 2)
+                        }
                     }
                 }
                 .transition(.opacity)
@@ -91,6 +98,7 @@ struct ScrollFadeHintsOverlay: View {
 private struct FadedScrollHintsModifier: ViewModifier {
     let coordinateSpace: String
     var fadeColor: Color = Theme.background
+    var showsChevrons: Bool = true
     @State private var offsetY: CGFloat = 0
     @State private var contentHeight: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
@@ -119,7 +127,8 @@ private struct FadedScrollHintsModifier: ViewModifier {
                 ScrollFadeHintsOverlay(
                     showsTop: metrics.showsTopHint,
                     showsBottom: metrics.showsBottomHint,
-                    fadeColor: fadeColor
+                    fadeColor: fadeColor,
+                    showsChevrons: showsChevrons
                 )
             }
     }
@@ -144,8 +153,9 @@ extension View {
     }
 
     /// Overlay faded scroll hints on a `ScrollView` (or other scroll container).
-    func fadedScrollHints(coordinateSpace: String, fadeColor: Color = Theme.background) -> some View {
-        modifier(FadedScrollHintsModifier(coordinateSpace: coordinateSpace, fadeColor: fadeColor))
+    /// Pass `showsChevrons: false` for plain edge-fade gradients without hints.
+    func fadedScrollHints(coordinateSpace: String, fadeColor: Color = Theme.background, showsChevrons: Bool = true) -> some View {
+        modifier(FadedScrollHintsModifier(coordinateSpace: coordinateSpace, fadeColor: fadeColor, showsChevrons: showsChevrons))
     }
 }
 

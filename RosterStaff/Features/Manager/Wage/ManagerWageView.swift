@@ -10,7 +10,7 @@ struct ManagerWageView: View {
 
     enum Segment: String, CaseIterable, Identifiable {
         case awards = "Wage Awards"
-        case lines = "Earnings Lines"
+        case lines = "Classification Levels"
         var id: String { rawValue }
     }
 
@@ -19,6 +19,7 @@ struct ManagerWageView: View {
         case editAward(WageAward)
         case newLine
         case editLine(EarningsLine)
+        case editLegacy(awardId: String, classification: AwardClassification)
 
         var id: String {
             switch self {
@@ -26,6 +27,84 @@ struct ManagerWageView: View {
             case .editAward(let award): return "award-\(award.id)"
             case .newLine: return "new-line"
             case .editLine(let line): return "line-\(line.id)"
+            case .editLegacy(let awardId, let c): return "legacy-\(awardId)-\(c.level)"
+            }
+        }
+    }
+
+    /// Saved classification level — earnings line or legacy row on an award doc.
+    private struct ClassificationEntry: Identifiable {
+        enum Source {
+            case line(EarningsLine)
+            case legacy(awardId: String, classification: AwardClassification)
+        }
+
+        let id: String
+        let source: Source
+        let awardName: String?
+
+        var title: String {
+            switch source {
+            case .line(let line): return line.classificationTitle
+            case .legacy(_, let c): return c.title
+            }
+        }
+
+        var level: String {
+            switch source {
+            case .line(let line): return line.level
+            case .legacy(_, let c): return c.level
+            }
+        }
+
+        var rateSummary: String {
+            switch source {
+            case .line(let line): return line.rateSummary
+            case .legacy(_, let c):
+                if c.weekendHourlyRate > 0 {
+                    return String(format: "$%.2f M–F · $%.2f Wknd/PH", c.baseHourlyRate, c.weekendHourlyRate)
+                }
+                return String(format: "$%.2f/h", c.baseHourlyRate)
+            }
+        }
+
+        var isLegacy: Bool {
+            if case .legacy = source { return true }
+            return false
+        }
+    }
+
+    /// Anything the manager asked to delete via swipe — held here until the
+    /// centered alert confirms it. Nothing is deleted without confirmation.
+    private enum PendingDelete: Identifiable {
+        case award(WageAward)
+        case classification(ClassificationEntry)
+        case payItem(EarningsLine)
+
+        var id: String {
+            switch self {
+            case .award(let award): return "award-\(award.id)"
+            case .classification(let entry): return "classification-\(entry.id)"
+            case .payItem(let line): return "payitem-\(line.id)"
+            }
+        }
+
+        var title: String {
+            switch self {
+            case .award: return "Delete wage award?"
+            case .classification: return "Delete classification level?"
+            case .payItem: return "Delete pay item?"
+            }
+        }
+
+        var message: String {
+            switch self {
+            case .award(let award):
+                return "“\(award.name)” will be permanently removed. Classification levels linked to this award keep their rates but lose the award reference."
+            case .classification(let entry):
+                return "“\(entry.title)” will be removed. Staff already assigned to this level keep their assignment until you change it."
+            case .payItem(let line):
+                return "“\(line.name)” will be permanently removed. Staff assignments that include it stop paying this item."
             }
         }
     }
@@ -33,6 +112,8 @@ struct ManagerWageView: View {
     @State private var segment: Segment = .awards
     @State private var activeSheet: ActiveSheet?
     @State private var toast: ToastMessage?
+    @State private var isAddingConsole = false
+    @State private var pendingDelete: PendingDelete?
 
     var embedInNavigationStack = true
 
@@ -60,7 +141,7 @@ struct ManagerWageView: View {
                     .listRowSeparator(.hidden)
                 switch segment {
                 case .awards: awardsSection
-                case .lines: linesSection
+                case .lines: linesSections
                 }
             }
             .listStyle(.insetGrouped)
@@ -79,7 +160,7 @@ struct ManagerWageView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
-                .accessibilityLabel(segment == .awards ? "Add wage award" : "Add earnings line")
+                .accessibilityLabel(segment == .awards ? "Add wage award" : "Add classification level")
             }
         }
         .sheet(item: $activeSheet) { sheet in
@@ -89,12 +170,36 @@ struct ManagerWageView: View {
             case .editAward(let award):
                 WageAwardEditorSheet(award: award) { save(award: $0) }
             case .newLine:
-                EarningsLineEditorSheet(line: nil) { save(line: $0) }
+                EarningsLineEditorSheet(line: nil, onSave: { save(line: $0) }, onSaveMany: { save(lines: $0) })
             case .editLine(let line):
-                EarningsLineEditorSheet(line: line) { save(line: $0) }
+                EarningsLineEditorSheet(line: line, onSave: { save(line: $0) }) {
+                    delete(ids: [line.id])
+                }
+            case .editLegacy(let awardId, let classification):
+                EarningsLineEditorSheet(
+                    line: EarningsLine.from(classification: classification, awardId: awardId),
+                    migrateFromAwardId: awardId,
+                    removeLegacyLevel: classification.level,
+                    onSave: { save(line: $0, migrateFromAwardId: awardId, removeLegacyLevel: classification.level) },
+                    onDelete: { deleteLegacy(awardId: awardId, level: classification.level) }
+                )
             }
         }
         .toast($toast)
+        // Centered alert (not a bottom action sheet) shared by all three lists.
+        .alert(
+            pendingDelete?.title ?? "Delete?",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            presenting: pendingDelete
+        ) { pending in
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) { performDelete(pending) }
+        } message: { pending in
+            Text(pending.message)
+        }
     }
 
     // MARK: - Awards
@@ -103,9 +208,11 @@ struct ManagerWageView: View {
     private var awardsSection: some View {
         if repo.wageAwards.isEmpty {
             Section {
-                Text("No wage awards yet. Add the modern award(s) your staff are employed under (e.g. General Retail Industry Award MA000004) with their classification levels and base hourly rates.")
+                Text("No wage awards yet. Add the modern award(s) your staff are employed under (e.g. General Retail Industry Award MA000004).")
                     .font(.subheadline)
                     .foregroundStyle(Theme.textSecondary)
+            } footer: {
+                Text("Tap + to add a wage award. Classification levels are set up under Classification Levels.")
             }
         } else {
             Section {
@@ -128,32 +235,80 @@ struct ManagerWageView: View {
                             Text([award.code, award.industry].filter { !$0.isEmpty }.joined(separator: " · "))
                                 .font(.caption)
                                 .foregroundStyle(Theme.textSecondary)
-                            Text("\(award.classifications.count) classification level\(award.classifications.count == 1 ? "" : "s")")
+                            Text("\(classificationCount(for: award)) classification level\(classificationCount(for: award) == 1 ? "" : "s")")
                                 .font(.caption2)
                                 .foregroundStyle(Theme.textTertiary)
                         }
                     }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            pendingDelete = .award(award)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
                 }
-                .onDelete { offsets in delete(ids: offsets.map { repo.wageAwards[$0].id }) }
             } footer: {
-                Text("Tap to edit. Assign awards to staff in the Staff tab.")
+                Text("Tap to edit, swipe left to delete. Assign awards to staff in the Staff tab.")
             }
         }
     }
 
-    // MARK: - Earnings lines
+    // MARK: - Classification levels
 
     @ViewBuilder
-    private var linesSection: some View {
-        if repo.earningsLines.isEmpty {
+    private var linesSections: some View {
+        Section {
+            Button {
+                Task { await addConsoleAgeRateTable() }
+            } label: {
+                HStack {
+                    if isAddingConsole {
+                        ProgressView()
+                    } else {
+                        Label("Add Console age-rate table", systemImage: "tablecells")
+                            .foregroundStyle(Theme.brand)
+                    }
+                    Spacer()
+                }
+            }
+            .disabled(isAddingConsole)
+        } footer: {
+            Text("Adds Under 17 through Adult 20+ with Mon–Fri and Weekend & PH rates. Skips levels that already exist. Creates a Console award if needed.")
+        }
+
+        if classificationEntries.isEmpty {
             Section {
-                Text("No earnings lines yet. Add pay items such as Ordinary Hours, Overtime 1.5×, allowances or bonuses — with their rate type and super/tax treatment.")
+                Text("No classification levels yet. Use the button above to add the Console age-rate table, or tap + to add levels manually.")
                     .font(.subheadline)
                     .foregroundStyle(Theme.textSecondary)
             }
         } else {
             Section {
-                ForEach(repo.earningsLines) { line in
+                ForEach(classificationEntries) { entry in
+                    Button {
+                        openEditor(for: entry)
+                    } label: {
+                        classificationRow(entry)
+                    }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            pendingDelete = .classification(entry)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
+            } header: {
+                Text("Classification levels")
+            } footer: {
+                Text("Tap to edit, swipe left to delete.")
+            }
+        }
+
+        if !supplementalPayItems.isEmpty {
+            Section("Other pay items") {
+                ForEach(supplementalPayItems) { line in
                     Button {
                         activeSheet = .editLine(line)
                     } label: {
@@ -167,22 +322,133 @@ struct ManagerWageView: View {
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(Theme.brand)
                             }
-                            HStack(spacing: 6) {
-                                Text(line.category.label)
-                                if line.exemptFromSuper { Text("· no super") }
-                                if line.exemptFromTax { Text("· no PAYG") }
-                                if !line.active { Text("· inactive") }
-                            }
-                            .font(.caption)
-                            .foregroundStyle(Theme.textSecondary)
+                            Text(line.category.label)
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                    }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            pendingDelete = .payItem(line)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
                         }
                     }
                 }
-                .onDelete { offsets in delete(ids: offsets.map { repo.earningsLines[$0].id }) }
-            } footer: {
-                Text("Tap to edit. Assign earnings lines to staff in the Staff tab — staff can never see them.")
             }
         }
+    }
+
+    private func classificationRow(_ entry: ClassificationEntry) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(entry.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Spacer()
+                Text(entry.rateSummary)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.brand)
+            }
+            HStack(spacing: 6) {
+                if let awardName = entry.awardName {
+                    Text(awardName)
+                }
+                if !entry.level.isEmpty {
+                    Text("Lvl \(entry.level)")
+                }
+                if entry.isLegacy {
+                    Text("· migrate on save")
+                        .foregroundStyle(Theme.warning)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(Theme.textSecondary)
+        }
+    }
+
+    // MARK: - Helpers
+
+    private var classificationEntries: [ClassificationEntry] {
+        var entries: [ClassificationEntry] = []
+        var coveredLevels: Set<String> = []
+
+        for line in repo.earningsLines where line.isClassificationLevel {
+            let key = levelKey(awardId: line.awardId, level: line.level)
+            coveredLevels.insert(key)
+            entries.append(ClassificationEntry(
+                id: "line-\(line.id)",
+                source: .line(line),
+                awardName: line.awardId.flatMap { awardName(for: $0) }
+            ))
+        }
+
+        for award in repo.wageAwards {
+            let name = award.code.isEmpty ? award.name : award.code
+            for classification in award.classifications {
+                let key = levelKey(awardId: award.id, level: classification.level)
+                guard !coveredLevels.contains(key) else { continue }
+                coveredLevels.insert(key)
+                entries.append(ClassificationEntry(
+                    id: "legacy-\(award.id)-\(classification.level)",
+                    source: .legacy(awardId: award.id, classification: classification),
+                    awardName: name
+                ))
+            }
+        }
+
+        return entries.sorted {
+            ($0.awardName ?? "") < ($1.awardName ?? "")
+                || ($0.level.isEmpty ? $0.title : $0.level) < ($1.level.isEmpty ? $1.title : $1.level)
+        }
+    }
+
+    private var supplementalPayItems: [EarningsLine] {
+        repo.earningsLines.filter { !$0.isClassificationLevel }
+    }
+
+    private func levelKey(awardId: String?, level: String) -> String {
+        "\(awardId ?? "")|\(level)"
+    }
+
+    private func openEditor(for entry: ClassificationEntry) {
+        switch entry.source {
+        case .line(let line):
+            activeSheet = .editLine(line)
+        case .legacy(let awardId, let classification):
+            activeSheet = .editLegacy(awardId: awardId, classification: classification)
+        }
+    }
+
+    private func addConsoleAgeRateTable() async {
+        isAddingConsole = true
+        defer { isAddingConsole = false }
+        do {
+            let awardId = try await repo.ensureConsoleAward()
+            let added = try await repo.addConsoleClassificationLevels(for: awardId)
+            Haptics.success()
+            if added == 0 {
+                toast = ToastMessage(kind: .success, text: "Console age-rate levels are already saved.")
+            } else {
+                toast = ToastMessage(kind: .success, text: "Added \(added) Console classification level\(added == 1 ? "" : "s").")
+            }
+        } catch {
+            toast = ToastMessage(kind: .error, text: "Couldn't add levels. \(error.localizedDescription)")
+            Haptics.error()
+        }
+    }
+
+    private func classificationCount(for award: WageAward) -> Int {
+        let fromLines = repo.earningsLines.filter {
+            $0.isClassificationLevel && $0.awardId == award.id
+        }.count
+        if fromLines > 0 { return fromLines }
+        return award.classifications.count
+    }
+
+    private func awardName(for awardId: String) -> String? {
+        guard let award = repo.wageAwards.first(where: { $0.id == awardId }) else { return nil }
+        return award.code.isEmpty ? award.name : award.code
     }
 
     // MARK: - Actions
@@ -199,10 +465,14 @@ struct ManagerWageView: View {
         }
     }
 
-    private func save(line: EarningsLine) {
+    private func save(line: EarningsLine, migrateFromAwardId: String? = nil, removeLegacyLevel: String? = nil) {
         Task {
             do {
-                try await repo.saveEarningsLine(line)
+                if migrateFromAwardId != nil || removeLegacyLevel != nil {
+                    try await repo.saveClassificationLine(line, migrateFromAwardId: migrateFromAwardId, removeLegacyLevel: removeLegacyLevel)
+                } else {
+                    try await repo.saveEarningsLine(line)
+                }
                 Haptics.success()
             } catch {
                 toast = ToastMessage(kind: .error, text: "Couldn't save. \(error.localizedDescription)")
@@ -211,7 +481,51 @@ struct ManagerWageView: View {
         }
     }
 
-    private func delete(ids: [String]) {
+    private func save(lines: [EarningsLine]) {
+        Task {
+            var failed = false
+            for line in lines {
+                do { try await repo.saveEarningsLine(line) } catch { failed = true }
+            }
+            if failed {
+                toast = ToastMessage(kind: .error, text: "Couldn't save some levels.")
+                Haptics.error()
+            } else {
+                Haptics.success()
+            }
+        }
+    }
+
+    private func performDelete(_ pending: PendingDelete) {
+        switch pending {
+        case .award(let award):
+            delete(ids: [award.id], successMessage: "Wage award deleted.")
+        case .classification(let entry):
+            switch entry.source {
+            case .line(let line):
+                delete(ids: [line.id], successMessage: "Classification level deleted.")
+            case .legacy(let awardId, let classification):
+                deleteLegacy(awardId: awardId, level: classification.level)
+            }
+        case .payItem(let line):
+            delete(ids: [line.id], successMessage: "Pay item deleted.")
+        }
+    }
+
+    private func deleteLegacy(awardId: String, level: String) {
+        Task {
+            do {
+                try await repo.deleteLegacyClassification(awardId: awardId, level: level)
+                Haptics.light()
+                toast = ToastMessage(kind: .success, text: "Classification level deleted.")
+            } catch {
+                toast = ToastMessage(kind: .error, text: "Couldn't delete. \(error.localizedDescription)")
+                Haptics.error()
+            }
+        }
+    }
+
+    private func delete(ids: [String], successMessage: String = "Classification level deleted.") {
         Task {
             var failed = false
             for id in ids {
@@ -222,6 +536,7 @@ struct ManagerWageView: View {
                 Haptics.error()
             } else {
                 Haptics.light()
+                toast = ToastMessage(kind: .success, text: successMessage)
             }
         }
     }
@@ -239,15 +554,6 @@ private struct WageAwardEditorSheet: View {
     @State private var code: String
     @State private var industry: String
     @State private var active: Bool
-    @State private var classifications: [EditableClassification]
-
-    struct EditableClassification: Identifiable {
-        let id = UUID()
-        var level: String
-        var title: String
-        var rateText: String
-        var weekendRateText: String = ""
-    }
 
     init(award: WageAward?, onSave: @escaping (WageAward) -> Void) {
         self.award = award
@@ -256,18 +562,12 @@ private struct WageAwardEditorSheet: View {
         _code = State(initialValue: award?.code ?? "")
         _industry = State(initialValue: award?.industry ?? "")
         _active = State(initialValue: award?.active ?? true)
-        _classifications = State(initialValue: (award?.classifications ?? []).map {
-            EditableClassification(level: $0.level, title: $0.title,
-                                   rateText: String(format: "%.2f", $0.baseHourlyRate),
-                                   weekendRateText: $0.weekendHourlyRate > 0
-                                       ? String(format: "%.2f", $0.weekendHourlyRate) : "")
-        })
     }
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Award") {
+                Section {
                     LabeledContent("Name") {
                         TextField("e.g. General Retail Industry Award", text: $name)
                             .multilineTextAlignment(.trailing)
@@ -284,58 +584,10 @@ private struct WageAwardEditorSheet: View {
                     }
                     Toggle("Active", isOn: $active)
                         .tint(Theme.brand)
-                }
-
-                Section {
-                    ForEach($classifications) { $classification in
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(spacing: 8) {
-                                TextField("Lvl", text: $classification.level)
-                                    .frame(width: 44)
-                                TextField("Title (e.g. Under 17)", text: $classification.title)
-                            }
-                            HStack(spacing: 10) {
-                                HStack(spacing: 2) {
-                                    Text("M–F $").font(.caption).foregroundStyle(Theme.textTertiary)
-                                    TextField("0.00", text: $classification.rateText)
-                                        .keyboardType(.decimalPad)
-                                        .frame(width: 60)
-                                }
-                                HStack(spacing: 2) {
-                                    Text("Wknd/PH $").font(.caption).foregroundStyle(Theme.textTertiary)
-                                    TextField("optional", text: $classification.weekendRateText)
-                                        .keyboardType(.decimalPad)
-                                        .frame(width: 60)
-                                }
-                                Spacer()
-                            }
-                        }
-                        .font(.subheadline)
-                        .padding(.vertical, 2)
-                    }
-                    .onDelete { classifications.remove(atOffsets: $0) }
-
-                    Button {
-                        classifications.append(EditableClassification(level: "\(classifications.count + 1)", title: "", rateText: ""))
-                    } label: {
-                        Label("Add classification level", systemImage: "plus.circle")
-                    }
-                    if classifications.isEmpty {
-                        Button {
-                            classifications = WageAward.consoleTemplateClassifications.map {
-                                EditableClassification(level: $0.level, title: $0.title,
-                                                       rateText: String(format: "%.2f", $0.baseHourlyRate),
-                                                       weekendRateText: String(format: "%.2f", $0.weekendHourlyRate))
-                            }
-                            if name.trimmingCharacters(in: .whitespaces).isEmpty { name = "Console" }
-                        } label: {
-                            Label("Use Console age-rate template", systemImage: "tablecells")
-                        }
-                    }
                 } header: {
-                    Text("Classification levels")
+                    Text("Award")
                 } footer: {
-                    Text("Each level has a Mon–Fri base rate and an optional Weekend & Public Holiday rate (used by payroll when set — otherwise payroll defaults to base × 1.5 weekend / × 2.25 public holiday). Swipe to remove.")
+                    Text("Classification levels and hourly rates are managed under Classification Levels — link each level to this award.")
                 }
             }
             .navigationTitle(award == nil ? "New Award" : "Edit Award")
@@ -351,14 +603,7 @@ private struct WageAwardEditorSheet: View {
                             name: name.trimmingCharacters(in: .whitespaces),
                             code: code.trimmingCharacters(in: .whitespaces),
                             industry: industry.trimmingCharacters(in: .whitespaces),
-                            classifications: classifications.compactMap {
-                                let title = $0.title.trimmingCharacters(in: .whitespaces)
-                                guard !title.isEmpty else { return nil }
-                                return AwardClassification(level: $0.level.trimmingCharacters(in: .whitespaces),
-                                                           title: title,
-                                                           baseHourlyRate: Double($0.rateText) ?? 0,
-                                                           weekendHourlyRate: Double($0.weekendRateText) ?? 0)
-                            },
+                            classifications: award?.classifications ?? [],
                             active: active
                         ))
                         dismiss()
@@ -370,16 +615,26 @@ private struct WageAwardEditorSheet: View {
     }
 }
 
-// MARK: - Earnings line editor
+// MARK: - Classification level / earnings line editor
 
 private struct EarningsLineEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(RosterRepository.self) private var repo
 
     let line: EarningsLine?
     let onSave: (EarningsLine) -> Void
+    var onDelete: (() -> Void)?
+    var migrateFromAwardId: String?
+    var removeLegacyLevel: String?
+    /// When set, batch-create Console template levels for this award.
+    var onSaveMany: (([EarningsLine]) -> Void)?
 
     @State private var name: String
     @State private var displayName: String
+    @State private var awardId: String
+    @State private var level: String
+    @State private var baseRateText: String
+    @State private var weekendRateText: String
     @State private var category: EarningsCategory
     @State private var rateType: EarningsRateType
     @State private var multiplierText: String
@@ -388,14 +643,34 @@ private struct EarningsLineEditorSheet: View {
     @State private var exemptFromSuper: Bool
     @State private var exemptFromTax: Bool
     @State private var active: Bool
+    @State private var showDeleteConfirm = false
 
-    init(line: EarningsLine?, onSave: @escaping (EarningsLine) -> Void) {
+    private var canDelete: Bool {
+        onDelete != nil && (line?.id.isEmpty == false || migrateFromAwardId != nil)
+    }
+
+    init(line: EarningsLine?, migrateFromAwardId: String? = nil, removeLegacyLevel: String? = nil,
+         onSave: @escaping (EarningsLine) -> Void, onDelete: (() -> Void)? = nil,
+         onSaveMany: (([EarningsLine]) -> Void)? = nil) {
         self.line = line
+        self.migrateFromAwardId = migrateFromAwardId
+        self.removeLegacyLevel = removeLegacyLevel
         self.onSave = onSave
+        self.onDelete = onDelete
+        self.onSaveMany = onSaveMany
         _name = State(initialValue: line?.name ?? "")
         _displayName = State(initialValue: line?.displayName ?? "")
+        _awardId = State(initialValue: line?.awardId ?? "")
+        _level = State(initialValue: line?.level ?? "")
+        _baseRateText = State(initialValue: line.map {
+            $0.baseHourlyRate > 0 ? String(format: "%.2f", $0.baseHourlyRate)
+                : ($0.fixedRate > 0 ? String(format: "%.2f", $0.fixedRate) : "")
+        } ?? "")
+        _weekendRateText = State(initialValue: line.map {
+            $0.weekendHourlyRate > 0 ? String(format: "%.2f", $0.weekendHourlyRate) : ""
+        } ?? "")
         _category = State(initialValue: line?.category ?? .ordinaryHours)
-        _rateType = State(initialValue: line?.rateType ?? .multipleOfOrdinary)
+        _rateType = State(initialValue: line?.rateType ?? .fixedAmount)
         _multiplierText = State(initialValue: line.map { String(format: "%g", $0.multiplier) } ?? "1")
         _fixedRateText = State(initialValue: line.map { String(format: "%.2f", $0.fixedRate) } ?? "")
         _unitName = State(initialValue: line?.unitName ?? "")
@@ -404,65 +679,124 @@ private struct EarningsLineEditorSheet: View {
         _active = State(initialValue: line?.active ?? true)
     }
 
+    private var isClassificationMode: Bool {
+        category == .ordinaryHours
+    }
+
     var body: some View {
         NavigationStack {
             Form {
-                Section("Earnings line") {
-                    LabeledContent("Name") {
-                        TextField("e.g. Overtime 1.5×", text: $name)
+                Section {
+                    Picker("Wage award", selection: $awardId) {
+                        Text("None").tag("")
+                        ForEach(repo.wageAwards.filter { $0.active || $0.id == awardId }) { award in
+                            Text(award.code.isEmpty ? award.name : "\(award.name) (\(award.code))").tag(award.id)
+                        }
+                    }
+                    LabeledContent("Level code") {
+                        TextField("e.g. U17, 20+", text: $level)
+                            .multilineTextAlignment(.trailing)
+                            .textInputAutocapitalization(.characters)
+                            .autocorrectionDisabled()
+                    }
+                    LabeledContent("Title") {
+                        TextField("e.g. Under 17, Adult 20+", text: $name)
                             .multilineTextAlignment(.trailing)
                     }
                     LabeledContent("Payslip name") {
-                        TextField("Defaults to name", text: $displayName)
+                        TextField("Defaults to title", text: $displayName)
                             .multilineTextAlignment(.trailing)
                     }
-                    Picker("Category", selection: $category) {
-                        ForEach(EarningsCategory.allCases) { Text($0.label).tag($0) }
+                    HStack {
+                        LabeledContent("Mon–Fri ($/h)") {
+                            TextField("0.00", text: $baseRateText)
+                                .multilineTextAlignment(.trailing)
+                                .keyboardType(.decimalPad)
+                        }
                     }
+                    LabeledContent("Weekend & PH ($/h)") {
+                        TextField("Optional", text: $weekendRateText)
+                            .multilineTextAlignment(.trailing)
+                            .keyboardType(.decimalPad)
+                    }
+                    Toggle("Active", isOn: $active)
+                        .tint(Theme.brand)
+                } header: {
+                    Text("Classification level")
+                } footer: {
+                    Text("Each classification level is an earnings line with ordinary-hours rates. Weekend & PH rate is used by payroll when set — otherwise payroll defaults to base × 1.5 weekend / × 2.25 public holiday.")
                 }
 
-                Section("Rate") {
-                    Picker("Rate type", selection: $rateType) {
-                        ForEach(EarningsRateType.allCases) { Text($0.label).tag($0) }
-                    }
-                    switch rateType {
-                    case .multipleOfOrdinary:
-                        LabeledContent("Multiplier") {
-                            TextField("1.5", text: $multiplierText)
-                                .multilineTextAlignment(.trailing)
-                                .keyboardType(.decimalPad)
-                        }
-                    case .fixedAmount:
-                        LabeledContent("Amount ($)") {
-                            TextField("0.00", text: $fixedRateText)
-                                .multilineTextAlignment(.trailing)
-                                .keyboardType(.decimalPad)
-                        }
-                    case .ratePerUnit:
-                        LabeledContent("Rate ($)") {
-                            TextField("0.00", text: $fixedRateText)
-                                .multilineTextAlignment(.trailing)
-                                .keyboardType(.decimalPad)
-                        }
-                        LabeledContent("Unit") {
-                            TextField("e.g. km", text: $unitName)
-                                .multilineTextAlignment(.trailing)
+                if line == nil, !awardId.isEmpty {
+                    Section {
+                        Button {
+                            let lines = EarningsLine.consoleTemplateLines(awardId: awardId.isEmpty ? nil : awardId)
+                            onSaveMany?(lines)
+                            dismiss()
+                        } label: {
+                            Label("Add Console age-rate levels for this award", systemImage: "tablecells")
                         }
                     }
                 }
 
                 Section {
-                    Toggle("Exempt from superannuation", isOn: $exemptFromSuper)
-                        .tint(Theme.brand)
-                    Toggle("Exempt from PAYG withholding", isOn: $exemptFromTax)
-                        .tint(Theme.brand)
-                    Toggle("Active", isOn: $active)
-                        .tint(Theme.brand)
+                    Picker("Category", selection: $category) {
+                        ForEach(EarningsCategory.allCases) { Text($0.label).tag($0) }
+                    }
+                    if !isClassificationMode {
+                        Picker("Rate type", selection: $rateType) {
+                            ForEach(EarningsRateType.allCases) { Text($0.label).tag($0) }
+                        }
+                        switch rateType {
+                        case .multipleOfOrdinary:
+                            LabeledContent("Multiplier") {
+                                TextField("1.5", text: $multiplierText)
+                                    .multilineTextAlignment(.trailing)
+                                    .keyboardType(.decimalPad)
+                            }
+                        case .fixedAmount:
+                            LabeledContent("Amount ($)") {
+                                TextField("0.00", text: $fixedRateText)
+                                    .multilineTextAlignment(.trailing)
+                                    .keyboardType(.decimalPad)
+                            }
+                        case .ratePerUnit:
+                            LabeledContent("Rate ($)") {
+                                TextField("0.00", text: $fixedRateText)
+                                    .multilineTextAlignment(.trailing)
+                                    .keyboardType(.decimalPad)
+                            }
+                            LabeledContent("Unit") {
+                                TextField("e.g. km", text: $unitName)
+                                    .multilineTextAlignment(.trailing)
+                            }
+                        }
+                        Toggle("Exempt from superannuation", isOn: $exemptFromSuper)
+                            .tint(Theme.brand)
+                        Toggle("Exempt from PAYG withholding", isOn: $exemptFromTax)
+                            .tint(Theme.brand)
+                    }
+                } header: {
+                    Text("Other pay items")
                 } footer: {
-                    Text("Exemption flags follow ATO/STP treatment of the pay item (as in Xero's earnings rate settings).")
+                    if isClassificationMode {
+                        Text("Ordinary-hours lines are classification levels. Use another category below only if you also need overtime multipliers, allowances, or bonuses on staff assignments.")
+                    } else {
+                        Text("Non-ordinary items (overtime, allowances, etc.) can be assigned alongside a staff member's classification level.")
+                    }
+                }
+
+                if canDelete {
+                    Section {
+                        Button(role: .destructive) {
+                            showDeleteConfirm = true
+                        } label: {
+                            Label("Delete classification level", systemImage: "trash")
+                        }
+                    }
                 }
             }
-            .navigationTitle(line == nil ? "New Earnings Line" : "Edit Earnings Line")
+            .navigationTitle(line == nil ? "New Level" : "Edit Level")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -470,24 +804,71 @@ private struct EarningsLineEditorSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        onSave(EarningsLine(
-                            id: line?.id ?? "",
-                            name: name.trimmingCharacters(in: .whitespaces),
-                            displayName: displayName.trimmingCharacters(in: .whitespaces),
-                            category: category,
-                            rateType: rateType,
-                            multiplier: Double(multiplierText) ?? 1.0,
-                            fixedRate: Double(fixedRateText) ?? 0,
-                            unitName: unitName.trimmingCharacters(in: .whitespaces),
-                            exemptFromSuper: exemptFromSuper,
-                            exemptFromTax: exemptFromTax,
-                            active: active
-                        ))
+                        onSave(buildLine())
                         dismiss()
                     }
-                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(!canSave)
                 }
             }
+            .onChange(of: category) { _, newValue in
+                if newValue == .ordinaryHours {
+                    rateType = .fixedAmount
+                }
+            }
+            .confirmationDialog(
+                "Delete this classification level?",
+                isPresented: $showDeleteConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Delete", role: .destructive) {
+                    onDelete?()
+                    dismiss()
+                }
+                Button("Cancel", role: .cancel) {}
+            }
         }
+    }
+
+    private var canSave: Bool {
+        let title = name.trimmingCharacters(in: .whitespaces)
+        if isClassificationMode {
+            let base = Double(baseRateText) ?? 0
+            return !title.isEmpty && base > 0
+        }
+        return !title.isEmpty
+    }
+
+    private func buildLine() -> EarningsLine {
+        let title = name.trimmingCharacters(in: .whitespaces)
+        var trimmedLevel = level.trimmingCharacters(in: .whitespaces)
+        if trimmedLevel.isEmpty, isClassificationMode {
+            trimmedLevel = title.uppercased()
+                .replacingOccurrences(of: " ", with: "")
+                .prefix(8)
+                .description
+        }
+        let baseRate = Double(baseRateText) ?? 0
+        let weekendRate = Double(weekendRateText) ?? 0
+        let effectiveCategory = isClassificationMode ? .ordinaryHours : category
+        let effectiveRateType = isClassificationMode ? .fixedAmount : rateType
+        let effectiveFixed = isClassificationMode ? baseRate : (Double(fixedRateText) ?? 0)
+
+        return EarningsLine(
+            id: line?.id ?? "",
+            name: title,
+            displayName: displayName.trimmingCharacters(in: .whitespaces),
+            category: effectiveCategory,
+            rateType: effectiveRateType,
+            multiplier: Double(multiplierText) ?? 1.0,
+            fixedRate: effectiveFixed,
+            unitName: unitName.trimmingCharacters(in: .whitespaces),
+            exemptFromSuper: exemptFromSuper,
+            exemptFromTax: exemptFromTax,
+            active: active,
+            awardId: awardId.isEmpty ? nil : awardId,
+            level: trimmedLevel,
+            baseHourlyRate: baseRate,
+            weekendHourlyRate: weekendRate
+        )
     }
 }

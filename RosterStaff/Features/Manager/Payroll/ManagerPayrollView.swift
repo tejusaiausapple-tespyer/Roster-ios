@@ -24,6 +24,7 @@ struct ManagerPayrollView: View {
     @State private var activeSheet: ActiveSheet?
     @State private var toast: ToastMessage?
     @State private var isGenerating = false
+    @State private var pendingDeleteSlip: Payslip?
 
     var embedInNavigationStack = true
 
@@ -87,6 +88,21 @@ struct ManagerPayrollView: View {
             }
         }
         .toast($toast)
+        // Centered alert (not a bottom action sheet) — nothing is deleted
+        // without explicit confirmation.
+        .alert(
+            "Delete draft payslip?",
+            isPresented: Binding(
+                get: { pendingDeleteSlip != nil },
+                set: { if !$0 { pendingDeleteSlip = nil } }
+            ),
+            presenting: pendingDeleteSlip
+        ) { slip in
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) { deleteDraft(slip) }
+        } message: { slip in
+            Text("\(slip.staffName)'s draft payslip for this period will be permanently removed.")
+        }
     }
 
     // MARK: Sections
@@ -186,9 +202,9 @@ struct ManagerPayrollView: View {
                     .swipeActions(edge: .trailing) {
                         if slip.status == .draft || slip.status == .underReview {
                             Button(role: .destructive) {
-                                deleteDraft(slip)
+                                pendingDeleteSlip = slip
                             } label: {
-                                Label("Delete draft", systemImage: "trash")
+                                Label("Delete", systemImage: "trash")
                             }
                         }
                     }
@@ -198,7 +214,7 @@ struct ManagerPayrollView: View {
             Text("Staff payslips")
         } footer: {
             if !periodSlips.isEmpty {
-                Text("Tap a payslip to review, edit and approve. Staff can only see a payslip after you press Submit.")
+                Text("Tap a payslip to review, edit and approve. Swipe left on a draft or under-review payslip to delete. Staff can only see a payslip after you press Submit.")
             }
         }
     }
