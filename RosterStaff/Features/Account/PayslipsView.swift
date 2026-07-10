@@ -216,6 +216,12 @@ private struct FloatingMonthYearPicker: View {
     @State private var tempMonth: Int
     private let years: [Int]
 
+    private let monthSymbols: [String] = {
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        return fmt.monthSymbols
+    }()
+
     init(selectedMonthKey: Binding<String>, isExpanded: Binding<Bool>) {
         self._selectedMonthKey = selectedMonthKey
         self._isExpanded = isExpanded
@@ -230,20 +236,31 @@ private struct FloatingMonthYearPicker: View {
     }
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             HStack {
                 Text("Select Period")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
-                Text(RosterCalendar.calendar.monthSymbols[tempMonth - 1] + " \(tempYear)")
+                Text(monthSymbols[tempMonth - 1] + " \(tempYear)")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Theme.brand)
             }
             .padding(.horizontal, 4)
 
-            HStack(spacing: 12) {
-                // Year wheel picker (scrolls vertically)
+            HStack(spacing: 0) {
+                // Left side: Month vertical wheel selector
+                Picker("Month", selection: $tempMonth) {
+                    ForEach(1...12, id: \.self) { m in
+                        Text(monthSymbols[m - 1])
+                            .font(.subheadline)
+                            .tag(m)
+                    }
+                }
+                .pickerStyle(.wheel)
+                .frame(maxWidth: .infinity)
+
+                // Right side: Year vertical wheel selector
                 Picker("Year", selection: $tempYear) {
                     ForEach(years, id: \.self) { y in
                         Text(String(y))
@@ -252,50 +269,32 @@ private struct FloatingMonthYearPicker: View {
                     }
                 }
                 .pickerStyle(.wheel)
-                .frame(width: 80, height: 140)
-                .clipped()
-
-                Divider()
-                    .frame(height: 120)
-
-                // Month selection grid
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
-                    ForEach(1...12, id: \.self) { m in
-                        let monthName = RosterCalendar.calendar.shortMonthSymbols[m - 1]
-                        let isSelected = (m == tempMonth)
-
-                        Button {
-                            tempMonth = m
-                            selectedMonthKey = RosterCalendar.monthKey(year: tempYear, month: tempMonth)
-                            Haptics.selection()
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                                isExpanded = false
-                            }
-                        } label: {
-                            Text(monthName)
-                                .font(.caption.weight(isSelected ? .bold : .regular))
-                                .foregroundColor(isSelected ? .white : Theme.textPrimary)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 32)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(isSelected ? Theme.brand : Theme.card.opacity(0.5))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .stroke(isSelected ? Color.clear : Theme.separator, lineWidth: 1)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(RosterCalendar.calendar.monthSymbols[m - 1])
-                        .accessibilityHint(isSelected ? "Currently selected" : "Selects \(RosterCalendar.calendar.monthSymbols[m - 1])")
-                    }
-                }
-                .frame(maxWidth: .infinity)
+                .frame(width: 90)
             }
+            .frame(height: 140)
+
+            // Select button
+            Button {
+                selectedMonthKey = RosterCalendar.monthKey(year: tempYear, month: tempMonth)
+                Haptics.selection()
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    isExpanded = false
+                }
+            } label: {
+                Text("Select")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 38)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.brand))
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 4)
+            .accessibilityLabel("Select \(monthSymbols[tempMonth - 1]) \(tempYear)")
+            .accessibilityHint("Selects this month and year and closes the picker")
         }
         .padding(12)
-        .frame(width: 290)
+        .frame(width: 280)
         .glassSurface(in: RoundedRectangle(cornerRadius: 16, style: .continuous), interactive: true)
         .shadow(color: Color.black.opacity(0.12), radius: 12, x: 0, y: 6)
     }
