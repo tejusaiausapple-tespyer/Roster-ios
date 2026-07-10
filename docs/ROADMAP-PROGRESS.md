@@ -340,6 +340,15 @@ Then: `git checkout main && git merge --no-ff milestone-4-data-integrity && git 
   `ClassificationDisplayOrder` (numeric-aware level code, title fallback);
   the Wage list's previous comparator was also invalid (unstable order) and
   is fixed by the same helper. +3 ordering tests.
+- Round 3 (2026-07-10): (a) Payslip PDF redesigned — monochrome ink on white
+  (no colour fills/tinted text; logo is the only colour), letter-spaced
+  section labels, roomier tables, bordered net-pay panel, wrapped values
+  measured so rows never collide. (b) Manager-assigned **Employee ID**
+  (letters+numbers, stored uppercase in `users.employeeId`): editable in the
+  Staff detail sheet, shown on the staff Account page, manager payslip sheet
+  and the PDF; snapshotted onto payslips at generation
+  (`payslips.employeeId`) with live fallback for older slips
+  (`repo.displayEmployeeId(for:)`). Replaces the truncated-uid "Employee ID".
 - **DEVICE VERIFICATION**: (1) Wage tab: both segments start right under the
   segmented control (no dead space); no Console age-rate button anywhere;
   swipe an award / classification level / pay item → centered dialog; Cancel

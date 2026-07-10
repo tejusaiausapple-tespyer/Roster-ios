@@ -121,9 +121,10 @@ struct ManagerPayslipDetailSheet: View {
     }
 
     private func employeeSection(_ slip: Payslip) -> some View {
-        Section("Employee") {
+        let employeeId = repo.displayEmployeeId(for: slip)
+        return Section("Employee") {
             LabeledContent("Name", value: slip.staffName)
-            LabeledContent("Employee ID", value: String(slip.staffId.prefix(12)))
+            LabeledContent("Employee ID", value: employeeId.isEmpty ? "—" : employeeId)
             if !slip.position.isEmpty { LabeledContent("Position", value: slip.position) }
             LabeledContent("Employment type",
                            value: EmploymentType(rawValue: slip.employmentType)?.label ?? "—")
@@ -570,7 +571,13 @@ struct PayslipPDFSheet: View {
     }
 
     private func renderPDF() {
-        let data = PayslipPDFService.render(slip, settings: repo.appSettings)
+        // Older payslips have no employeeId snapshot — fill from the user doc
+        // so a newly assigned ID still shows on them.
+        var slipForRender = slip
+        if slipForRender.employeeId.isEmpty {
+            slipForRender.employeeId = repo.displayEmployeeId(for: slip)
+        }
+        let data = PayslipPDFService.render(slipForRender, settings: repo.appSettings)
         let name = "Payslip-\(slip.staffName.replacingOccurrences(of: " ", with: ""))-\(slip.periodStart).pdf"
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
         do {

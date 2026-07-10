@@ -6,6 +6,9 @@ struct AppUser: Identifiable, Equatable {
     var fullName: String
     var email: String
     var phone: String?
+    /// Manager-assigned employee ID (letters + numbers, e.g. "EMP001").
+    /// Shown on the staff profile and snapshotted onto payslips.
+    var employeeId: String?
     var role: UserRole
     var employmentType: EmploymentType?
     var mustChangePassword: Bool
@@ -52,6 +55,7 @@ struct AppUser: Identifiable, Equatable {
         self.fullName = FS.stringValue(data, "fullName")
         self.email = FS.stringValue(data, "email")
         self.phone = FS.string(data, "phone")
+        self.employeeId = FS.string(data, "employeeId")
         self.role = UserRole(rawValue: FS.stringValue(data, "role", default: "staff")) ?? .staff
         self.employmentType = FS.string(data, "employmentType").flatMap { EmploymentType(rawValue: $0) }
         self.mustChangePassword = FS.bool(data, "mustChangePassword")

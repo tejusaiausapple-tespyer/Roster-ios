@@ -59,6 +59,16 @@ final class ModelParsingTests: XCTestCase {
         XCTAssertFalse(user.mustChangePassword)
     }
 
+    func testEmployeeIdParsing() {
+        let user = AppUser(id: "u1", data: [
+            "fullName": "Ada Lovelace", "email": "ada@x.com", "employeeId": "EMP001",
+        ])!
+        XCTAssertEqual(user.employeeId, "EMP001")
+
+        let noId = AppUser(id: "u2", data: ["fullName": "Bob", "email": "bob@x.com"])!
+        XCTAssertNil(noId.employeeId, "absent employeeId parses as nil, not empty string")
+    }
+
     func testEmergencyContactFieldsAndLegacyFallback() {
         let legacy = AppUser(id: "u2", data: [
             "fullName": "Bob", "email": "bob@x.com",

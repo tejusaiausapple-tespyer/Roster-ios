@@ -275,6 +275,7 @@ struct ManagerStaffDetailSheet: View {
     @State private var status: UserStatus
     @State private var startDate: Date?
     @State private var dob: Date?
+    @State private var employeeId: String
     @State private var emergencyName: String
     @State private var emergencyPhone: String
     @State private var emergencyAddress: String
@@ -292,6 +293,7 @@ struct ManagerStaffDetailSheet: View {
     private struct Baseline: Equatable {
         let fullName: String
         let phone: String
+        let employeeId: String
         let employmentType: EmploymentType
         let status: UserStatus
         let startDateKey: String?
@@ -308,6 +310,7 @@ struct ManagerStaffDetailSheet: View {
         let emergencyNameValue = user.emergencyContactName ?? user.emergencyContact ?? ""
         _fullName = State(initialValue: user.fullName)
         _phone = State(initialValue: phoneValue)
+        _employeeId = State(initialValue: user.employeeId ?? "")
         _employmentType = State(initialValue: user.employmentType ?? .casual)
         _status = State(initialValue: user.status)
         _startDate = State(initialValue: user.startDate.flatMap { RosterFormat.parseISODate($0) })
@@ -320,6 +323,7 @@ struct ManagerStaffDetailSheet: View {
         _savedBaseline = State(initialValue: Baseline(
             fullName: user.fullName,
             phone: phoneValue,
+            employeeId: user.employeeId ?? "",
             employmentType: user.employmentType ?? .casual,
             status: user.status,
             startDateKey: user.startDate,
@@ -339,6 +343,7 @@ struct ManagerStaffDetailSheet: View {
         Baseline(
             fullName: fullName,
             phone: phone,
+            employeeId: employeeId,
             employmentType: employmentType,
             status: status,
             startDateKey: dateKey(startDate),
@@ -361,10 +366,15 @@ struct ManagerStaffDetailSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Details") {
+                Section {
                     editableTextRow(label: "Full name", text: $fullName, capitalization: .words)
                     editableTextRow(label: "Phone", text: $phone, keyboard: .phonePad)
+                    editableTextRow(label: "Employee ID", text: $employeeId, capitalization: .characters, autocorrect: false)
                     employmentRow
+                } header: {
+                    Text("Details")
+                } footer: {
+                    Text("Employee ID (letters and numbers, e.g. EMP001) appears on the staff member's profile and payslips.")
                 }
 
                 emailSection
@@ -454,7 +464,8 @@ struct ManagerStaffDetailSheet: View {
         label: String,
         text: Binding<String>,
         keyboard: UIKeyboardType = .default,
-        capitalization: TextInputAutocapitalization = .sentences
+        capitalization: TextInputAutocapitalization = .sentences,
+        autocorrect: Bool = true
     ) -> some View {
         HStack {
             Text(label)
@@ -466,6 +477,7 @@ struct ManagerStaffDetailSheet: View {
                     .multilineTextAlignment(.trailing)
                     .keyboardType(keyboard)
                     .textInputAutocapitalization(capitalization)
+                    .autocorrectionDisabled(!autocorrect)
                     .foregroundStyle(Theme.textPrimary)
             } else {
                 Text(displayValue(text.wrappedValue))
@@ -653,10 +665,17 @@ struct ManagerStaffDetailSheet: View {
             return
         }
 
+        // Letters and numbers only (e.g. EMP001), stored uppercased.
+        let cleanedEmployeeId = employeeId.uppercased().filter { $0.isLetter || $0.isNumber }
+        if cleanedEmployeeId != employeeId.trimmingCharacters(in: .whitespaces).uppercased() {
+            employeeId = cleanedEmployeeId
+        }
+
         var fields: [String: Any] = [:]
         if trimmedName != savedBaseline.fullName { fields["fullName"] = trimmedName }
         let trimmedPhone = phone.trimmingCharacters(in: .whitespaces)
         if trimmedPhone != savedBaseline.phone { fields["phone"] = trimmedPhone }
+        if cleanedEmployeeId != savedBaseline.employeeId { fields["employeeId"] = cleanedEmployeeId }
         if employmentType != savedBaseline.employmentType { fields["employmentType"] = employmentType.rawValue }
         if status != savedBaseline.status, user.status != .locked { fields["status"] = status.rawValue }
 
@@ -688,6 +707,7 @@ struct ManagerStaffDetailSheet: View {
                 try await repo.updateStaffFields(staffId: user.id, fields)
                 fullName = trimmedName
                 phone = trimmedPhone
+                employeeId = cleanedEmployeeId
                 emergencyName = trimmedEmergencyName
                 emergencyPhone = trimmedEmergencyPhone
                 emergencyAddress = trimmedEmergencyAddress

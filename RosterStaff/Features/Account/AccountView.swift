@@ -235,9 +235,24 @@ struct AccountView: View {
                     .buttonStyle(.plain)
                 }
                 
+                if let employeeId = user?.employeeId, !employeeId.isEmpty {
+                    Divider().overlay(Theme.separator)
+
+                    // Employee ID (manager-assigned)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Employee ID")
+                            .font(.footnote.weight(.bold))
+                            .foregroundStyle(Theme.textTertiary)
+                            .textCase(.uppercase)
+                        Text(employeeId)
+                            .font(.body)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                }
+
                 if let member = user?.memberSince {
                     Divider().overlay(Theme.separator)
-                    
+
                     // Member Since
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Member Since")

@@ -4,19 +4,26 @@ import UIKit
 /// (logo, name, address, ABN), employee block, hours/earnings table, tax,
 /// super and net summary, employer-super footnote.
 ///
+/// Design: monochrome ink on white — no colour fills or tinted text (owner
+/// request 2026-07-10). Hierarchy comes from weight, size, letter-spaced
+/// section labels, hairlines and whitespace only; the company logo is the
+/// single colour element on the page.
+///
 /// The SAME renderer produces the manager's live preview and every export, so
 /// the preview always matches the downloaded/printed document exactly.
 enum PayslipPDFService {
     // A4 at 72dpi.
     private static let pageWidth: CGFloat = 595.2
     private static let pageHeight: CGFloat = 841.8
-    private static let margin: CGFloat = 48
+    private static let margin: CGFloat = 52
 
-    private static let ink = UIColor(red: 0.09, green: 0.10, blue: 0.15, alpha: 1)
-    private static let secondary = UIColor(red: 0.42, green: 0.44, blue: 0.50, alpha: 1)
-    private static let brand = UIColor(red: 0.31, green: 0.27, blue: 0.90, alpha: 1) // indigo
-    private static let rule = UIColor(red: 0.88, green: 0.89, blue: 0.92, alpha: 1)
-    private static let rowTint = UIColor(red: 0.96, green: 0.965, blue: 0.98, alpha: 1)
+    private static let ink = UIColor(red: 0.10, green: 0.11, blue: 0.15, alpha: 1)
+    private static let secondary = UIColor(red: 0.45, green: 0.47, blue: 0.52, alpha: 1)
+    private static let rule = UIColor(red: 0.85, green: 0.86, blue: 0.88, alpha: 1)
+    private static let panel = UIColor(red: 0.975, green: 0.975, blue: 0.98, alpha: 1)
+
+    private static let rowHeight: CGFloat = 22
+    private static let sectionGap: CGFloat = 30
 
     static func render(_ slip: Payslip, settings: AppSettings) -> Data {
         let bounds = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
@@ -32,17 +39,17 @@ enum PayslipPDFService {
             ctx.beginPage()
             var y: CGFloat = margin
 
-            // ── Header: logo + company block, PAYSLIP title on the right
+            // ── Header: logo + company block left, PAYSLIP + status right
             if let logo = UIImage(named: "AppLogo") {
-                let logoRect = CGRect(x: margin, y: y, width: 44, height: 44)
-                let path = UIBezierPath(roundedRect: logoRect, cornerRadius: 10)
+                let logoRect = CGRect(x: margin, y: y, width: 40, height: 40)
+                let path = UIBezierPath(roundedRect: logoRect, cornerRadius: 9)
                 ctx.cgContext.saveGState()
                 path.addClip()
                 logo.draw(in: logoRect)
                 ctx.cgContext.restoreGState()
             }
-            draw(settings.companyName, at: CGPoint(x: margin + 56, y: y),
-                 font: .systemFont(ofSize: 17, weight: .bold), color: ink)
+            draw(settings.companyName, at: CGPoint(x: margin + 52, y: y + 1),
+                 font: .systemFont(ofSize: 16, weight: .bold), color: ink)
             var companyLineY = y + 22
             let addressLine = settings.businessAddress.isEmpty
                 ? AppSettings.composedAddress(street: settings.businessStreet,
@@ -50,27 +57,29 @@ enum PayslipPDFService {
                                               state: settings.businessState)
                 : settings.businessAddress
             if !addressLine.isEmpty {
-                draw(addressLine, at: CGPoint(x: margin + 56, y: companyLineY),
+                draw(addressLine, at: CGPoint(x: margin + 52, y: companyLineY),
                      font: .systemFont(ofSize: 9), color: secondary)
-                companyLineY += 12
+                companyLineY += 13
             }
             if !settings.abn.isEmpty {
-                draw("ABN \(RosterFormat.abn(settings.abn))", at: CGPoint(x: margin + 56, y: companyLineY),
+                draw("ABN \(RosterFormat.abn(settings.abn))", at: CGPoint(x: margin + 52, y: companyLineY),
                      font: .systemFont(ofSize: 9), color: secondary)
             }
-            draw("PAYSLIP", at: CGPoint(x: pageWidth - margin - 120, y: y), width: 120,
-                 font: .systemFont(ofSize: 20, weight: .heavy), color: brand, align: .right)
-            let statusText = slip.status.label.uppercased()
-            draw(statusText, at: CGPoint(x: pageWidth - margin - 120, y: y + 26), width: 120,
-                 font: .systemFont(ofSize: 9, weight: .bold),
-                 color: slip.status == .submitted ? brand : secondary, align: .right)
-            y += 64
-            hairline(ctx, y: y); y += 18
+            draw("PAYSLIP", at: CGPoint(x: pageWidth - margin - 160, y: y + 1), width: 160,
+                 font: .systemFont(ofSize: 19, weight: .semibold), color: ink,
+                 align: .right, kern: 2.5)
+            draw(slip.status.label.uppercased(),
+                 at: CGPoint(x: pageWidth - margin - 160, y: y + 28), width: 160,
+                 font: .systemFont(ofSize: 8, weight: .semibold), color: secondary,
+                 align: .right, kern: 1.5)
+            y += 58
+            hairline(ctx, y: y)
+            y += 22
 
-            // ── Employee + period block (two columns)
+            // ── Employee + period block (two label/value columns)
             let leftPairs: [(String, String)] = [
                 ("Employee", slip.staffName),
-                ("Employee ID", String(slip.staffId.prefix(12))),
+                ("Employee ID", slip.employeeId.isEmpty ? "—" : slip.employeeId),
                 ("Position", slip.position.isEmpty ? "—" : slip.position),
                 ("Employment type", EmploymentType(rawValue: slip.employmentType)?.label ?? "—"),
             ]
@@ -81,23 +90,18 @@ enum PayslipPDFService {
                 ("Classification", slip.classification.isEmpty ? "—" : slip.classification),
             ]
             let colWidth = (pageWidth - margin * 2) / 2
-            var rowY = y
+            var leftY = y
             for (label, value) in leftPairs {
-                drawPair(label: label, value: value, x: margin, y: rowY, width: colWidth - 12)
-                rowY += 16
+                leftY += drawPair(label: label, value: value, x: margin, y: leftY, width: colWidth - 16)
             }
-            rowY = y
+            var rightY = y
             for (label, value) in rightPairs {
-                drawPair(label: label, value: value, x: margin + colWidth, y: rowY, width: colWidth)
-                rowY += 16
+                rightY += drawPair(label: label, value: value, x: margin + colWidth + 8, y: rightY, width: colWidth - 8)
             }
-            y = rowY + 14
-            hairline(ctx, y: y); y += 18
+            y = max(leftY, rightY) + sectionGap - 12
 
             // ── Earnings table
-            draw("EARNINGS", at: CGPoint(x: margin, y: y),
-                 font: .systemFont(ofSize: 10, weight: .bold), color: brand)
-            y += 18
+            y = sectionTitle(ctx, "EARNINGS", y: y)
             y = tableHeader(ctx, y: y)
 
             var rows: [(String, String, String, String)] = []
@@ -117,56 +121,55 @@ enum PayslipPDFService {
                              RosterFormat.money(extra.amount)))
             }
             if rows.isEmpty { rows.append(("No earnings recorded", "—", "—", RosterFormat.money(0))) }
-            for (index, row) in rows.enumerated() {
-                y = tableRow(ctx, y: y, row: row, shaded: index.isMultiple(of: 2))
+            for row in rows {
+                y = tableRow(ctx, y: y, row: row)
             }
-            y = totalRow(ctx, y: y, label: "GROSS EARNINGS", amount: totals.gross)
-            y += 20
+            y = totalRow(ctx, y: y, label: "Gross earnings", amount: totals.gross)
+            y += sectionGap
 
             // ── Tax & deductions
-            draw("TAX & DEDUCTIONS", at: CGPoint(x: margin, y: y),
-                 font: .systemFont(ofSize: 10, weight: .bold), color: brand)
-            y += 18
+            y = sectionTitle(ctx, "TAX & DEDUCTIONS", y: y)
             var deductionRows: [(String, String, String, String)] = [
-                ("PAYG withholding", "—", "—", RosterFormat.money(totals.tax)),
+                ("PAYG withholding", "", "", RosterFormat.money(totals.tax)),
             ]
             if slip.salarySacrifice > 0 {
-                deductionRows.append(("Salary sacrifice", "—", "—", RosterFormat.money(slip.salarySacrifice)))
+                deductionRows.append(("Salary sacrifice", "", "", RosterFormat.money(slip.salarySacrifice)))
             }
             if slip.otherDeductions > 0 {
                 let label = slip.deductionNotes.isEmpty ? "Other deductions" : "Other — \(slip.deductionNotes)"
-                deductionRows.append((label, "—", "—", RosterFormat.money(slip.otherDeductions)))
+                deductionRows.append((label, "", "", RosterFormat.money(slip.otherDeductions)))
             }
-            for (index, row) in deductionRows.enumerated() {
-                y = tableRow(ctx, y: y, row: row, shaded: index.isMultiple(of: 2))
+            for row in deductionRows {
+                y = tableRow(ctx, y: y, row: row)
             }
-            y = totalRow(ctx, y: y, label: "TOTAL TAX & DEDUCTIONS", amount: totals.tax + totals.deductions)
-            y += 20
+            y = totalRow(ctx, y: y, label: "Total tax & deductions", amount: totals.tax + totals.deductions)
+            y += sectionGap
 
             // ── Superannuation (omitted entirely when super is off — e.g.
             //    under-18 staff not entitled to SG)
             let hasSuper = slip.superRate > 0
             if hasSuper {
-                draw("SUPERANNUATION", at: CGPoint(x: margin, y: y),
-                     font: .systemFont(ofSize: 10, weight: .bold), color: brand)
-                y += 18
+                y = sectionTitle(ctx, "SUPERANNUATION", y: y)
                 y = tableRow(ctx, y: y, row: (
                     "Employer contribution (SG \(String(format: "%g", slip.superRate))%)",
-                    "—", "—", RosterFormat.money(totals.superAmount)), shaded: true)
-                y += 20
+                    "", "", RosterFormat.money(totals.superAmount)))
+                y += sectionGap
             }
 
-            // ── Net pay banner
-            let bannerRect = CGRect(x: margin, y: y, width: pageWidth - margin * 2, height: 42)
-            let banner = UIBezierPath(roundedRect: bannerRect, cornerRadius: 8)
-            brand.setFill()
-            banner.fill()
-            draw("NET PAY", at: CGPoint(x: margin + 16, y: y + 13),
-                 font: .systemFont(ofSize: 12, weight: .bold), color: .white)
+            // ── Net pay: bordered panel, dark text — no colour fill
+            let panelRect = CGRect(x: margin, y: y, width: pageWidth - margin * 2, height: 46)
+            let panelPath = UIBezierPath(roundedRect: panelRect, cornerRadius: 8)
+            panel.setFill()
+            panelPath.fill()
+            rule.setStroke()
+            panelPath.lineWidth = 0.8
+            panelPath.stroke()
+            draw("NET PAY", at: CGPoint(x: margin + 18, y: y + 17),
+                 font: .systemFont(ofSize: 10, weight: .semibold), color: ink, kern: 1.5)
             draw(RosterFormat.money(totals.net),
-                 at: CGPoint(x: pageWidth - margin - 216, y: y + 11), width: 200,
-                 font: .systemFont(ofSize: 16, weight: .heavy), color: .white, align: .right)
-            y += 62
+                 at: CGPoint(x: pageWidth - margin - 218, y: y + 13), width: 200,
+                 font: .systemFont(ofSize: 17, weight: .bold), color: ink, align: .right)
+            y += 46 + 20
 
             // ── Notes
             if !slip.notes.isEmpty {
@@ -177,16 +180,16 @@ enum PayslipPDFService {
 
             // ── Footer (pinned)
             let footerY = pageHeight - margin - 30
-            hairline(ctx, y: footerY - 8)
+            hairline(ctx, y: footerY - 10)
             let footerText = hasSuper
                 ? "Superannuation is paid by the employer to the employee's nominated fund and is not included in net pay. This payslip is issued in accordance with the Fair Work Act 2009 record-keeping requirements."
                 : "This payslip is issued in accordance with the Fair Work Act 2009 record-keeping requirements."
             draw(footerText,
                  at: CGPoint(x: margin, y: footerY),
-                 width: pageWidth - margin * 2, font: .systemFont(ofSize: 8), color: secondary)
+                 width: pageWidth - margin * 2, font: .systemFont(ofSize: 7.5), color: secondary)
             draw("Generated by \(settings.companyName) · \(RosterFormat.dateTime(Date()))",
-                 at: CGPoint(x: margin, y: footerY + 22),
-                 width: pageWidth - margin * 2, font: .systemFont(ofSize: 8), color: secondary)
+                 at: CGPoint(x: margin, y: footerY + 21),
+                 width: pageWidth - margin * 2, font: .systemFont(ofSize: 7.5), color: secondary)
         }
     }
 
@@ -197,28 +200,51 @@ enum PayslipPDFService {
     // MARK: Drawing primitives
 
     private static func draw(_ text: String, at point: CGPoint, width: CGFloat = 320,
-                             font: UIFont, color: UIColor, align: NSTextAlignment = .left) {
+                             font: UIFont, color: UIColor, align: NSTextAlignment = .left,
+                             kern: CGFloat = 0) {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = align
         paragraph.lineBreakMode = .byWordWrapping
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: font, .foregroundColor: color, .paragraphStyle: paragraph,
+        ]
+        if kern != 0 { attributes[.kern] = kern }
         (text as NSString).draw(
             in: CGRect(x: point.x, y: point.y, width: width, height: 200),
-            withAttributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph])
+            withAttributes: attributes)
     }
 
-    private static func drawPair(label: String, value: String, x: CGFloat, y: CGFloat, width: CGFloat) {
-        draw(label, at: CGPoint(x: x, y: y), width: 110,
+    /// Draws a label/value pair and returns the row height consumed — long
+    /// values (e.g. award names) wrap, and the next row must clear them.
+    @discardableResult
+    private static func drawPair(label: String, value: String, x: CGFloat, y: CGFloat, width: CGFloat) -> CGFloat {
+        let valueFont = UIFont.systemFont(ofSize: 9.5, weight: .semibold)
+        draw(label, at: CGPoint(x: x, y: y), width: 104,
              font: .systemFont(ofSize: 9), color: secondary)
-        draw(value, at: CGPoint(x: x + 110, y: y), width: width - 110,
-             font: .systemFont(ofSize: 9, weight: .semibold), color: ink)
+        draw(value, at: CGPoint(x: x + 104, y: y), width: width - 104,
+             font: valueFont, color: ink)
+        let used = (value as NSString).boundingRect(
+            with: CGSize(width: width - 104, height: 200),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: valueFont], context: nil).height
+        return max(19, ceil(used) + 7)
     }
 
-    private static func hairline(_ ctx: UIGraphicsPDFRendererContext, y: CGFloat) {
-        ctx.cgContext.setStrokeColor(rule.cgColor)
+    private static func hairline(_ ctx: UIGraphicsPDFRendererContext, y: CGFloat,
+                                 color: UIColor = rule) {
+        ctx.cgContext.setStrokeColor(color.cgColor)
         ctx.cgContext.setLineWidth(0.7)
         ctx.cgContext.move(to: CGPoint(x: margin, y: y))
         ctx.cgContext.addLine(to: CGPoint(x: pageWidth - margin, y: y))
         ctx.cgContext.strokePath()
+    }
+
+    /// Letter-spaced section label with a hairline underneath.
+    private static func sectionTitle(_ ctx: UIGraphicsPDFRendererContext,
+                                     _ title: String, y: CGFloat) -> CGFloat {
+        draw(title, at: CGPoint(x: margin, y: y),
+             font: .systemFont(ofSize: 9, weight: .semibold), color: ink, kern: 1.8)
+        return y + 20
     }
 
     private static let columns: [(String, CGFloat)] = [
@@ -230,43 +256,40 @@ enum PayslipPDFService {
         for (title, offset) in columns {
             let isFirst = offset == 0
             draw(title, at: CGPoint(x: margin + width * offset, y: y),
-                 width: width * 0.16, font: .systemFont(ofSize: 8, weight: .bold),
+                 width: width * 0.16, font: .systemFont(ofSize: 8, weight: .medium),
                  color: secondary, align: isFirst ? .left : .right)
         }
-        let bottom = y + 14
+        let bottom = y + 15
         hairline(ctx, y: bottom)
-        return bottom + 4
+        return bottom + 7
     }
 
     private static func tableRow(_ ctx: UIGraphicsPDFRendererContext, y: CGFloat,
-                                 row: (String, String, String, String), shaded: Bool) -> CGFloat {
+                                 row: (String, String, String, String)) -> CGFloat {
         let width = pageWidth - margin * 2
-        if shaded {
-            rowTint.setFill()
-            UIBezierPath(rect: CGRect(x: margin, y: y - 3, width: width, height: 18)).fill()
-        }
         let values = [row.0, row.1, row.2, row.3]
         for (index, (_, offset)) in columns.enumerated() {
             let isFirst = index == 0
+            guard !values[index].isEmpty else { continue }
             draw(values[index],
                  at: CGPoint(x: margin + width * offset, y: y),
                  width: isFirst ? width * 0.5 : width * 0.16,
-                 font: .systemFont(ofSize: 9, weight: isFirst ? .regular : .medium),
+                 font: .systemFont(ofSize: 9.5, weight: isFirst ? .regular : .medium),
                  color: ink, align: isFirst ? .left : .right)
         }
-        return y + 18
+        return y + rowHeight
     }
 
     private static func totalRow(_ ctx: UIGraphicsPDFRendererContext, y: CGFloat,
                                  label: String, amount: Double) -> CGFloat {
-        hairline(ctx, y: y)
+        hairline(ctx, y: y - 2)
         let width = pageWidth - margin * 2
-        let rowY = y + 6
+        let rowY = y + 7
         draw(label, at: CGPoint(x: margin, y: rowY),
-             font: .systemFont(ofSize: 9, weight: .bold), color: ink)
+             font: .systemFont(ofSize: 9.5, weight: .semibold), color: ink)
         draw(RosterFormat.money(amount),
              at: CGPoint(x: margin + width * 0.84, y: rowY), width: width * 0.16,
-             font: .systemFont(ofSize: 10, weight: .bold), color: ink, align: .right)
-        return rowY + 18
+             font: .systemFont(ofSize: 10.5, weight: .bold), color: ink, align: .right)
+        return rowY + 20
     }
 }

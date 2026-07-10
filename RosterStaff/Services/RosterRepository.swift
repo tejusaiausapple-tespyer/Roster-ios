@@ -1331,6 +1331,7 @@ final class RosterRepository {
             id: docId,
             staffId: user.id,
             staffName: user.fullName,
+            employeeId: user.employeeId ?? "",
             position: position,
             employmentType: profile?.employmentType ?? user.employmentType?.rawValue ?? "",
             awardName: award?.name ?? "",
@@ -1431,6 +1432,20 @@ final class RosterRepository {
         try await db.collection("payslips").document(slip.id).setData(fresh.asDictionary)
     }
 
+    /// Display employee ID for a payslip: the generation snapshot, else the
+    /// staff member's current manager-assigned ID (covers payslips generated
+    /// before an ID existed). Empty when none is assigned.
+    func displayEmployeeId(for slip: Payslip) -> String {
+        if !slip.employeeId.isEmpty { return slip.employeeId }
+        if let fromDirectory = user(id: slip.staffId)?.employeeId, !fromDirectory.isEmpty {
+            return fromDirectory
+        }
+        if currentUser?.id == slip.staffId, let own = currentUser?.employeeId, !own.isEmpty {
+            return own
+        }
+        return ""
+    }
+
     /// Issue a corrected copy of a submitted payslip: the original is archived
     /// and an editable draft (id suffix `_c2`, `_c3`, …) takes its place.
     func createCorrectedPayslip(from slip: Payslip) async throws {
@@ -1440,6 +1455,7 @@ final class RosterRepository {
         let newId = "\(base)_c\(existingCorrections + 2)"
 
         let corrected = Payslip(id: newId, staffId: slip.staffId, staffName: slip.staffName,
+                            employeeId: slip.employeeId,
                             position: slip.position, employmentType: slip.employmentType,
                             awardName: slip.awardName, awardCode: slip.awardCode,
                             classification: slip.classification,

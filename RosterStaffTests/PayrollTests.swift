@@ -126,11 +126,13 @@ final class PayrollTests: XCTestCase {
                                 payg: 88, superRate: 11.5)
         original.status = .approved
         original.notes = "Week note"
+        original.employeeId = "EMP007"
         original.audit = [PayslipAuditEntry(action: "generated", userId: "m1", userName: "Manager")]
 
         let parsed = Payslip(id: original.id, data: original.asDictionary)
         XCTAssertNotNil(parsed)
         XCTAssertEqual(parsed?.status, .approved)
+        XCTAssertEqual(parsed?.employeeId, "EMP007")
         XCTAssertEqual(parsed?.ordinaryHours, 12.5)
         XCTAssertEqual(parsed?.baseHourlyRate, 28.40)
         XCTAssertEqual(parsed?.weekendRate, 42.60)
