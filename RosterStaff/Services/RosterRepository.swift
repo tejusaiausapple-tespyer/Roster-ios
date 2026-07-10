@@ -1266,7 +1266,16 @@ final class RosterRepository {
                                    generatedBy manager: AppUser) -> Payslip {
         let award = profile?.awardId.flatMap { id in wageAwards.first { $0.id == id } }
         let classification = award?.classifications.first { $0.level == profile?.classificationLevel }
-        let baseRate = profile?.resolvedHourlyRate(award: award) ?? user.hourlyRate ?? 0
+        // Rate precedence: override → award classification → assigned
+        // ordinary-hours earnings line with its own $ rate → users.hourlyRate.
+        let resolvedRate = profile?.resolvedHourlyRate(award: award, earningsLines: earningsLines)
+        let baseRate = resolvedRate ?? user.hourlyRate ?? 0
+        // Trace the resolution — a $0 payslip must be diagnosable from logs.
+        if let profile {
+            Self.log.info("payroll: \(user.fullName, privacy: .public) rate=\(baseRate) via \(resolvedRate != nil ? "wage profile" : (user.hourlyRate != nil ? "users.hourlyRate" : "NONE"), privacy: .public) (award=\(award?.name ?? "none", privacy: .public), classification=\(profile.classificationLevel ?? "none", privacy: .public), override=\(profile.hourlyRateOverride ?? 0), lines=\(profile.earningsLineIds.count))")
+        } else {
+            Self.log.warning("payroll: \(user.fullName, privacy: .public) has NO wage profile — rate=\(baseRate) from users.hourlyRate fallback")
+        }
         let buckets = PayrollCalculator.hoursBuckets(workedHoursByDate: workedHoursByDate)
         // Position = the role most frequently worked in the period (shift
         // "department" carries the role label, e.g. "Console Operator").
@@ -1318,7 +1327,9 @@ final class RosterRepository {
             generatedAt: Date(),
             audit: [PayslipAuditEntry(action: "generated", userId: manager.id,
                                       userName: manager.fullName,
-                                      detail: "Auto-generated from approved timesheets")]
+                                      detail: baseRate > 0
+                                        ? "Auto-generated from approved timesheets"
+                                        : "Auto-generated — no wage rate resolved: assign an award classification, a rate override, or an ordinary-hours line with a $ rate, then Regenerate")]
         )
     }
 

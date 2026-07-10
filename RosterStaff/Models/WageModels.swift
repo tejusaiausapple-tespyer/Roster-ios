@@ -287,14 +287,30 @@ struct StaffWageProfile: Identifiable, Equatable {
         return dict
     }
 
-    /// The ordinary hourly rate this profile resolves to under `award`
-    /// (override wins; else the classification's base rate; else nil).
-    func resolvedHourlyRate(award: WageAward?) -> Double? {
+    /// The ordinary hourly rate this profile resolves to. Precedence:
+    /// 1. explicit rate override,
+    /// 2. the award classification's base hourly rate,
+    /// 3. an ASSIGNED ordinary-hours earnings line that carries its own
+    ///    dollar rate (fixed amount or rate-per-unit — a manager who defines
+    ///    "Ordinary Hours $30.00" expects that to BE the wage; a
+    ///    multiple-of-ordinary line can't bootstrap a rate from nothing).
+    /// Returns nil when no source yields a positive rate — callers must
+    /// surface that, never silently pay $0.
+    func resolvedHourlyRate(award: WageAward?, earningsLines: [EarningsLine] = []) -> Double? {
         if let override = hourlyRateOverride, override > 0 { return override }
-        guard let award,
-              let level = classificationLevel,
-              let classification = award.classifications.first(where: { $0.level == level })
-        else { return nil }
-        return classification.baseHourlyRate > 0 ? classification.baseHourlyRate : nil
+        if let award,
+           let level = classificationLevel,
+           let classification = award.classifications.first(where: { $0.level == level }),
+           classification.baseHourlyRate > 0 {
+            return classification.baseHourlyRate
+        }
+        if let line = earningsLines.first(where: {
+            earningsLineIds.contains($0.id) && $0.active
+                && $0.category == .ordinaryHours
+                && $0.rateType != .multipleOfOrdinary && $0.fixedRate > 0
+        }) {
+            return line.fixedRate
+        }
+        return nil
     }
 }

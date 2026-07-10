@@ -295,6 +295,11 @@ private struct PayslipRow: View {
                 HStack(spacing: 8) {
                     Text("Gross \(RosterFormat.money(slip.totals.gross))")
                     Text("Net \(RosterFormat.money(slip.totals.net))")
+                    if slip.baseHourlyRate <= 0, slip.status.isEditable {
+                        Label("No rate", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Theme.warning)
+                    }
                 }
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(Theme.textTertiary)

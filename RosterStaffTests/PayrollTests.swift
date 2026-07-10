@@ -184,6 +184,47 @@ final class PayrollTests: XCTestCase {
         XCTAssertNil(noMatch.resolvedHourlyRate(award: award))
     }
 
+    func testResolvedHourlyRateFromOrdinaryEarningsLine() {
+        // Root cause of the 2026-07-10 "$0.00 payslip" bug: a profile with
+        // ONLY an earnings line assigned (no award classification, no
+        // override) must still resolve a rate from an ordinary-hours line
+        // that carries its own dollar amount.
+        let lines = [
+            EarningsLine(id: "l1", name: "Ordinary Hours", category: .ordinaryHours,
+                         rateType: .fixedAmount, fixedRate: 30.50),
+            EarningsLine(id: "l2", name: "Overtime 1.5x", category: .overtime,
+                         rateType: .multipleOfOrdinary, multiplier: 1.5),
+        ]
+        let profile = StaffWageProfile(staffId: "s", earningsLineIds: ["l1", "l2"])
+        XCTAssertEqual(profile.resolvedHourlyRate(award: nil, earningsLines: lines), 30.50)
+    }
+
+    func testResolvedHourlyRateIgnoresUnassignedAndUnusableLines() {
+        let lines = [
+            // Not assigned to this profile.
+            EarningsLine(id: "other", name: "Ordinary", category: .ordinaryHours,
+                         rateType: .fixedAmount, fixedRate: 99),
+            // Assigned but multiple-of-ordinary — can't bootstrap a rate.
+            EarningsLine(id: "l1", name: "Ordinary 1x", category: .ordinaryHours,
+                         rateType: .multipleOfOrdinary, multiplier: 1),
+            // Assigned but inactive.
+            EarningsLine(id: "l2", name: "Old rate", category: .ordinaryHours,
+                         rateType: .fixedAmount, fixedRate: 25, active: false),
+        ]
+        let profile = StaffWageProfile(staffId: "s", earningsLineIds: ["l1", "l2"])
+        XCTAssertNil(profile.resolvedHourlyRate(award: nil, earningsLines: lines))
+    }
+
+    func testClassificationBeatsEarningsLineRate() {
+        let award = WageAward(id: "a1", name: "Retail",
+                              classifications: [AwardClassification(level: "2", title: "L2", baseHourlyRate: 26.18)])
+        let lines = [EarningsLine(id: "l1", name: "Ordinary", category: .ordinaryHours,
+                                  rateType: .fixedAmount, fixedRate: 30)]
+        let profile = StaffWageProfile(staffId: "s", awardId: "a1",
+                                       classificationLevel: "2", earningsLineIds: ["l1"])
+        XCTAssertEqual(profile.resolvedHourlyRate(award: award, earningsLines: lines), 26.18)
+    }
+
     // MARK: - Legacy profile parsing (pre-payroll docs)
 
     func testLegacyWageProfileDefaultsToActive() {

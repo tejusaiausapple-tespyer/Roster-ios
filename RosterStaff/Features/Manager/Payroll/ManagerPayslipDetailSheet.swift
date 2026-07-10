@@ -100,6 +100,16 @@ struct ManagerPayslipDetailSheet: View {
                     .font(.caption.weight(.medium))
                     .foregroundStyle(Theme.textSecondary)
             }
+            if slip.baseHourlyRate <= 0, slip.status.isEditable {
+                Label {
+                    Text("No hourly rate resolved from the wage assignment. Set an award classification, a rate override, or an ordinary-hours line with a dollar rate in Staff → Wage Assignment, then tap “Regenerate from timesheets” — or type the base rate below.")
+                        .font(.caption)
+                        .foregroundStyle(Theme.warning)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Theme.warning)
+                }
+            }
             if !slip.status.isEditable && slip.status != .archived {
                 Text(slip.status == .submitted
                      ? "Submitted payslips are locked and visible to \(slip.staffName). Issue a corrected copy to make changes."
