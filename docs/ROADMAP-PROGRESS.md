@@ -363,7 +363,9 @@ Then: `git checkout main && git merge --no-ff milestone-4-data-integrity && git 
   (`payslips.employeeId`) with live fallback for older slips
   (`repo.displayEmployeeId(for:)`). Replaces the truncated-uid "Employee ID".
 - Round 4 (2026-07-10): Staff Account → Payslips month filter with cache-first
-  loading. Month pill ("July 2026") + chevrons + wheel month/year picker; the
+  loading. Redesigned to use an inline glassmorphic capsule pill aligned top-left
+  with a spring-animated scale + opacity dropdown containing a year scroll wheel
+  and a month grid selector (no chevrons, sheet, or layout jumps). Tap outside to close. The
   staff full-history payslips **listener is removed** — the screen fetches one
   month at a time via `staffPayslips(monthKey:)`: session memory → Firestore
   persistent disk cache (`source: .cache`, zero reads, offline-capable) →
@@ -382,6 +384,11 @@ Then: `git checkout main && git merge --no-ff milestone-4-data-integrity && git 
   (3) Staff: search field always visible; pull-to-refresh spins without
   dragging the search field; grid fades under top/bottom edges; iPhone +
   iPad. (4) Title pill still collapses on scroll in Wage/Payroll/Staff.
+  (5) Staff Payslips Month Picker: tap Account → Payslips. Verify a single
+  left-aligned glass pill ("July 2026") under the back button. Tap it; confirm the
+  floating year wheel + month grid picker scales out smoothly below without layout
+  jumps. Selecting a month closes it, updates query, and loads payslips. Tapping
+  outside closes the picker. Check dark/light mode and safe areas.
 
 ## Owner (Sura) actions pending — Firebase console
 

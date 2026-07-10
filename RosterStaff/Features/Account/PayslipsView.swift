@@ -12,12 +12,10 @@ struct PayslipsView: View {
 
     private enum ActiveSheet: Identifiable {
         case pdf(Payslip)
-        case monthPicker
 
         var id: String {
             switch self {
             case .pdf(let slip): return "pdf-\(slip.id)"
-            case .monthPicker: return "month-picker"
             }
         }
     }
@@ -27,52 +25,70 @@ struct PayslipsView: View {
     @State private var isLoading = true
     @State private var loadFailed = false
     @State private var activeSheet: ActiveSheet?
+    @State private var isExpanded = false
 
     private var monthLabel: String {
         RosterCalendar.monthStartDate(monthKey).map { RosterFormat.monthYear($0) } ?? monthKey
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            monthBar
-            List {
-                if loadFailed {
-                    Banner(kind: .error,
-                           title: "Couldn't load payslips",
-                           message: "Check your connection and try again.",
-                           actionTitle: "Retry",
-                           action: { Task { await load() } })
+        ZStack(alignment: .topLeading) {
+            Theme.background.ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                monthBar
+                    .zIndex(1)
+
+                List {
+                    if loadFailed {
+                        Banner(kind: .error,
+                               title: "Couldn't load payslips",
+                               message: "Check your connection and try again.",
+                               actionTitle: "Retry",
+                               action: { Task { await load() } })
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets())
+                            .listRowSeparator(.hidden)
+                    } else if isLoading {
+                        Section {
+                            ForEach(0..<2, id: \.self) { _ in SkeletonRow() }
+                        }
+                    } else if slips.isEmpty {
+                        EmptyStateView(
+                            icon: "banknote",
+                            title: "No payslips for \(monthLabel)",
+                            message: "Payslips appear here once your manager finalises and submits them. Pick another month above."
+                        )
                         .listRowBackground(Color.clear)
-                        .listRowInsets(EdgeInsets())
-                        .listRowSeparator(.hidden)
-                } else if isLoading {
-                    Section {
-                        ForEach(0..<2, id: \.self) { _ in SkeletonRow() }
-                    }
-                } else if slips.isEmpty {
-                    EmptyStateView(
-                        icon: "banknote",
-                        title: "No payslips for \(monthLabel)",
-                        message: "Payslips appear here once your manager finalises and submits them. Pick another month above."
-                    )
-                    .listRowBackground(Color.clear)
-                } else {
-                    Section {
-                        ForEach(slips) { slip in
-                            Button {
-                                activeSheet = .pdf(slip)
-                            } label: {
-                                row(slip)
+                    } else {
+                        Section {
+                            ForEach(slips) { slip in
+                                Button {
+                                    activeSheet = .pdf(slip)
+                                } label: {
+                                    row(slip)
+                                }
                             }
                         }
                     }
                 }
+                .listStyle(.insetGrouped)
+                .scrollContentBackground(.hidden)
+                .refreshable { await load(forceRefresh: true) }
+                .zIndex(0)
             }
-            .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
-            .refreshable { await load(forceRefresh: true) }
+
+            if isExpanded {
+                Color.black.opacity(0.001)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            isExpanded = false
+                        }
+                    }
+                    .zIndex(0.5)
+            }
         }
-        .background(Theme.background.ignoresSafeArea())
         .navigationTitle("Payslips")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: monthKey) { await load() }
@@ -80,10 +96,6 @@ struct PayslipsView: View {
             switch sheet {
             case .pdf(let slip):
                 PayslipPDFSheet(slip: slip, isManager: false)
-            case .monthPicker:
-                MonthYearPickerSheet(monthKey: monthKey) { picked in
-                    monthKey = picked
-                }
             }
         }
     }
@@ -91,53 +103,52 @@ struct PayslipsView: View {
     // MARK: - Month bar
 
     private var monthBar: some View {
-        HStack(spacing: 12) {
-            stepButton(icon: "chevron.left", label: "Previous month", offset: -1)
-            Button {
-                activeSheet = .monthPicker
-            } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "calendar")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Theme.brand)
-                    Text(monthLabel)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                    Image(systemName: "chevron.down")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(Theme.textTertiary)
-                }
-                .padding(.horizontal, 16)
-                .frame(height: 36)
-                .background(Capsule(style: .continuous).fill(Theme.card))
-                .overlay(Capsule(style: .continuous).strokeBorder(Theme.separator, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Change month, currently \(monthLabel)")
-            stepButton(icon: "chevron.right", label: "Next month", offset: 1)
+        HStack {
+            monthPill
+            Spacer()
         }
-        .frame(maxWidth: .infinity)
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+        .overlay(alignment: .topLeading) {
+            if isExpanded {
+                FloatingMonthYearPicker(selectedMonthKey: $monthKey, isExpanded: $isExpanded)
+                    .offset(x: 16, y: 48)
+                    .transition(.asymmetric(
+                        insertion: .scale(scale: 0.8, anchor: .topLeading).combined(with: .opacity),
+                        removal: .opacity
+                    ))
+                    .zIndex(2)
+            }
+        }
     }
 
-    private func stepButton(icon: String, label: String, offset: Int) -> some View {
+    private var monthPill: some View {
         Button {
-            if let shifted = RosterCalendar.monthKey(byAdding: offset, to: monthKey) {
-                monthKey = shifted
-                Haptics.selection()
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                isExpanded.toggle()
             }
+            Haptics.selection()
         } label: {
-            Image(systemName: icon)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Theme.brand)
-                .frame(width: 36, height: 36)
-                .background(Circle().fill(Theme.card))
-                .overlay(Circle().strokeBorder(Theme.separator, lineWidth: 1))
-                .contentShape(Circle())
+            HStack(spacing: 7) {
+                Image(systemName: "calendar")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Theme.brand)
+                Text(monthLabel)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(Theme.textTertiary)
+                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 36)
+            .glassCapsule(interactive: true)
+            .shadow(color: Color.black.opacity(0.05), radius: 3, x: 0, y: 2)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(label)
+        .accessibilityLabel("Change month, currently \(monthLabel)")
+        .accessibilityHint(isExpanded ? "Collapses the month picker" : "Expands the month picker")
     }
 
     // MARK: - Data
@@ -195,65 +206,98 @@ struct PayslipsView: View {
     }
 }
 
-// MARK: - Month/year picker
+// MARK: - Floating Month/Year picker
 
-/// Lightweight two-wheel month & year picker presented from the month pill.
-private struct MonthYearPickerSheet: View {
-    @Environment(\.dismiss) private var dismiss
+private struct FloatingMonthYearPicker: View {
+    @Binding var selectedMonthKey: String
+    @Binding var isExpanded: Bool
 
-    let onSelect: (String) -> Void
-
-    @State private var month: Int
-    @State private var year: Int
+    @State private var tempYear: Int
+    @State private var tempMonth: Int
     private let years: [Int]
 
-    init(monthKey: String, onSelect: @escaping (String) -> Void) {
-        self.onSelect = onSelect
-        let now = RosterCalendar.monthKeyComponents(RosterCalendar.monthKey())
-            ?? (2026, 1)
-        let selected = RosterCalendar.monthKeyComponents(monthKey) ?? now
-        _month = State(initialValue: selected.month)
-        _year = State(initialValue: selected.year)
-        // Recent years only — payslips can't exist before the business did.
+    init(selectedMonthKey: Binding<String>, isExpanded: Binding<Bool>) {
+        self._selectedMonthKey = selectedMonthKey
+        self._isExpanded = isExpanded
+
+        let now = RosterCalendar.monthKeyComponents(RosterCalendar.monthKey()) ?? (2026, 1)
+        let selected = RosterCalendar.monthKeyComponents(selectedMonthKey.wrappedValue) ?? now
+        _tempYear = State(initialValue: selected.year)
+        _tempMonth = State(initialValue: selected.month)
+
         let earliest = min(selected.year, now.year - 5)
         self.years = Array(earliest...now.year).reversed()
     }
 
     var body: some View {
-        NavigationStack {
-            HStack(spacing: 0) {
-                Picker("Month", selection: $month) {
-                    ForEach(1...12, id: \.self) { m in
-                        Text(RosterCalendar.calendar.monthSymbols[m - 1]).tag(m)
-                    }
-                }
-                .pickerStyle(.wheel)
-                Picker("Year", selection: $year) {
-                    ForEach(years, id: \.self) { y in
-                        Text(String(y)).tag(y)
-                    }
-                }
-                .pickerStyle(.wheel)
+        VStack(spacing: 12) {
+            HStack {
+                Text("Select Period")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+                Text(RosterCalendar.calendar.monthSymbols[tempMonth - 1] + " \(tempYear)")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Theme.brand)
             }
-            .padding(.horizontal, 16)
-            .background(Theme.background.ignoresSafeArea())
-            .navigationTitle("Choose month")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Show") {
-                        onSelect(RosterCalendar.monthKey(year: year, month: month))
-                        dismiss()
+            .padding(.horizontal, 4)
+
+            HStack(spacing: 12) {
+                // Year wheel picker (scrolls vertically)
+                Picker("Year", selection: $tempYear) {
+                    ForEach(years, id: \.self) { y in
+                        Text(String(y))
+                            .font(.subheadline)
+                            .tag(y)
                     }
-                    .fontWeight(.semibold)
                 }
+                .pickerStyle(.wheel)
+                .frame(width: 80, height: 140)
+                .clipped()
+
+                Divider()
+                    .frame(height: 120)
+
+                // Month selection grid
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                    ForEach(1...12, id: \.self) { m in
+                        let monthName = RosterCalendar.calendar.shortMonthSymbols[m - 1]
+                        let isSelected = (m == tempMonth)
+
+                        Button {
+                            tempMonth = m
+                            selectedMonthKey = RosterCalendar.monthKey(year: tempYear, month: tempMonth)
+                            Haptics.selection()
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                isExpanded = false
+                            }
+                        } label: {
+                            Text(monthName)
+                                .font(.caption.weight(isSelected ? .bold : .regular))
+                                .foregroundColor(isSelected ? .white : Theme.textPrimary)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 32)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(isSelected ? Theme.brand : Theme.card.opacity(0.5))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(isSelected ? Color.clear : Theme.separator, lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(RosterCalendar.calendar.monthSymbols[m - 1])
+                        .accessibilityHint(isSelected ? "Currently selected" : "Selects \(RosterCalendar.calendar.monthSymbols[m - 1])")
+                    }
+                }
+                .frame(maxWidth: .infinity)
             }
         }
-        .presentationDetents([.height(300)])
-        .presentationDragIndicator(.visible)
+        .padding(12)
+        .frame(width: 290)
+        .glassSurface(in: RoundedRectangle(cornerRadius: 16, style: .continuous), interactive: true)
+        .shadow(color: Color.black.opacity(0.12), radius: 12, x: 0, y: 6)
     }
 }
 
