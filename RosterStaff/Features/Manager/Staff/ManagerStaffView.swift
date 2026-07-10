@@ -617,6 +617,8 @@ struct StaffWageAssignmentSheet: View {
     @State private var rateOverrideText: String = ""
     @State private var effectiveDate: Date = RosterCalendar.startOfDay(Date())
     @State private var hasEffectiveDate = false
+    @State private var superEnabled = true
+    @State private var superRateText = ""
     @State private var active = true
     @State private var isSaving = false
     @State private var toast: ToastMessage?
@@ -675,6 +677,25 @@ struct StaffWageAssignmentSheet: View {
                     Text("Payroll settings")
                 } footer: {
                     Text("A rate override replaces the award classification rate. Inactive assignments are skipped by automatic draft payslip generation. Changes only affect future payroll — already generated payslips keep their snapshot.")
+                }
+
+                Section {
+                    Toggle("Superannuation", isOn: $superEnabled.animation())
+                        .tint(Theme.brand)
+                    if superEnabled {
+                        LabeledContent("Super guarantee (%)") {
+                            TextField(String(format: "%g", user.superRate ?? 12), text: $superRateText)
+                                .multilineTextAlignment(.trailing)
+                                .keyboardType(.decimalPad)
+                                .frame(width: 80)
+                        }
+                    }
+                } header: {
+                    Text("Superannuation")
+                } footer: {
+                    Text(superEnabled
+                         ? "Leave the percentage empty to use the default (\(String(format: "%g", user.superRate ?? 12))%). New payslips use this rate."
+                         : "Super is OFF — e.g. staff under 18 working 30 hours or less per week are not entitled to super guarantee. New payslips will show no superannuation.")
                 }
 
                 Section {
@@ -742,6 +763,10 @@ struct StaffWageAssignmentSheet: View {
                 hasEffectiveDate = true
                 effectiveDate = date
             }
+            superEnabled = profile.superEnabled
+            if let rate = profile.superRate, rate > 0 {
+                superRateText = String(format: "%g", rate)
+            }
             active = profile.active
         } else if let userType = user.employmentType {
             employmentType = userType.rawValue
@@ -760,6 +785,8 @@ struct StaffWageAssignmentSheet: View {
             employmentType: employmentType.isEmpty ? nil : employmentType,
             ageGroup: ageGroup.trimmingCharacters(in: .whitespaces).isEmpty ? nil : ageGroup.trimmingCharacters(in: .whitespaces),
             effectiveDate: hasEffectiveDate ? RosterCalendar.dayFormatter.string(from: effectiveDate) : nil,
+            superEnabled: superEnabled,
+            superRate: (Double(superRateText) ?? 0) > 0 ? Double(superRateText) : nil,
             active: active
         )
         Task {

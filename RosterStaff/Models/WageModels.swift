@@ -234,6 +234,13 @@ struct StaffWageProfile: Identifiable, Equatable {
     /// Date this assignment takes effect (yyyy-MM-dd). Informational — payroll
     /// generation always uses the profile as it stands at generation time.
     var effectiveDate: String?
+    /// Superannuation on/off — e.g. under-18 staff working ≤30h/week are not
+    /// SG-eligible. OFF ⇒ payslips generate with 0% super and hide the super
+    /// block on the PDF.
+    var superEnabled: Bool
+    /// Optional SG percentage override (e.g. 12.0). nil ⇒ user doc / statutory
+    /// default. Ignored when `superEnabled` is false.
+    var superRate: Double?
     /// Inactive profiles are skipped by automatic draft payslip generation.
     var active: Bool
 
@@ -244,7 +251,8 @@ struct StaffWageProfile: Identifiable, Equatable {
     init(staffId: String, awardId: String? = nil, classificationLevel: String? = nil,
          earningsLineIds: [String] = [], hourlyRateOverride: Double? = nil,
          employmentType: String? = nil, ageGroup: String? = nil,
-         effectiveDate: String? = nil, active: Bool = true) {
+         effectiveDate: String? = nil, superEnabled: Bool = true,
+         superRate: Double? = nil, active: Bool = true) {
         self.id = Self.docId(for: staffId)
         self.staffId = staffId
         self.awardId = awardId
@@ -254,6 +262,8 @@ struct StaffWageProfile: Identifiable, Equatable {
         self.employmentType = employmentType
         self.ageGroup = ageGroup
         self.effectiveDate = effectiveDate
+        self.superEnabled = superEnabled
+        self.superRate = superRate
         self.active = active
     }
 
@@ -268,6 +278,8 @@ struct StaffWageProfile: Identifiable, Equatable {
         self.employmentType = FS.string(data, "employmentType")
         self.ageGroup = FS.string(data, "ageGroup")
         self.effectiveDate = FS.string(data, "effectiveDate")
+        self.superEnabled = FS.bool(data, "superEnabled", default: true)
+        self.superRate = (data["superRate"] as? NSNumber)?.doubleValue
         self.active = FS.bool(data, "active", default: true)
     }
 
@@ -276,6 +288,7 @@ struct StaffWageProfile: Identifiable, Equatable {
             "kind": Self.kind,
             "staffId": staffId,
             "earningsLineIds": earningsLineIds,
+            "superEnabled": superEnabled,
             "active": active,
         ]
         dict["awardId"] = awardId ?? NSNull()
@@ -284,7 +297,15 @@ struct StaffWageProfile: Identifiable, Equatable {
         dict["employmentType"] = employmentType ?? NSNull()
         dict["ageGroup"] = ageGroup ?? NSNull()
         dict["effectiveDate"] = effectiveDate ?? NSNull()
+        dict["superRate"] = superRate ?? NSNull()
         return dict
+    }
+
+    /// The SG percentage payroll generation should use (0 when super is off).
+    func resolvedSuperRate(userDefault: Double?) -> Double {
+        guard superEnabled else { return 0 }
+        if let superRate, superRate > 0 { return superRate }
+        return userDefault ?? 12.0
     }
 
     /// The ordinary hourly rate this profile resolves to. Precedence:

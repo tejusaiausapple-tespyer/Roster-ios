@@ -225,6 +225,36 @@ final class PayrollTests: XCTestCase {
         XCTAssertEqual(profile.resolvedHourlyRate(award: award, earningsLines: lines), 26.18)
     }
 
+    // MARK: - Superannuation toggle (under-18 staff)
+
+    func testResolvedSuperRateWhenDisabled() {
+        let profile = StaffWageProfile(staffId: "s", superEnabled: false, superRate: 12)
+        XCTAssertEqual(profile.resolvedSuperRate(userDefault: 11.5), 0)
+    }
+
+    func testResolvedSuperRatePrecedence() {
+        // Profile override → user default → statutory 12%.
+        XCTAssertEqual(StaffWageProfile(staffId: "s", superRate: 10.5)
+            .resolvedSuperRate(userDefault: 11.5), 10.5)
+        XCTAssertEqual(StaffWageProfile(staffId: "s")
+            .resolvedSuperRate(userDefault: 11.5), 11.5)
+        XCTAssertEqual(StaffWageProfile(staffId: "s")
+            .resolvedSuperRate(userDefault: nil), 12.0)
+    }
+
+    func testSuperToggleRoundTrip() {
+        let profile = StaffWageProfile(staffId: "s1", superEnabled: false, superRate: 10)
+        let parsed = StaffWageProfile(id: profile.id, data: profile.asDictionary)
+        XCTAssertEqual(parsed?.superEnabled, false)
+        XCTAssertEqual(parsed?.superRate, 10)
+    }
+
+    func testZeroSuperRateProducesZeroSuperAmount() {
+        let slip = makeSlip(ordinaryHours: 20, baseRate: 25, superRate: 0)
+        XCTAssertEqual(slip.totals.superAmount, 0)
+        XCTAssertEqual(slip.totals.gross, 500)
+    }
+
     // MARK: - Legacy profile parsing (pre-payroll docs)
 
     func testLegacyWageProfileDefaultsToActive() {
@@ -236,5 +266,8 @@ final class PayrollTests: XCTestCase {
         let parsed = StaffWageProfile(id: "staff_s1", data: legacy)
         XCTAssertEqual(parsed?.active, true)
         XCTAssertNil(parsed?.employmentType)
+        // Pre-toggle docs keep paying super (default ON).
+        XCTAssertEqual(parsed?.superEnabled, true)
+        XCTAssertNil(parsed?.superRate)
     }
 }

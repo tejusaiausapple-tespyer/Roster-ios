@@ -1323,7 +1323,9 @@ final class RosterRepository {
             publicHolidayRate: PayrollCalculator.round2(baseRate * 2.25),
             overtimeRate: PayrollCalculator.round2(baseRate * 1.5),
             extraEarnings: extras,
-            superRate: user.superRate ?? 12.0,
+            // Profile controls super: OFF (e.g. under-18) ⇒ 0%, payslip and
+            // PDF then omit the super block entirely.
+            superRate: profile?.resolvedSuperRate(userDefault: user.superRate) ?? (user.superRate ?? 12.0),
             generatedAt: Date(),
             audit: [PayslipAuditEntry(action: "generated", userId: manager.id,
                                       userName: manager.fullName,

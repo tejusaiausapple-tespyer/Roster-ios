@@ -272,7 +272,9 @@ struct ManagerPayslipDetailSheet: View {
         } header: {
             Text("Superannuation")
         } footer: {
-            Text("Calculated on ordinary time earnings — overtime and super-exempt rows are excluded.")
+            Text(slip.superRate > 0
+                 ? "Calculated on ordinary time earnings — overtime and super-exempt rows are excluded."
+                 : "Super is OFF for this payslip (rate 0%) — the PDF omits the superannuation block. Set a percentage to re-enable, or manage the default in Staff → Wage Assignment.")
         }
     }
 
@@ -284,7 +286,9 @@ struct ManagerPayslipDetailSheet: View {
             if totals.deductions > 0 {
                 LabeledContent("Deductions", value: "− \(RosterFormat.money(totals.deductions))")
             }
-            LabeledContent("Super (employer)", value: RosterFormat.money(totals.superAmount))
+            if totals.superAmount > 0 {
+                LabeledContent("Super (employer)", value: RosterFormat.money(totals.superAmount))
+            }
             HStack {
                 Text("NET PAY").font(.subheadline.weight(.bold))
                 Spacer()
