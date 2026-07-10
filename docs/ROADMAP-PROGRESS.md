@@ -334,6 +334,12 @@ Then: `git checkout main && git merge --no-ff milestone-4-data-integrity && git 
   managers create awards/levels manually. (c) Staff search field pinned
   (`.navigationBarDrawer(displayMode: .always)`) so pull-to-refresh no longer
   drags it down over the filter chips.
+- Device-feedback round 2 (2026-07-10): Classification dropdown in the Staff
+  wage-assignment sheet now lists levels in the exact order of the Wage →
+  Classification Levels list — both use the new shared
+  `ClassificationDisplayOrder` (numeric-aware level code, title fallback);
+  the Wage list's previous comparator was also invalid (unstable order) and
+  is fixed by the same helper. +3 ordering tests.
 - **DEVICE VERIFICATION**: (1) Wage tab: both segments start right under the
   segmented control (no dead space); no Console age-rate button anywhere;
   swipe an award / classification level / pay item → centered dialog; Cancel

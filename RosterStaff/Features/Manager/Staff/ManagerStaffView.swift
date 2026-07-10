@@ -772,25 +772,41 @@ struct StaffWageAssignmentSheet: View {
         repo.wageAwards.first { $0.id == awardId }
     }
 
-    /// Classification levels for the selected award (earnings lines first, legacy award fallback).
+    /// Classification levels for the selected award (earnings lines first, legacy
+    /// award fallback), in `ClassificationDisplayOrder` — the same order the
+    /// Wage → Classification Levels list shows them.
     private var classificationOptions: [(level: String, label: String)] {
         let lines = repo.earningsLines.filter {
             $0.isClassificationLevel && ($0.active || $0.level == classificationLevel)
                 && ($0.awardId == awardId || (awardId.isEmpty && $0.awardId == nil))
         }
         if !lines.isEmpty {
-            return lines.map { line in
-                (level: line.level, label: line.rateSummary.isEmpty
-                    ? line.classificationTitle
-                    : "\(line.classificationTitle) (\(line.rateSummary))")
+            return lines
+                .sorted {
+                    ClassificationDisplayOrder.areInOrder(
+                        levelA: $0.level, titleA: $0.classificationTitle,
+                        levelB: $1.level, titleB: $1.classificationTitle
+                    )
+                }
+                .map { line in
+                    (level: line.level, label: line.rateSummary.isEmpty
+                        ? line.classificationTitle
+                        : "\(line.classificationTitle) (\(line.rateSummary))")
+                }
+        }
+        return (selectedAward?.classifications ?? [])
+            .sorted {
+                ClassificationDisplayOrder.areInOrder(
+                    levelA: $0.level, titleA: $0.title,
+                    levelB: $1.level, titleB: $1.title
+                )
             }
-        }
-        return (selectedAward?.classifications ?? []).map { classification in
-            let rateLabel = classification.weekendHourlyRate > 0
-                ? String(format: "$%.2f M–F · $%.2f Wknd/PH", classification.baseHourlyRate, classification.weekendHourlyRate)
-                : String(format: "$%.2f/h", classification.baseHourlyRate)
-            return (level: classification.level, label: "\(classification.title) (\(rateLabel))")
-        }
+            .map { classification in
+                let rateLabel = classification.weekendHourlyRate > 0
+                    ? String(format: "$%.2f M–F · $%.2f Wknd/PH", classification.baseHourlyRate, classification.weekendHourlyRate)
+                    : String(format: "$%.2f/h", classification.baseHourlyRate)
+                return (level: classification.level, label: "\(classification.title) (\(rateLabel))")
+            }
     }
 
     /// Overtime, allowances, and other non-classification pay items.

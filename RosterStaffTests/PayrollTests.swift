@@ -236,6 +236,28 @@ final class PayrollTests: XCTestCase {
         XCTAssertEqual(profile.resolvedHourlyRate(award: award, earningsLines: lines), 26.18)
     }
 
+    // MARK: - Classification display order (Wage list ⇔ assignment picker)
+
+    func testClassificationDisplayOrderIsNumericAware() {
+        // "2" before "10" (plain string compare would invert them).
+        XCTAssertTrue(ClassificationDisplayOrder.areInOrder(levelA: "2", titleA: "L2", levelB: "10", titleB: "L10"))
+        XCTAssertFalse(ClassificationDisplayOrder.areInOrder(levelA: "10", titleA: "L10", levelB: "2", titleB: "L2"))
+    }
+
+    func testClassificationDisplayOrderFallsBackToTitleWhenLevelEmpty() {
+        XCTAssertTrue(ClassificationDisplayOrder.areInOrder(levelA: "", titleA: "Apprentice", levelB: "", titleB: "Senior"))
+        // Empty level compares by title against a populated level code.
+        XCTAssertTrue(ClassificationDisplayOrder.areInOrder(levelA: "17", titleA: "17 years", levelB: "", titleB: "Under 21"))
+    }
+
+    func testClassificationDisplayOrderSortsAgeBrackets() {
+        let levels = [("U17", "Under 17"), ("19", "19 years"), ("20+", "Adult 20+"), ("17", "17 years"), ("18", "18 years")]
+        let sorted = levels.sorted {
+            ClassificationDisplayOrder.areInOrder(levelA: $0.0, titleA: $0.1, levelB: $1.0, titleB: $1.1)
+        }
+        XCTAssertEqual(sorted.map(\.0), ["17", "18", "19", "20+", "U17"])
+    }
+
     // MARK: - Classification weekend rates
 
     func testClassificationWeekendRateRoundTrip() {

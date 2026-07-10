@@ -386,8 +386,13 @@ struct ManagerWageView: View {
         }
 
         return entries.sorted {
-            ($0.awardName ?? "") < ($1.awardName ?? "")
-                || ($0.level.isEmpty ? $0.title : $0.level) < ($1.level.isEmpty ? $1.title : $1.level)
+            let awardA = $0.awardName ?? ""
+            let awardB = $1.awardName ?? ""
+            if awardA != awardB { return awardA < awardB }
+            return ClassificationDisplayOrder.areInOrder(
+                levelA: $0.level, titleA: $0.title,
+                levelB: $1.level, titleB: $1.title
+            )
         }
     }
 

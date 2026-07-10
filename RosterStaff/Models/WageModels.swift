@@ -64,6 +64,22 @@ enum EarningsRateType: String, CaseIterable, Identifiable {
     }
 }
 
+/// Canonical display order for classification levels. The Wage tab list and
+/// the Staff wage-assignment Classification picker MUST both use this so a
+/// manager sees the same order everywhere.
+enum ClassificationDisplayOrder {
+    /// Orders by level code when present, else title — numeric-aware
+    /// (`localizedStandardCompare`), so "2" sorts before "10" and age codes
+    /// like "17"…"20+" precede "U17"-style codes consistently.
+    static func areInOrder(levelA: String, titleA: String, levelB: String, titleB: String) -> Bool {
+        let a = levelA.isEmpty ? titleA : levelA
+        let b = levelB.isEmpty ? titleB : levelB
+        let primary = a.localizedStandardCompare(b)
+        if primary != .orderedSame { return primary == .orderedAscending }
+        return titleA.localizedStandardCompare(titleB) == .orderedAscending
+    }
+}
+
 /// A classification level within an award (e.g. "Level 2 — Retail Employee",
 /// or an age bracket like "Under 17" / "Adult 20+").
 struct AwardClassification: Equatable, Identifiable {
