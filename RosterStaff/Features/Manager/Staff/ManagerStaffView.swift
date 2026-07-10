@@ -312,7 +312,12 @@ struct ManagerStaffDetailSheet: View {
                 // the `wages` collection (staff can't read it); the super %
                 // sits on the user doc but is never rendered in the staff UI.
                 Section {
-                    superRateRow
+                    Toggle("Superannuation", isOn: superEnabledBinding.animation())
+                        .tint(Theme.brand)
+                        .font(.subheadline)
+                    if superEnabledBinding.wrappedValue {
+                        superRateRow
+                    }
                     Button {
                         showWageAssignment = true
                     } label: {
@@ -328,7 +333,9 @@ struct ManagerStaffDetailSheet: View {
                 } header: {
                     Text("Pay (manager only)")
                 } footer: {
-                    Text("Award, classification and earnings lines are only visible to managers. Set up awards and lines in the Wage tab first.")
+                    Text(superEnabledBinding.wrappedValue
+                         ? "Award, classification and earnings lines are only visible to managers. Set up awards and lines in the Wage tab first."
+                         : "Super is OFF — e.g. staff under 18 working 30 hours or less per week are not entitled to super guarantee. New payslips will show no superannuation. Award, classification and earnings lines are only visible to managers.")
                 }
 
                 Section("Record") {
@@ -389,6 +396,28 @@ struct ManagerStaffDetailSheet: View {
                 editButton(field)
             }
         }
+    }
+
+    /// Super on/off lives on the staff wage profile (`wages/staff_{id}`) —
+    /// the same flag payroll generation reads. Toggling saves immediately.
+    private var superEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { repo.staffWageProfile(for: user.id)?.superEnabled ?? true },
+            set: { enabled in
+                var profile = repo.staffWageProfile(for: user.id)
+                    ?? StaffWageProfile(staffId: user.id)
+                profile.superEnabled = enabled
+                Task {
+                    do {
+                        try await repo.saveStaffWageProfile(profile)
+                        Haptics.light()
+                    } catch {
+                        toast = ToastMessage(kind: .error, text: "Couldn't update super. \(error.localizedDescription)")
+                        Haptics.error()
+                    }
+                }
+            }
+        )
     }
 
     private var superRateRow: some View {
