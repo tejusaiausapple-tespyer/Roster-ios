@@ -51,6 +51,11 @@ final class RosterRepository {
     var earningsLines: [EarningsLine] = []
     var staffWageProfiles: [StaffWageProfile] = []
 
+    // Payroll (managers: all payslips in window; staff: own submitted only —
+    // enforced by rules, the client filter is UX).
+    var payslips: [Payslip] = []
+    private var payrollAutoGenAttempted = false
+
     /// Live clock-in session for the signed-in staff member (device-local;
     /// see ClockSession for why this can't be written to Firestore live).
     var clockSession: ClockSession?
@@ -296,6 +301,30 @@ final class RosterRepository {
                         self.staffWageProfiles = docs.compactMap { StaffWageProfile(id: $0.documentID, data: $0.data()) }
                     }
             )
+
+            // 6. Payroll: all payslips in a rolling window (periodStart is a
+            //    yyyy-MM-dd key, so a string range query works — single-field
+            //    index, no composite needed).
+            let payrollCutoff = RosterCalendar.dayFormatter.string(
+                from: RosterCalendar.addWeeks(-26, to: RosterCalendar.weekStart()))
+            roleListeners.append(
+                db.collection("payslips")
+                    .whereField("periodStart", isGreaterThanOrEqualTo: payrollCutoff)
+                    .addSnapshotListener { [weak self] snap, error in
+                        guard let self else { return }
+                        // Until the payslips rules block is deployed this
+                        // listener is permission-denied — don't poison
+                        // loadError for the rest of the manager portal.
+                        if error != nil { self.payslips = []; return }
+                        self.payslips = (snap?.documents ?? [])
+                            .compactMap { Payslip(id: $0.documentID, data: $0.data()) }
+                            .sorted { ($0.periodStart, $0.staffName) > ($1.periodStart, $1.staffName) }
+                        // Weekly automatic draft generation: idempotent (only
+                        // creates docs that don't exist), so kicking it from
+                        // snapshot delivery is safe.
+                        self.autoGeneratePayrollDraftsIfNeeded()
+                    }
+            )
         } else {
             // STAFF LISTENERS (Restricted to own UID):
 
@@ -385,6 +414,27 @@ final class RosterRepository {
                         self.messages = msgs.sorted { $0.sentAt > $1.sentAt }
                     }
             )
+
+            // 5. Own SUBMITTED payslips. Both filters are equalities (`in`
+            //    counts as equality), so no composite index is needed, and the
+            //    query provably satisfies the payslips security rule (staff
+            //    reads require staffId == uid AND a staff-visible status).
+            //    NOTE: until Sura deploys the payslips rules this listener is
+            //    permission-denied — treat that as "feature not enabled yet",
+            //    not a load error.
+            roleListeners.append(
+                db.collection("payslips")
+                    .whereField("staffId", isEqualTo: uid)
+                    .whereField("status", in: [PayslipStatus.submitted.rawValue, PayslipStatus.archived.rawValue])
+                    .addSnapshotListener { [weak self] snap, error in
+                        guard let self else { return }
+                        if error != nil { self.payslips = []; return }
+                        self.payslips = (snap?.documents ?? [])
+                            .compactMap { Payslip(id: $0.documentID, data: $0.data()) }
+                            .filter { $0.status.isStaffVisible }
+                            .sorted { $0.periodStart > $1.periodStart }
+                    }
+            )
         }
     }
 
@@ -408,6 +458,8 @@ final class RosterRepository {
         wageAwards = []
         earningsLines = []
         staffWageProfiles = []
+        payslips = []
+        payrollAutoGenAttempted = false
         attendanceRecords = []
         roleListenersInitialized = false
         currentRole = nil
@@ -1140,6 +1192,269 @@ final class RosterRepository {
         staffWageProfiles.first { $0.staffId == staffId }
     }
 
+    // MARK: - Payroll (payslips collection; manager-controlled)
+    //
+    // The ONLY automated step is draft creation. Approve → Submit is always a
+    // manual manager action; staff visibility flips exclusively on `submitted`
+    // (enforced by the payslips Firestore rules).
+
+    /// Idempotently generate draft payslips for the most recently COMPLETED
+    /// week (runs when payroll data arrives; safe to call repeatedly). This is
+    /// the client-side stand-in for a server cron: whichever manager session
+    /// opens first on/after Monday creates the drafts.
+    private func autoGeneratePayrollDraftsIfNeeded() {
+        guard currentRole == .manager, !payrollAutoGenAttempted else { return }
+        // Wait until the collaborating listeners have delivered.
+        guard !allUsers.isEmpty, !timesheets.isEmpty else { return }
+        payrollAutoGenAttempted = true
+        let lastWeekStart = RosterCalendar.addWeeks(-1, to: RosterCalendar.weekStart())
+        Task { [weak self] in
+            await self?.bestEffort("payroll auto-generation") {
+                _ = try await self?.generateDraftPayslips(weekStart: lastWeekStart)
+            }
+        }
+    }
+
+    /// Create draft payslips for every eligible staff member for the week
+    /// starting `weekStart` (Adelaide Monday). Eligible = active staff user
+    /// with approved timesheet hours in the period and an active (or absent)
+    /// wage profile. Existing payslips for the period are never touched —
+    /// returns the number of NEW drafts created.
+    @discardableResult
+    func generateDraftPayslips(weekStart: Date) async throws -> Int {
+        guard let manager = currentUser else { return 0 }
+        let periodStart = RosterCalendar.dayFormatter.string(from: RosterCalendar.weekStart(weekStart))
+        let periodEnd = RosterCalendar.dayFormatter.string(from: RosterCalendar.addDays(6, to: RosterCalendar.weekStart(weekStart)))
+
+        // Approved worked hours per staff per date within the period.
+        var hoursByStaff: [String: [String: Double]] = [:]
+        for ts in timesheets where ts.status == .approved && ts.workedHours > 0 {
+            guard let shift = shiftsById[ts.shiftId],
+                  shift.date >= periodStart, shift.date <= periodEnd else { continue }
+            hoursByStaff[ts.staffId, default: [:]][shift.date, default: 0] += ts.workedHours
+        }
+
+        var created = 0
+        for user in allUsers where user.role == .staff && user.status == .active {
+            guard let byDate = hoursByStaff[user.id], !byDate.isEmpty else { continue }
+            let profile = staffWageProfile(for: user.id)
+            if let profile, !profile.active { continue }
+            let docId = Payslip.docId(periodStart: periodStart, staffId: user.id)
+            guard payslips.first(where: { $0.id == docId }) == nil else { continue }
+            // Double-check the server (local cache may lag on cold start —
+            // creating over an edited draft would destroy manager edits).
+            let existing = try? await db.collection("payslips").document(docId).getDocument()
+            if existing?.exists == true { continue }
+
+            let slip = buildDraftPayslip(docId: docId, user: user, profile: profile,
+                                         periodStart: periodStart, periodEnd: periodEnd,
+                                         workedHoursByDate: byDate, generatedBy: manager)
+            try await db.collection("payslips").document(docId).setData(slip.asDictionary)
+            created += 1
+        }
+        if created > 0 {
+            await writePayrollAuditLog(action: "payroll-drafts-generated",
+                                       detail: "\(created) draft payslip(s) for week \(periodStart)")
+        }
+        return created
+    }
+
+    /// Assemble a draft payslip snapshot from the wage profile + approved hours.
+    private func buildDraftPayslip(docId: String, user: AppUser, profile: StaffWageProfile?,
+                                   periodStart: String, periodEnd: String,
+                                   workedHoursByDate: [String: Double],
+                                   generatedBy manager: AppUser) -> Payslip {
+        let award = profile?.awardId.flatMap { id in wageAwards.first { $0.id == id } }
+        let classification = award?.classifications.first { $0.level == profile?.classificationLevel }
+        let baseRate = profile?.resolvedHourlyRate(award: award) ?? user.hourlyRate ?? 0
+        let buckets = PayrollCalculator.hoursBuckets(workedHoursByDate: workedHoursByDate)
+        // Position = the role most frequently worked in the period (shift
+        // "department" carries the role label, e.g. "Console Operator").
+        let roles = shifts.filter {
+            $0.staffId == user.id && $0.date >= periodStart && $0.date <= periodEnd
+        }.compactMap(\.department)
+        let position = Dictionary(grouping: roles, by: { $0 }).max { $0.value.count < $1.value.count }?.key ?? ""
+
+        // Fixed-amount earnings lines auto-populate; multiplier/per-unit lines
+        // are added at zero quantity for the manager to fill in during review.
+        var extras: [PayslipEarning] = []
+        for lineId in profile?.earningsLineIds ?? [] {
+            guard let line = earningsLines.first(where: { $0.id == lineId }), line.active,
+                  line.category != .ordinaryHours, line.category != .overtime else { continue }
+            switch line.rateType {
+            case .fixedAmount:
+                extras.append(PayslipEarning(name: line.displayName, amount: line.fixedRate,
+                                             exemptFromTax: line.exemptFromTax,
+                                             exemptFromSuper: line.exemptFromSuper))
+            case .ratePerUnit, .multipleOfOrdinary:
+                let rate = line.rateType == .ratePerUnit ? line.fixedRate : baseRate * line.multiplier
+                extras.append(PayslipEarning(name: line.displayName, quantity: 0, rate: rate,
+                                             exemptFromTax: line.exemptFromTax,
+                                             exemptFromSuper: line.exemptFromSuper))
+            }
+        }
+
+        return Payslip(
+            id: docId,
+            staffId: user.id,
+            staffName: user.fullName,
+            position: position,
+            employmentType: profile?.employmentType ?? user.employmentType?.rawValue ?? "",
+            awardName: award?.name ?? "",
+            awardCode: award?.code ?? "",
+            classification: classification?.title ?? "",
+            periodStart: periodStart,
+            periodEnd: periodEnd,
+            baseHourlyRate: baseRate,
+            ordinaryHours: PayrollCalculator.round2(buckets.ordinary),
+            weekendHours: PayrollCalculator.round2(buckets.weekend),
+            // Default penalty rates seed from the base rate — every award
+            // differs, so the manager reviews/edits them per payslip.
+            weekendRate: PayrollCalculator.round2(baseRate * 1.5),
+            publicHolidayRate: PayrollCalculator.round2(baseRate * 2.25),
+            overtimeRate: PayrollCalculator.round2(baseRate * 1.5),
+            extraEarnings: extras,
+            superRate: user.superRate ?? 12.0,
+            generatedAt: Date(),
+            audit: [PayslipAuditEntry(action: "generated", userId: manager.id,
+                                      userName: manager.fullName,
+                                      detail: "Auto-generated from approved timesheets")]
+        )
+    }
+
+    /// Persist manager edits to a payslip (draft/under-review only — callers
+    /// guard on `status.isEditable`; submitted payroll is immutable).
+    func savePayslip(_ slip: Payslip, editedBy editor: AppUser, editDetail: String = "Edited") async throws {
+        var updated = slip
+        updated.updatedAt = Date()
+        updated.audit.append(PayslipAuditEntry(action: "edited", userId: editor.id,
+                                               userName: editor.fullName, detail: editDetail))
+        try await db.collection("payslips").document(slip.id).setData(updated.asDictionary)
+    }
+
+    /// Move a payslip through the manual workflow. Submitting stamps
+    /// `submittedBy/At` — the moment staff visibility flips on.
+    func setPayslipStatus(_ slip: Payslip, to status: PayslipStatus, by actor: AppUser) async throws {
+        var updated = slip
+        updated.status = status
+        updated.updatedAt = Date()
+        switch status {
+        case .approved:
+            updated.approvedBy = actor.id
+            updated.approvedAt = Date()
+        case .submitted:
+            updated.submittedBy = actor.id
+            updated.submittedAt = Date()
+        default: break
+        }
+        updated.audit.append(PayslipAuditEntry(action: status.rawValue, userId: actor.id,
+                                               userName: actor.fullName))
+        try await db.collection("payslips").document(slip.id).setData(updated.asDictionary)
+        await writePayrollAuditLog(action: "payslip-\(status.rawValue)",
+                                   detail: "\(slip.staffName) · week \(slip.periodStart)")
+    }
+
+    /// Delete a DRAFT payslip (managers only; other statuses are kept for the
+    /// record — archive instead).
+    func deleteDraftPayslip(_ slip: Payslip) async throws {
+        guard slip.status == .draft || slip.status == .underReview else { return }
+        try await db.collection("payslips").document(slip.id).delete()
+        await writePayrollAuditLog(action: "payslip-draft-deleted",
+                                   detail: "\(slip.staffName) · week \(slip.periodStart)")
+    }
+
+    /// Regenerate a draft from current timesheet + wage data, REPLACING the
+    /// existing draft's amounts (explicit manager action; keeps the audit trail).
+    func regenerateDraftPayslip(_ slip: Payslip) async throws {
+        guard slip.status.isEditable, let manager = currentUser,
+              let user = usersById[slip.staffId] else { return }
+        var byDate: [String: Double] = [:]
+        for ts in timesheets where ts.status == .approved && ts.staffId == slip.staffId && ts.workedHours > 0 {
+            guard let shift = shiftsById[ts.shiftId],
+                  shift.date >= slip.periodStart, shift.date <= slip.periodEnd else { continue }
+            byDate[shift.date, default: 0] += ts.workedHours
+        }
+        var fresh = buildDraftPayslip(docId: slip.id, user: user,
+                                      profile: staffWageProfile(for: slip.staffId),
+                                      periodStart: slip.periodStart, periodEnd: slip.periodEnd,
+                                      workedHoursByDate: byDate, generatedBy: manager)
+        fresh.audit = slip.audit
+        fresh.audit.append(PayslipAuditEntry(action: "regenerated", userId: manager.id,
+                                             userName: manager.fullName,
+                                             detail: "Recalculated from current timesheets and wage assignment"))
+        try await db.collection("payslips").document(slip.id).setData(fresh.asDictionary)
+    }
+
+    /// Issue a corrected copy of a submitted payslip: the original is archived
+    /// and an editable draft (id suffix `_c2`, `_c3`, …) takes its place.
+    func createCorrectedPayslip(from slip: Payslip) async throws {
+        guard let manager = currentUser else { return }
+        let base = slip.id.components(separatedBy: "_c").first ?? slip.id
+        let existingCorrections = payslips.filter { $0.id.hasPrefix("\(base)_c") }.count
+        let newId = "\(base)_c\(existingCorrections + 2)"
+
+        let corrected = Payslip(id: newId, staffId: slip.staffId, staffName: slip.staffName,
+                            position: slip.position, employmentType: slip.employmentType,
+                            awardName: slip.awardName, awardCode: slip.awardCode,
+                            classification: slip.classification,
+                            periodStart: slip.periodStart, periodEnd: slip.periodEnd,
+                            payDate: slip.payDate, status: .draft,
+                            baseHourlyRate: slip.baseHourlyRate,
+                            ordinaryHours: slip.ordinaryHours, weekendHours: slip.weekendHours,
+                            weekendRate: slip.weekendRate,
+                            publicHolidayHours: slip.publicHolidayHours,
+                            publicHolidayRate: slip.publicHolidayRate,
+                            overtimeHours: slip.overtimeHours, overtimeRate: slip.overtimeRate,
+                            extraEarnings: slip.extraEarnings,
+                            payg: slip.payg, otherDeductions: slip.otherDeductions,
+                            salarySacrifice: slip.salarySacrifice,
+                            deductionNotes: slip.deductionNotes, superRate: slip.superRate,
+                            notes: slip.notes, generatedAt: Date(),
+                            audit: [PayslipAuditEntry(action: "generated", userId: manager.id,
+                                                      userName: manager.fullName,
+                                                      detail: "Corrected copy of \(slip.id)")])
+        try await db.collection("payslips").document(newId).setData(corrected.asDictionary)
+
+        var archived = slip
+        archived.status = .archived
+        archived.updatedAt = Date()
+        archived.audit.append(PayslipAuditEntry(action: "archived", userId: manager.id,
+                                                userName: manager.fullName,
+                                                detail: "Superseded by corrected copy \(newId)"))
+        try await db.collection("payslips").document(slip.id).setData(archived.asDictionary)
+        await writePayrollAuditLog(action: "payslip-corrected",
+                                   detail: "\(slip.staffName) · week \(slip.periodStart) → \(newId)")
+    }
+
+    /// Record a payslip download/print on the document's own audit trail
+    /// (manager sessions only — staff cannot write to payslips by rules).
+    func recordPayslipDownload(_ slip: Payslip) async {
+        guard currentRole == .manager, let actor = currentUser else { return }
+        await bestEffort("payslip download audit") { [self] in
+            var updated = slip
+            updated.audit.append(PayslipAuditEntry(action: "downloaded", userId: actor.id,
+                                                   userName: actor.fullName))
+            try await db.collection("payslips").document(slip.id)
+                .setData(["audit": updated.audit.map { $0.asDictionary }], merge: true)
+        }
+    }
+
+    /// Best-effort entry in the global `auditLogs` collection (manager-only
+    /// writes by rules — never blocks the payroll action itself).
+    private func writePayrollAuditLog(action: String, detail: String) async {
+        guard let actor = currentUser, currentRole == .manager else { return }
+        await bestEffort("auditLogs \(action)") { [self] in
+            try await db.collection("auditLogs").document().setData([
+                "action": action,
+                "detail": detail,
+                "userId": actor.id,
+                "userName": actor.fullName,
+                "at": Date(),
+                "area": "payroll",
+            ])
+        }
+    }
+
     /// Add or update a shift in Firestore (calculating scheduledHours dynamically).
     func saveShift(
         id: String?,
@@ -1315,6 +1630,25 @@ final class RosterRepository {
 
         try await db.collection("timesheets").document(id).updateData(data)
         await WorkerAPIClient.shared.sendNotification(event: "timesheet-approved", timesheetId: id)
+    }
+
+    /// Confirm a staff-reported absence — sets status = .absent (terminal).
+    /// Mirrors approveTimesheet's audit fields (who/when) but the terminal
+    /// state is the manager-confirmed absence rather than an approved timesheet,
+    /// so a no-show is never counted as approved worked hours.
+    func confirmAbsence(id: String, managerNotes: String?) async throws {
+        guard let currentUserId = currentUser?.id else { return }
+
+        let data: [String: Any] = [
+            "status": TimesheetStatus.absent.rawValue,
+            "managerNotes": managerNotes ?? "",
+            "approvedBy": currentUserId,
+            "approvedAt": nowISO(),
+            "updatedAt": nowISO()
+        ]
+
+        try await db.collection("timesheets").document(id).updateData(data)
+        await WorkerAPIClient.shared.sendNotification(event: "timesheet-absence-confirmed", timesheetId: id)
     }
 
     /// Reject a timesheet — sets status = .rejected, managerNotes, and rejectedReason.

@@ -33,12 +33,17 @@ struct AccountView: View {
     var body: some View {
         NavigationStack {
             List {
+                TitlePillCollapseReporter()
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 photoSection
                 if user?.emailChangeRequired == true {
                     emailRequestSection
                 }
                 detailsSection
                 statsSection
+                payslipsSection
                 notificationsSection
                 appearanceSection
                 securitySection
@@ -285,6 +290,26 @@ struct AccountView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 14)
         .background(RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous).fill(Theme.card))
+    }
+
+    // MARK: Payslips
+
+    private var payslipsSection: some View {
+        Section("Pay") {
+            NavigationLink {
+                PayslipsView()
+            } label: {
+                HStack {
+                    Label("Payslips", systemImage: "banknote")
+                    Spacer()
+                    if !repo.payslips.isEmpty {
+                        Text("\(repo.payslips.count)")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textTertiary)
+                    }
+                }
+            }
+        }
     }
 
     // MARK: Notifications

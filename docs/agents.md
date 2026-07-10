@@ -71,6 +71,7 @@ RosterStaffApp (entry point)
         ├── ManagerAvailabilityView
         ├── ManagerReportsView
         ├── ManagerWageView
+        ├── ManagerPayrollView
         ├── ManagerTasksView
         ├── ManagerSettings (Locations, Company Details)
         └── ManagerAccountView
@@ -103,6 +104,7 @@ RosterStaff/
 │       ├── Reports/
 │       ├── Tasks/          # manager task management (list/editor/review)
 │       ├── Wage/           # wages module (awards, earnings lines, profiles)
+│       ├── Payroll/        # payroll module (weekly payslips, PDF, workflow)
 │       ├── Settings/       # Locations + Company Details
 │       └── Shell/          # Manager tab bar + navigation
 ├── DesignSystem/           # Theme + reusable UI components
@@ -190,7 +192,7 @@ RosterStaff/
 - **Pattern**: `@MainActor @Observable` class injected via SwiftUI `.environment()`
 - **Listeners**: Real-time Firestore `onSnapshot` for shifts, timesheets, messages, tasks, task completions, user profile, app settings
 - **Role Awareness**: Manager gets all-staff data (shifts windowed to the ±shift window, timesheets windowed to `submittedAt` ≥ 90 days back, users unwindowed); Staff gets only own data. Tasks + task completions listeners are shared by both roles (all active tasks; all completions in the shift date window — no per-user filter).
-- **Key Collections**: `shifts`, `timesheets`, `users` (+ `notificationTokens` subcollection), `messages`, `tasks`, `task_completions`, `shift_attendance`, `daily_job_templates`, `daily_job_assignments`, `wages`, `settings` (docs `app` / `locations` / `availabilityLocks`)
+- **Key Collections**: `shifts`, `timesheets`, `users` (+ `notificationTokens` subcollection), `messages`, `tasks`, `task_completions`, `shift_attendance`, `daily_job_templates`, `daily_job_assignments`, `wages`, `payslips`, `settings` (docs `app` / `locations` / `availabilityLocks`)
 - **Write Operations**: Submit/resubmit timesheets, report absence, update profile, save availability, complete tasks, manager CRUD for shifts/timesheets
 
 ### API Layer (WorkerAPIClient)
@@ -213,6 +215,7 @@ RosterStaff/
 | `shift_attendance` | `{shiftId}` | Both | shiftId, staffId, date, clockInAt/clockOutAt (server timestamps), clockInDeviceAt/clockOutDeviceAt, GPS fixes + geofence verdict/distance. Append-only audit trail (see `docs/shift-attendance.md`) |
 | `daily_job_templates` | Auto-generated | Manager | title, active, createdAt, createdBy — permanent reusable job library (see `docs/daily-jobs-feature.md`) |
 | `daily_job_assignments` | `{shiftId}_{templateId}` | Both | shiftId, staffId, templateId, title, date, assignedAt/By, completed, completedAt/By |
+| `payslips` | `{periodStart}_{staffId}` (corrections `_c{n}`) | Both | weekly payslip snapshots: staff/award/rate snapshot, hour buckets + rates, extra earnings, PAYG/deductions, super %, status (draft/under_review/approved/submitted/archived), audit[]. Staff read own **submitted/archived only** — rules block **NOT yet deployed** (see `docs/reference/firestore.rules.payroll-proposed.md`) |
 | `wages` | Auto-generated | Manager only | awards (classifications), earnings lines (rate types + super/tax), per-staff wage profiles. **Unreadable by staff** under deployed rules |
 | `settings` | `app` / `locations` / `availabilityLocks` | Both (read) / Manager (write) | companyName + ABN/address; manager work locations; roster availability week locks |
 | `users/{uid}/notificationTokens` | Auto-generated | Owner | token, platform, userAgent, enabled — FCM push tokens |
@@ -316,6 +319,7 @@ Defined in `project.yml` under `packages:` using the Firebase GitHub URL.
 - ✅ Manager Reports (weekly analytics: scheduled/worked hours, labour cost + super, timesheet status, per-staff breakdown)
 - ✅ Manager Tasks management (create/edit/assign tasks, live completion review, request-redo flow, photo lifecycle)
 - ✅ Manager Wage module (Xero-AU-style awards + classifications, earnings lines, per-staff wage/super profiles; manager-only `wages` collection)
+- ✅ Payroll module (2026-07-10): weekly draft payslips auto-generated (client-side, idempotent, first manager session on/after Monday) from approved timesheets + wage assignments; manager-only review→edit→approve→submit workflow (staff see payslips ONLY after Submit); live A4 AU-style PDF (`PayslipPDFService`, same renderer for preview + export); corrected-copy flow for submitted payslips; audit trail on-doc + `auditLogs`; staff Account → Payslips page. ⚠️ Blocked on `payslips` rules deployment (Sura)
 - ✅ Daily Jobs (manager per-shift job assignments from the roster; staff Complete/Undo via the Home bell panel)
 - ✅ Verified shift attendance (server-timestamped clock-in/out + GPS/geofence capture; manager Verified Attendance card)
 - ✅ Device auth gate (biometric lock)

@@ -127,6 +127,7 @@ struct ManagerStaffView: View {
 
     private var rosterGrid: some View {
         ScrollView {
+            TitlePillCollapseReporter()
             if filtered.isEmpty {
                 emptyState.padding(.top, 40)
             } else {
@@ -611,6 +612,12 @@ struct StaffWageAssignmentSheet: View {
     @State private var awardId: String = ""
     @State private var classificationLevel: String = ""
     @State private var selectedLineIds: Set<String> = []
+    @State private var employmentType: String = ""
+    @State private var ageGroup: String = ""
+    @State private var rateOverrideText: String = ""
+    @State private var effectiveDate: Date = RosterCalendar.startOfDay(Date())
+    @State private var hasEffectiveDate = false
+    @State private var active = true
     @State private var isSaving = false
     @State private var toast: ToastMessage?
     @State private var seeded = false
@@ -638,6 +645,36 @@ struct StaffWageAssignmentSheet: View {
                             }
                         }
                     }
+                }
+
+                Section {
+                    Picker("Employment type", selection: $employmentType) {
+                        Text("From staff profile").tag("")
+                        ForEach(EmploymentType.allCases, id: \.rawValue) { type in
+                            Text(type.label).tag(type.rawValue)
+                        }
+                    }
+                    LabeledContent("Age group") {
+                        TextField("e.g. Under 18, Adult", text: $ageGroup)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    LabeledContent("Rate override ($/h)") {
+                        TextField("Award rate", text: $rateOverrideText)
+                            .multilineTextAlignment(.trailing)
+                            .keyboardType(.decimalPad)
+                    }
+                    Toggle("Effective date", isOn: $hasEffectiveDate.animation())
+                        .tint(Theme.brand)
+                    if hasEffectiveDate {
+                        DatePicker("Effective from", selection: $effectiveDate, displayedComponents: .date)
+                            .environment(\.timeZone, RosterCalendar.timeZone)
+                    }
+                    Toggle("Active", isOn: $active)
+                        .tint(Theme.brand)
+                } header: {
+                    Text("Payroll settings")
+                } footer: {
+                    Text("A rate override replaces the award classification rate. Inactive assignments are skipped by automatic draft payslip generation. Changes only affect future payroll — already generated payslips keep their snapshot.")
                 }
 
                 Section {
@@ -695,16 +732,35 @@ struct StaffWageAssignmentSheet: View {
             awardId = profile.awardId ?? ""
             classificationLevel = profile.classificationLevel ?? ""
             selectedLineIds = Set(profile.earningsLineIds)
+            employmentType = profile.employmentType ?? ""
+            ageGroup = profile.ageGroup ?? ""
+            if let override = profile.hourlyRateOverride, override > 0 {
+                rateOverrideText = String(format: "%.2f", override)
+            }
+            if let effective = profile.effectiveDate,
+               let date = RosterCalendar.dateFromKey(effective) {
+                hasEffectiveDate = true
+                effectiveDate = date
+            }
+            active = profile.active
+        } else if let userType = user.employmentType {
+            employmentType = userType.rawValue
         }
     }
 
     private func save() {
         isSaving = true
+        let override = Double(rateOverrideText)
         let profile = StaffWageProfile(
             staffId: user.id,
             awardId: awardId.isEmpty ? nil : awardId,
             classificationLevel: classificationLevel.isEmpty ? nil : classificationLevel,
-            earningsLineIds: Array(selectedLineIds)
+            earningsLineIds: Array(selectedLineIds),
+            hourlyRateOverride: (override ?? 0) > 0 ? override : nil,
+            employmentType: employmentType.isEmpty ? nil : employmentType,
+            ageGroup: ageGroup.trimmingCharacters(in: .whitespaces).isEmpty ? nil : ageGroup.trimmingCharacters(in: .whitespaces),
+            effectiveDate: hasEffectiveDate ? RosterCalendar.dayFormatter.string(from: effectiveDate) : nil,
+            active: active
         )
         Task {
             defer { isSaving = false }

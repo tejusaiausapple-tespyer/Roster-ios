@@ -9,7 +9,7 @@
 **Repo:** https://github.com/tejusaiausapple-tespyer/Roster-ios.git
 **Web/PWA repo (reference):** https://github.com/tejusaiausapple-tespyer/Roster.git
 **Deployed Firestore rules (authoritative):** `docs/reference/firestore.rules.deployed`
-**Test suite status:** 115 passed / 0 failed (last run 2026-07-06, iPhone 17 Pro sim)
+**Test suite status:** 130 passed / 0 failed (last run 2026-07-10, iPhone 17 Pro sim)
 
 ---
 
@@ -277,8 +277,43 @@ Then: `git checkout main && git merge --no-ff milestone-4-data-integrity && git 
 
 ---
 
+## Payroll module (owner request 2026-07-09) — ✅ CODE COMPLETE on branch
+`audit-remediation`, ⏳ awaiting Sura's device verification + RULES DEPLOYMENT
+
+- New `payslips` collection (doc id `{periodStart}_{staffId}`; corrections `_c{n}`).
+  Weekly DRAFT payslips auto-generate idempotently (client-side, first manager
+  session on/after Monday, last completed week) from APPROVED timesheets +
+  wage assignments; manual generate button per period too. NOTHING is ever
+  sent/published automatically.
+- Workflow: Draft → Under Review → Approved → Submitted (→ Archived); staff
+  see a payslip ONLY after Submit. Submitted payslips are immutable in-app —
+  "Issue corrected copy" archives the original and creates a new draft.
+- Manager Portal → Payroll tab (iPad/Mac sidebar): period navigator, status +
+  gross/PAYG/super/net overview tiles, staff payslip list, recent periods;
+  full payslip editor (hours buckets × editable rates, allowances, PAYG/
+  deductions/salary sacrifice, super %, live totals) + live A4 AU-style PDF
+  (`PayslipPDFService` renders preview AND export — always identical).
+- Staff → Account → Payslips: grouped history, PDF view/share/print/save.
+- Wage assignment sheet gained employment type, age group, rate override,
+  effective date, active toggle (`StaffWageProfile` extended; legacy docs
+  parse as active).
+- Audit: every generate/edit/status-change/download appended to the payslip's
+  `audit[]` + best-effort `auditLogs` entries.
+- Tests: +15 (`PayrollTests`) — calculator totals (super excludes overtime +
+  exempt rows), weekend bucketing, status flags, Firestore round-trips.
+- **DEVICE VERIFICATION**: (1) Sura deploys the payslips rules block from
+  `docs/reference/firestore.rules.payroll-proposed.md`, then updates the
+  deployed-rules reference copy. (2) Manager: open Payroll, generate drafts
+  for a week with approved timesheets, edit hours/rates, preview PDF, approve,
+  submit. (3) Staff account: payslip appears ONLY after submit; PDF opens,
+  share/save works. (4) Confirm staff sees nothing pre-submit (drafts) and
+  cannot read another staff member's payslips.
+
 ## Owner (Sura) actions pending — Firebase console
 
+0. REQUIRED for Payroll: deploy the `payslips` rules block
+   (`docs/reference/firestore.rules.payroll-proposed.md`), then update
+   `docs/reference/firestore.rules.deployed`.
 1. RECOMMENDED: add `'emailChangeRequired'` to the `isValidSelfUserUpdate`
    allowlist in Firestore rules (restores manager email-request flow fully).
 2. RECOMMENDED: tighten `task_completions` rules so staff can't overwrite each

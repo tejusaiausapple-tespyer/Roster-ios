@@ -214,6 +214,10 @@ struct EarningsLine: Identifiable, Equatable {
 }
 
 /// Per-staff wage assignment (doc id: "staff_{staffId}"). Manager-only.
+///
+/// A profile edit only affects FUTURE payroll: draft generation snapshots the
+/// resolved rate/award onto the payslip document, so historical payslips never
+/// change unless a manager explicitly regenerates them.
 struct StaffWageProfile: Identifiable, Equatable {
     let id: String
     var staffId: String
@@ -221,19 +225,36 @@ struct StaffWageProfile: Identifiable, Equatable {
     var classificationLevel: String?
     var earningsLineIds: [String]
     var hourlyRateOverride: Double?
+    /// Overrides the user-doc employment type for payroll purposes (raw
+    /// `EmploymentType` value). Empty/nil → fall back to `AppUser.employmentType`.
+    var employmentType: String?
+    /// Free-form award age group (e.g. "Under 18", "20", "Adult") — some
+    /// awards pay junior percentages by age.
+    var ageGroup: String?
+    /// Date this assignment takes effect (yyyy-MM-dd). Informational — payroll
+    /// generation always uses the profile as it stands at generation time.
+    var effectiveDate: String?
+    /// Inactive profiles are skipped by automatic draft payslip generation.
+    var active: Bool
 
     static let kind = "staffProfile"
 
     static func docId(for staffId: String) -> String { "staff_\(staffId)" }
 
     init(staffId: String, awardId: String? = nil, classificationLevel: String? = nil,
-         earningsLineIds: [String] = [], hourlyRateOverride: Double? = nil) {
+         earningsLineIds: [String] = [], hourlyRateOverride: Double? = nil,
+         employmentType: String? = nil, ageGroup: String? = nil,
+         effectiveDate: String? = nil, active: Bool = true) {
         self.id = Self.docId(for: staffId)
         self.staffId = staffId
         self.awardId = awardId
         self.classificationLevel = classificationLevel
         self.earningsLineIds = earningsLineIds
         self.hourlyRateOverride = hourlyRateOverride
+        self.employmentType = employmentType
+        self.ageGroup = ageGroup
+        self.effectiveDate = effectiveDate
+        self.active = active
     }
 
     init?(id: String, data: [String: Any]) {
@@ -244,6 +265,10 @@ struct StaffWageProfile: Identifiable, Equatable {
         self.classificationLevel = FS.string(data, "classificationLevel")
         self.earningsLineIds = data["earningsLineIds"] as? [String] ?? []
         self.hourlyRateOverride = (data["hourlyRateOverride"] as? NSNumber)?.doubleValue
+        self.employmentType = FS.string(data, "employmentType")
+        self.ageGroup = FS.string(data, "ageGroup")
+        self.effectiveDate = FS.string(data, "effectiveDate")
+        self.active = FS.bool(data, "active", default: true)
     }
 
     var asDictionary: [String: Any] {
@@ -251,10 +276,25 @@ struct StaffWageProfile: Identifiable, Equatable {
             "kind": Self.kind,
             "staffId": staffId,
             "earningsLineIds": earningsLineIds,
+            "active": active,
         ]
         dict["awardId"] = awardId ?? NSNull()
         dict["classificationLevel"] = classificationLevel ?? NSNull()
         dict["hourlyRateOverride"] = hourlyRateOverride ?? NSNull()
+        dict["employmentType"] = employmentType ?? NSNull()
+        dict["ageGroup"] = ageGroup ?? NSNull()
+        dict["effectiveDate"] = effectiveDate ?? NSNull()
         return dict
+    }
+
+    /// The ordinary hourly rate this profile resolves to under `award`
+    /// (override wins; else the classification's base rate; else nil).
+    func resolvedHourlyRate(award: WageAward?) -> Double? {
+        if let override = hourlyRateOverride, override > 0 { return override }
+        guard let award,
+              let level = classificationLevel,
+              let classification = award.classifications.first(where: { $0.level == level })
+        else { return nil }
+        return classification.baseHourlyRate > 0 ? classification.baseHourlyRate : nil
     }
 }
