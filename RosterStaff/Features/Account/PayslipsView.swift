@@ -37,7 +37,6 @@ struct PayslipsView: View {
 
             VStack(spacing: 0) {
                 monthBar
-                    .zIndex(1)
 
                 List {
                     if loadFailed {
@@ -75,8 +74,8 @@ struct PayslipsView: View {
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
                 .refreshable { await load(forceRefresh: true) }
-                .zIndex(0)
             }
+            .zIndex(0)
 
             if isExpanded {
                 Color.black.opacity(0.001)
@@ -86,7 +85,21 @@ struct PayslipsView: View {
                             isExpanded = false
                         }
                     }
-                    .zIndex(0.5)
+                    .zIndex(1)
+
+                VStack(alignment: .leading, spacing: 0) {
+                    Spacer()
+                        .frame(height: 60)
+
+                    FloatingMonthYearPicker(selectedMonthKey: $monthKey, isExpanded: $isExpanded)
+                        .padding(.horizontal, 16)
+                        .transition(.asymmetric(
+                            insertion: .scale(scale: 0.8, anchor: .topLeading).combined(with: .opacity),
+                            removal: .opacity
+                        ))
+                }
+                .ignoresSafeArea(edges: .bottom)
+                .zIndex(2)
             }
         }
         .navigationTitle("Payslips")
@@ -109,17 +122,6 @@ struct PayslipsView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .overlay(alignment: .topLeading) {
-            if isExpanded {
-                FloatingMonthYearPicker(selectedMonthKey: $monthKey, isExpanded: $isExpanded)
-                    .offset(x: 16, y: 48)
-                    .transition(.asymmetric(
-                        insertion: .scale(scale: 0.8, anchor: .topLeading).combined(with: .opacity),
-                        removal: .opacity
-                    ))
-                    .zIndex(2)
-            }
-        }
     }
 
     private var monthPill: some View {
