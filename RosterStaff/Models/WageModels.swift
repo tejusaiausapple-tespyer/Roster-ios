@@ -140,17 +140,6 @@ struct WageAward: Identifiable, Equatable {
         ]
     }
 
-    /// Owner-supplied Console age-rate table (2026-07): Mon–Fri base rate and
-    /// the combined Weekend & Public Holiday rate per age bracket. Offered as
-    /// a one-tap prefill in the award editor — the manager still reviews and
-    /// saves manually.
-    static let consoleTemplateClassifications: [AwardClassification] = [
-        AwardClassification(level: "U17", title: "Under 17", baseHourlyRate: 17.50, weekendHourlyRate: 22.83),
-        AwardClassification(level: "17", title: "17 years", baseHourlyRate: 18.43, weekendHourlyRate: 24.04),
-        AwardClassification(level: "18", title: "18 years", baseHourlyRate: 23.03, weekendHourlyRate: 30.04),
-        AwardClassification(level: "19", title: "19 years", baseHourlyRate: 27.64, weekendHourlyRate: 36.05),
-        AwardClassification(level: "20+", title: "Adult 20+", baseHourlyRate: 36.85, weekendHourlyRate: 48.07),
-    ]
 }
 
 /// A pay item ("earnings rate" in Xero terms). For **ordinary hours**, each
@@ -298,24 +287,6 @@ struct EarningsLine: Identifiable, Equatable {
             baseHourlyRate: classification.baseHourlyRate,
             weekendHourlyRate: classification.weekendHourlyRate
         )
-    }
-
-    /// Console age-rate rows as earnings lines (one per level).
-    static func consoleTemplateLines(awardId: String?) -> [EarningsLine] {
-        WageAward.consoleTemplateClassifications.map { classification in
-            EarningsLine(
-                id: "",
-                name: classification.title,
-                displayName: classification.title,
-                category: .ordinaryHours,
-                rateType: .fixedAmount,
-                fixedRate: classification.baseHourlyRate,
-                awardId: awardId,
-                level: classification.level,
-                baseHourlyRate: classification.baseHourlyRate,
-                weekendHourlyRate: classification.weekendHourlyRate
-            )
-        }
     }
 }
 

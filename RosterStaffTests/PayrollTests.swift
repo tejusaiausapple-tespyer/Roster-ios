@@ -236,27 +236,18 @@ final class PayrollTests: XCTestCase {
         XCTAssertEqual(profile.resolvedHourlyRate(award: award, earningsLines: lines), 26.18)
     }
 
-    // MARK: - Console age-rate table (owner-supplied 2026-07)
-
-    func testConsoleTemplateMatchesOwnerRateTable() {
-        let template = WageAward.consoleTemplateClassifications
-        XCTAssertEqual(template.count, 5)
-        let expected: [(String, Double, Double)] = [
-            ("U17", 17.50, 22.83), ("17", 18.43, 24.04), ("18", 23.03, 30.04),
-            ("19", 27.64, 36.05), ("20+", 36.85, 48.07),
-        ]
-        for (index, (level, base, weekend)) in expected.enumerated() {
-            XCTAssertEqual(template[index].level, level)
-            XCTAssertEqual(template[index].baseHourlyRate, base)
-            XCTAssertEqual(template[index].weekendHourlyRate, weekend)
-        }
-    }
+    // MARK: - Classification weekend rates
 
     func testClassificationWeekendRateRoundTrip() {
-        let award = WageAward(id: "a1", name: "Console",
-                              classifications: WageAward.consoleTemplateClassifications)
+        // Console seed template removed 2026-07-10 (owner: managers create
+        // levels manually) — round-trip coverage kept with an inline fixture.
+        let classifications = [
+            AwardClassification(level: "U17", title: "Under 17", baseHourlyRate: 17.50, weekendHourlyRate: 22.83),
+            AwardClassification(level: "20+", title: "Adult 20+", baseHourlyRate: 36.85, weekendHourlyRate: 48.07),
+        ]
+        let award = WageAward(id: "a1", name: "Console", classifications: classifications)
         let parsed = WageAward(id: "a1", data: award.asDictionary)
-        XCTAssertEqual(parsed?.classifications, WageAward.consoleTemplateClassifications)
+        XCTAssertEqual(parsed?.classifications, classifications)
     }
 
     func testLegacyClassificationParsesWithoutWeekendRate() {

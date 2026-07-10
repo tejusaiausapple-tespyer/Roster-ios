@@ -76,7 +76,9 @@ struct ManagerStaffView: View {
                 ScreenTitlePill(title: "Staff Directory", icon: "person.2.fill")
             }
         }
-        .searchable(text: $searchText, prompt: "Search name or email")
+        // .always pins the search field: with .automatic it hides until pulled,
+        // so the pull-to-refresh gesture dragged it down over the filter bar.
+        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search name or email")
         .sheet(item: $selected) { user in
             ManagerStaffDetailSheet(user: user)
         }

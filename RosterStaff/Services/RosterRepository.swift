@@ -1195,36 +1195,6 @@ final class RosterRepository {
         try await saveWageAward(award)
     }
 
-    /// Batch-create Console age-rate classification levels for an award, skipping
-    /// levels that already exist as earnings lines for that award.
-    @discardableResult
-    func addConsoleClassificationLevels(for awardId: String) async throws -> Int {
-        let existing = Set(
-            earningsLines
-                .filter { $0.awardId == awardId && $0.isClassificationLevel }
-                .map(\.level)
-        )
-        let toCreate = EarningsLine.consoleTemplateLines(awardId: awardId)
-            .filter { !existing.contains($0.level) }
-        for line in toCreate {
-            try await saveEarningsLine(line)
-        }
-        return toCreate.count
-    }
-
-    /// Ensure a wage award named "Console" exists; returns its id.
-    func ensureConsoleAward() async throws -> String {
-        if let existing = wageAwards.first(where: {
-            $0.name.caseInsensitiveCompare("Console") == .orderedSame
-        }) {
-            return existing.id
-        }
-        let ref = db.collection("wages").document()
-        let award = WageAward(id: ref.documentID, name: "Console", industry: "Retail")
-        try await ref.setData(award.asDictionary)
-        return ref.documentID
-    }
-
     /// Save a staff member's wage assignment (award/classification/lines).
     func saveStaffWageProfile(_ profile: StaffWageProfile) async throws {
         try await db.collection("wages").document(profile.id).setData(profile.asDictionary)

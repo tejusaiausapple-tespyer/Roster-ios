@@ -323,13 +323,25 @@ Then: `git checkout main && git merge --no-ff milestone-4-data-integrity && git 
 - Staff tab grid: top/bottom gradient fade while scrolling
   (`ScrollFadeHints` gained `showsChevrons: false` mode) — geometry-driven,
   device-size independent.
-- **DEVICE VERIFICATION**: (1) Wage tab: both segments render as grouped lists;
+- Device-feedback round (2026-07-10): (a) killed the ~100pt dead space above
+  the first card in Wage/Payroll — the loose zero-height
+  `TitlePillCollapseReporter` row formed an implicit List section (44pt min
+  row height + section spacing); it now sits in its own `Section` with
+  `.listSectionSpacing(0)` + `defaultMinListRowHeight 1`. (b) Console age-rate
+  seed template removed entirely (Wage button, editor shortcut, repo
+  `ensureConsoleAward`/`addConsoleClassificationLevels`,
+  `consoleTemplateClassifications/Lines`, template test) — owner decision:
+  managers create awards/levels manually. (c) Staff search field pinned
+  (`.navigationBarDrawer(displayMode: .always)`) so pull-to-refresh no longer
+  drags it down over the filter chips.
+- **DEVICE VERIFICATION**: (1) Wage tab: both segments start right under the
+  segmented control (no dead space); no Console age-rate button anywhere;
   swipe an award / classification level / pay item → centered dialog; Cancel
-  keeps it, Delete removes with toast. (2) Payroll: sections styled like the
-  rest of the module; swipe a draft payslip → centered confirm. (3) Staff:
-  scroll the grid — content fades under the filter chips (top) and glass
-  summary bar (bottom); check iPhone + iPad. (4) Title pill still collapses on
-  scroll in all three tabs, no giant blank gaps in Wage/Payroll lists.
+  keeps it, Delete removes with toast. (2) Payroll: "Pay period" card sits
+  just below the nav bar; swipe a draft payslip → centered confirm.
+  (3) Staff: search field always visible; pull-to-refresh spins without
+  dragging the search field; grid fades under top/bottom edges; iPhone +
+  iPad. (4) Title pill still collapses on scroll in Wage/Payroll/Staff.
 
 ## Owner (Sura) actions pending — Firebase console
 

@@ -112,7 +112,6 @@ struct ManagerWageView: View {
     @State private var segment: Segment = .awards
     @State private var activeSheet: ActiveSheet?
     @State private var toast: ToastMessage?
-    @State private var isAddingConsole = false
     @State private var pendingDelete: PendingDelete?
 
     var embedInNavigationStack = true
@@ -135,10 +134,17 @@ struct ManagerWageView: View {
             .padding(.vertical, 12)
 
             List {
-                TitlePillCollapseReporter()
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
+                // Zero-footprint scroll probe: own section with no spacing +
+                // defaultMinListRowHeight below. A loose row would form an
+                // implicit section (44pt min row height + section spacing)
+                // and push the first card ~100pt down.
+                Section {
+                    TitlePillCollapseReporter()
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+                .listSectionSpacing(0)
                 switch segment {
                 case .awards: awardsSection
                 case .lines: linesSections
@@ -146,6 +152,7 @@ struct ManagerWageView: View {
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
+            .environment(\.defaultMinListRowHeight, 1)
         }
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("Wage")
@@ -170,7 +177,7 @@ struct ManagerWageView: View {
             case .editAward(let award):
                 WageAwardEditorSheet(award: award) { save(award: $0) }
             case .newLine:
-                EarningsLineEditorSheet(line: nil, onSave: { save(line: $0) }, onSaveMany: { save(lines: $0) })
+                EarningsLineEditorSheet(line: nil, onSave: { save(line: $0) })
             case .editLine(let line):
                 EarningsLineEditorSheet(line: line, onSave: { save(line: $0) }) {
                     delete(ids: [line.id])
@@ -258,28 +265,9 @@ struct ManagerWageView: View {
 
     @ViewBuilder
     private var linesSections: some View {
-        Section {
-            Button {
-                Task { await addConsoleAgeRateTable() }
-            } label: {
-                HStack {
-                    if isAddingConsole {
-                        ProgressView()
-                    } else {
-                        Label("Add Console age-rate table", systemImage: "tablecells")
-                            .foregroundStyle(Theme.brand)
-                    }
-                    Spacer()
-                }
-            }
-            .disabled(isAddingConsole)
-        } footer: {
-            Text("Adds Under 17 through Adult 20+ with Mon–Fri and Weekend & PH rates. Skips levels that already exist. Creates a Console award if needed.")
-        }
-
         if classificationEntries.isEmpty {
             Section {
-                Text("No classification levels yet. Use the button above to add the Console age-rate table, or tap + to add levels manually.")
+                Text("No classification levels yet. Tap + to add each level from your award with its Mon–Fri and Weekend & PH hourly rates.")
                     .font(.subheadline)
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -420,24 +408,6 @@ struct ManagerWageView: View {
         }
     }
 
-    private func addConsoleAgeRateTable() async {
-        isAddingConsole = true
-        defer { isAddingConsole = false }
-        do {
-            let awardId = try await repo.ensureConsoleAward()
-            let added = try await repo.addConsoleClassificationLevels(for: awardId)
-            Haptics.success()
-            if added == 0 {
-                toast = ToastMessage(kind: .success, text: "Console age-rate levels are already saved.")
-            } else {
-                toast = ToastMessage(kind: .success, text: "Added \(added) Console classification level\(added == 1 ? "" : "s").")
-            }
-        } catch {
-            toast = ToastMessage(kind: .error, text: "Couldn't add levels. \(error.localizedDescription)")
-            Haptics.error()
-        }
-    }
-
     private func classificationCount(for award: WageAward) -> Int {
         let fromLines = repo.earningsLines.filter {
             $0.isClassificationLevel && $0.awardId == award.id
@@ -477,21 +447,6 @@ struct ManagerWageView: View {
             } catch {
                 toast = ToastMessage(kind: .error, text: "Couldn't save. \(error.localizedDescription)")
                 Haptics.error()
-            }
-        }
-    }
-
-    private func save(lines: [EarningsLine]) {
-        Task {
-            var failed = false
-            for line in lines {
-                do { try await repo.saveEarningsLine(line) } catch { failed = true }
-            }
-            if failed {
-                toast = ToastMessage(kind: .error, text: "Couldn't save some levels.")
-                Haptics.error()
-            } else {
-                Haptics.success()
             }
         }
     }
@@ -626,8 +581,6 @@ private struct EarningsLineEditorSheet: View {
     var onDelete: (() -> Void)?
     var migrateFromAwardId: String?
     var removeLegacyLevel: String?
-    /// When set, batch-create Console template levels for this award.
-    var onSaveMany: (([EarningsLine]) -> Void)?
 
     @State private var name: String
     @State private var displayName: String
@@ -650,14 +603,12 @@ private struct EarningsLineEditorSheet: View {
     }
 
     init(line: EarningsLine?, migrateFromAwardId: String? = nil, removeLegacyLevel: String? = nil,
-         onSave: @escaping (EarningsLine) -> Void, onDelete: (() -> Void)? = nil,
-         onSaveMany: (([EarningsLine]) -> Void)? = nil) {
+         onSave: @escaping (EarningsLine) -> Void, onDelete: (() -> Void)? = nil) {
         self.line = line
         self.migrateFromAwardId = migrateFromAwardId
         self.removeLegacyLevel = removeLegacyLevel
         self.onSave = onSave
         self.onDelete = onDelete
-        self.onSaveMany = onSaveMany
         _name = State(initialValue: line?.name ?? "")
         _displayName = State(initialValue: line?.displayName ?? "")
         _awardId = State(initialValue: line?.awardId ?? "")
@@ -725,18 +676,6 @@ private struct EarningsLineEditorSheet: View {
                     Text("Classification level")
                 } footer: {
                     Text("Each classification level is an earnings line with ordinary-hours rates. Weekend & PH rate is used by payroll when set — otherwise payroll defaults to base × 1.5 weekend / × 2.25 public holiday.")
-                }
-
-                if line == nil, !awardId.isEmpty {
-                    Section {
-                        Button {
-                            let lines = EarningsLine.consoleTemplateLines(awardId: awardId.isEmpty ? nil : awardId)
-                            onSaveMany?(lines)
-                            dismiss()
-                        } label: {
-                            Label("Add Console age-rate levels for this award", systemImage: "tablecells")
-                        }
-                    }
                 }
 
                 Section {
