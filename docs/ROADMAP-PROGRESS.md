@@ -15,6 +15,11 @@
 
 ## Milestone status
 
+- [x] **Marketing site responsiveness fixes** (branch `marketing-site-responsive-fixes`, completed 2026-07-13)
+  - Constrained mockup dimensions on desktop (`max-height: 540px`/`460px`), tablet (`38vh`), and mobile (`32vh`).
+  - Stacked showcase and download grids, scaled typographic headings, section paddings, and card gutters.
+  - Enabled flex wrapping for Hero tags and footer links to prevent horizontal scroll.
+  - Linked HTML pages to `style.css` and verified Vite production build succeeds.
 - [x] **M0 — Version control & safety net** (merged: `main`)
   - git init, baseline commit, tag `baseline-v1.0.0`, remote pushed
   - `docs/smoke-test.md` created (17-step regression gate)
