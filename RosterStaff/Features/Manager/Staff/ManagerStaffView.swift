@@ -9,6 +9,7 @@ struct ManagerStaffView: View {
     @State private var searchText = ""
     @State private var statusFilter: StatusFilter = .all
     @State private var selected: AppUser? = nil
+    @State private var showAddStaff = false
 
     var embedInNavigationStack = true
 
@@ -75,12 +76,23 @@ struct ManagerStaffView: View {
             ToolbarItem(placement: .principal) {
                 ScreenTitlePill(title: "Staff Directory", icon: "person.2.fill")
             }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showAddStaff = true
+                    Haptics.selection()
+                } label: {
+                    Image(systemName: "plus")
+                }
+            }
         }
         // .always pins the search field: with .automatic it hides until pulled,
         // so the pull-to-refresh gesture dragged it down over the filter bar.
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search name or email")
         .sheet(item: $selected) { user in
             ManagerStaffDetailSheet(user: user)
+        }
+        .sheet(isPresented: $showAddStaff) {
+            ManagerAddStaffSheet()
         }
     }
 

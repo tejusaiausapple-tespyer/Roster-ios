@@ -756,6 +756,48 @@ final class RosterRepository {
 
     // MARK: - Manager staff management
 
+    /// Create a staff member: the Worker creates the Firebase Auth account
+    /// (manager-authenticated endpoint), then we write users/{uid} and a
+    /// CREATE_USER audit entry — mirroring the web app's addUser flow. The new
+    /// user appears in `allUsers` via the existing snapshot listener. Returns
+    /// the new uid.
+    func createStaff(fullName: String, email: String, password: String,
+                     employmentType: EmploymentType,
+                     phone: String?, startDate: Date?) async throws -> String {
+        let localId = try await WorkerAPIClient.shared.createAuthUser(email: email, password: password)
+        let t = nowISO()
+        let data: [String: Any] = [
+            "id": localId,
+            "fullName": fullName,
+            "email": email,
+            "phone": phone ?? "",
+            "role": UserRole.staff.rawValue,
+            "employmentType": employmentType.rawValue,
+            "startDate": startDate.map { RosterCalendar.dayFormatter.string(from: $0) } ?? "",
+            "mustChangePassword": true,
+            "status": UserStatus.active.rawValue,
+            "createdAt": t,
+            "updatedAt": t,
+        ]
+        try await db.collection("users").document(localId).setData(data)
+        // Audit entry in the web client's user-management shape (NOT the
+        // payroll shape) so both apps read one consistent CREATE_USER trail.
+        if let actorId = currentUser?.id {
+            let auditId = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+            await bestEffort("auditLogs CREATE_USER") { [self] in
+                try await db.collection("auditLogs").document(auditId).setData([
+                    "id": auditId,
+                    "actorUserId": actorId,
+                    "action": "CREATE_USER",
+                    "entityType": "user",
+                    "entityId": localId,
+                    "createdAt": nowISO(),
+                ])
+            }
+        }
+        return localId
+    }
+
     /// Update one or more fields on a staff member's record — only the provided
     /// keys are written (per-field edits), plus `updatedAt`. Requires Firestore
     /// rules that permit manager writes to user documents (same elevated access

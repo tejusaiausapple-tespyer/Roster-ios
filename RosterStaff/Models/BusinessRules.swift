@@ -212,6 +212,13 @@ enum BusinessRules {
         return .pendingSubmission
     }
 
+    // MARK: - Email validation
+
+    static func isValidEmail(_ email: String) -> Bool {
+        let trimmed = email.trimmingCharacters(in: .whitespaces)
+        return trimmed.range(of: #"^[^@\s]+@[^@\s]+\.[^@\s]+$"#, options: .regularExpression) != nil
+    }
+
     // MARK: - Password validation (mirrors validatePassword, required rules only)
 
     /// Returns an array of unmet *required* password rules (empty == valid).
