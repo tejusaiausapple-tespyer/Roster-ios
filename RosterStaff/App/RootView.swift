@@ -91,14 +91,11 @@ struct AppLogoMark: View {
     var size: CGFloat = 64
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
-                .fill(Theme.brand)
-            Image(systemName: "calendar.badge.clock")
-                .font(.system(size: size * 0.5, weight: .semibold))
-                .foregroundStyle(.white)
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
+        Image("AppLogo")
+            .resizable()
+            .scaledToFill()
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+            .accessibilityHidden(true)
     }
 }

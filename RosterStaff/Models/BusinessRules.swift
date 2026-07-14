@@ -26,6 +26,14 @@ enum BusinessRules {
     /// Availability navigation lower bound (2 weeks back, though locked).
     static let availabilityMinWeekOffset = -2
 
+    // MARK: - Pay defaults (fallbacks when a staff member has no value set)
+
+    /// AU Superannuation Guarantee: 12% since 1 July 2025. Per-staff overrides
+    /// live on `AppUser.superRate` (percent); use this only as the fallback.
+    static let defaultSuperRatePercent = 12.0
+    /// Fallback hourly rate when `AppUser.hourlyRate` is unset.
+    static let defaultHourlyRate = 25.0
+
     // MARK: - Shift instants (timezone-aware, mirrors getShiftStartDateTime)
 
     static func shiftStartDateTime(date: String, time: String) -> Date {
@@ -113,6 +121,18 @@ enum BusinessRules {
         weekStartKey <= RosterCalendar.weekStartKey(now)
     }
 
+    /// Full staff lock decision (mirrors isAvailabilityWeekLockedForStaff):
+    /// past/current weeks are always locked, and future weeks are locked when
+    /// a manager has published & locked that roster week.
+    static func isWeekLockedForStaff(
+        weekStartKey: String,
+        managerLockedWeeks: Set<String>,
+        at now: Date = Date()
+    ) -> Bool {
+        isWeekLockedForStaff(weekStartKey: weekStartKey, at: now)
+            || managerLockedWeeks.contains(weekStartKey)
+    }
+
     /// Mirrors buildRecurringWeekKeys — every unlocked Monday key from `fromMonday`
     /// through the availability horizon.
     static func recurringWeekKeys(fromMonday: Date, at now: Date = Date()) -> [String] {
@@ -153,31 +173,50 @@ enum BusinessRules {
         return ts.status == .rejected
     }
 
-    /// Whether staff may submit / resubmit hours for this shift.
+    /// Whether staff may submit / edit / resubmit hours for this shift.
+    /// A submitted (pending) timesheet stays editable until the manager
+    /// approves it — matching the Firestore rules, which permit staff updates
+    /// while the status is pending/rejected/draft.
     static func canSubmitHours(shift: Shift, timesheet: Timesheet?, at now: Date = Date()) -> Bool {
         guard shift.status == .published, shift.isSubmittable(at: now) else { return false }
         guard let ts = timesheet else { return true }
-        return ts.status == .rejected
+        return ts.status == .rejected || ts.status == .pending || ts.status == .draft
     }
 
     // MARK: - Manager dashboard shift lifecycle
 
     /// Real-time lifecycle status of a shift from the manager's perspective.
-    /// A timesheet decides the state once one exists; otherwise the schedule
-    /// does (scheduled → in progress → pending submission).
-    static func managerShiftStatus(shift: Shift, timesheet: Timesheet?, at now: Date = Date()) -> ManagerShiftStatus {
+    /// A timesheet decides the state once one exists; otherwise the verified
+    /// attendance record does (actual clock-in/out); otherwise the schedule
+    /// (scheduled → in progress → pending submission).
+    static func managerShiftStatus(shift: Shift, timesheet: Timesheet?,
+                                   attendance: ShiftAttendance? = nil,
+                                   at now: Date = Date()) -> ManagerShiftStatus {
         if let ts = timesheet {
             switch ts.status {
             case .approved: return .approved
             case .pending: return .awaitingApproval
             case .rejected: return .rejected
             case .absentReported, .absent: return .absence
-            case .draft: break // not submitted yet — fall through to schedule
+            case .draft: break // not submitted yet — fall through
             }
+        }
+        // Verified attendance beats the schedule: an early clock-out means
+        // the shift is over (awaiting submission), not "in progress".
+        if let attendance {
+            if attendance.clockOutAt != nil { return .pendingSubmission }
+            if attendance.clockInAt != nil, now < shift.endDateTime { return .inProgress }
         }
         if now < shift.startDateTime { return .scheduled }
         if now < shift.endDateTime { return .inProgress }
         return .pendingSubmission
+    }
+
+    // MARK: - Email validation
+
+    static func isValidEmail(_ email: String) -> Bool {
+        let trimmed = email.trimmingCharacters(in: .whitespaces)
+        return trimmed.range(of: #"^[^@\s]+@[^@\s]+\.[^@\s]+$"#, options: .regularExpression) != nil
     }
 
     // MARK: - Password validation (mirrors validatePassword, required rules only)

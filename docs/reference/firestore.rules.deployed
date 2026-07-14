@@ -1,30 +1,20 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// REFERENCE COPY — deployed Firestore rules, exported from the Firebase
-// console by Sura on 2026-07-05. NOT deployed from this repo.
-//
-// The web repo's firestore.rules is STALE vs this deployed version. Diffs:
-//   1. isValidSelfUserUpdate allowedKeys additionally includes 'email'
-//   2. notificationTokens platforms additionally allow 'ios-native',
-//      'android-native'
-//   3. NEW: tasks collection (read: any authenticated; write: manager)
-//   4. NEW: task_completions collection (read: any authenticated;
-//      create/update: self-attributed completions; delete/write: manager)
-//
-// Keep this file updated whenever console rules change. The authoritative
-// deploy source should eventually move back into the web repo.
-// ═══════════════════════════════════════════════════════════════════════════
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
+    
+    // ─── HELPER FUNCTIONS ────────────────────────────────────────────────────────
+    
+    // Check if user is authenticated
     function isAuthenticated() {
       return request.auth != null;
     }
-
+    
+    // Helper to get user document
     function getUserData() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
-
+    
+    // Helper to check if user is an active manager.
     function isManager() {
       return isAuthenticated() &&
         exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
@@ -32,20 +22,39 @@ service cloud.firestore {
         getUserData().status == 'active';
     }
 
+    // Staff may update personal profile fields. Password-flow flags are server-managed.
+    // weeklyAvailability is intentionally NOT allowed here: it is written only by the
+    // trusted Cloudflare Worker (server-time lock) via the Admin service account.
     function isValidSelfUserUpdate() {
       let changedKeys = request.resource.data.diff(resource.data).affectedKeys();
       let allowedKeys = [
         'fullName',
-        'email',
         'phone',
         'dob',
         'address',
         'emergencyContact',
+        'emergencyContactName',
+        'emergencyContactPhone',
+        'emergencyContactAddress',
+        'emergencyContactEmail',
         'theme',
         'profileUpdateRequired',
-        'updatedAt'
+        'emailChangeRequired',
+        'updatedAt',
+        'lastLoginAt'
       ];
       return changedKeys.hasOnly(allowedKeys);
+    }
+
+    // A shift is over (and hours submittable) when the rostered end has
+    // passed, OR the staff member has a verified early clock-out on the
+    // attendance record. clockOutAt can only ever be written as a server
+    // timestamp (see shift_attendance rules), so this path can't be forged
+    // by a manipulated device clock.
+    function hasVerifiedClockOut(shiftId) {
+      return exists(/databases/$(database)/documents/shift_attendance/$(shiftId)) &&
+        get(/databases/$(database)/documents/shift_attendance/$(shiftId)).data.staffId == request.auth.uid &&
+        get(/databases/$(database)/documents/shift_attendance/$(shiftId)).data.clockOutAt is timestamp;
     }
 
     function isSubmittableStaffShift(timesheetData) {
@@ -53,8 +62,11 @@ service cloud.firestore {
         exists(/databases/$(database)/documents/shifts/$(timesheetData.shiftId)) &&
         get(/databases/$(database)/documents/shifts/$(timesheetData.shiftId)).data.staffId == request.auth.uid &&
         get(/databases/$(database)/documents/shifts/$(timesheetData.shiftId)).data.status == 'published' &&
-        get(/databases/$(database)/documents/shifts/$(timesheetData.shiftId)).data.submittableAfter is timestamp &&
-        request.time >= get(/databases/$(database)/documents/shifts/$(timesheetData.shiftId)).data.submittableAfter;
+        (
+          (get(/databases/$(database)/documents/shifts/$(timesheetData.shiftId)).data.submittableAfter is timestamp &&
+           request.time >= get(/databases/$(database)/documents/shifts/$(timesheetData.shiftId)).data.submittableAfter) ||
+          hasVerifiedClockOut(timesheetData.shiftId)
+        );
     }
 
     function isStaffTimesheetCreate(timesheetId) {
@@ -81,7 +93,7 @@ service cloud.firestore {
         'enabled'
       ]) &&
         request.resource.data.token is string &&
-        request.resource.data.platform in ['ios-pwa', 'android-pwa', 'macos-pwa', 'macos-browser', 'desktop', 'ios-native', 'android-native'] &&
+        request.resource.data.platform in ['ios-pwa', 'android-pwa', 'macos-pwa', 'macos-browser', 'desktop'] &&
         request.resource.data.userAgent is string &&
         request.resource.data.enabled is bool;
     }
@@ -98,15 +110,22 @@ service cloud.firestore {
         request.resource.data.createdAt == resource.data.createdAt &&
         request.resource.data.updatedAt == request.time;
     }
-
+    
+    // ─── COLLECTIONS ──────────────────────────────────────────────────────────────
+    
+    // Users collection
     match /users/{userId} {
       allow read: if isManager() || (isAuthenticated() && request.auth.uid == userId);
+      // Only managers can create users
       allow create: if isManager();
+      // Users can update their own personal details, but only managers can change roles, status, etc.
       allow update: if isManager() || (
         isAuthenticated() &&
         request.auth.uid == userId &&
         isValidSelfUserUpdate()
       );
+      // Real staff/manager profiles are retained for reporting integrity.
+      // Managers may only delete Firestore-only setup placeholders.
       allow delete: if isManager() &&
         resource.data.needsSetup == true &&
         resource.data.email == '';
@@ -122,76 +141,114 @@ service cloud.firestore {
         allow delete: if isAuthenticated() && request.auth.uid == userId;
       }
     }
-
+    
+    // Shifts collection
     match /shifts/{shiftId} {
+      // Managers can do everything. Staff can only read their own published shifts.
       allow read: if isManager() || (
-        isAuthenticated() &&
+        isAuthenticated() && 
         resource.data.status == 'published' &&
         resource.data.staffId == request.auth.uid
       );
       allow write: if isManager();
     }
-
+    
+    // Timesheets collection
     match /timesheets/{timesheetId} {
+      // Managers can do everything
       allow read: if isManager() || (
-        isAuthenticated() &&
+        isAuthenticated() && 
         resource.data.staffId == request.auth.uid
       );
-
+      
       allow create: if isAuthenticated() && (
-        isManager() ||
+        isManager() || 
         isStaffTimesheetCreate(timesheetId)
       );
-
+      
       allow update: if isAuthenticated() && (
         isManager() || (
-          resource.data.staffId == request.auth.uid &&
+          resource.data.staffId == request.auth.uid && 
           request.resource.data.staffId == request.auth.uid &&
           request.resource.data.shiftId == resource.data.shiftId &&
           isSubmittableStaffShift(request.resource.data) &&
+          // Staff may only edit their own non-confirmed records: a pending/rejected/
+          // draft timesheet, or their own (not yet manager-confirmed) absence report.
           (resource.data.status == 'pending' || resource.data.status == 'rejected' || resource.data.status == 'draft' || resource.data.status == 'absent_reported') &&
+          // An absence report must always carry zero worked hours, even on an update
+          // that does not change the status field (prevents claiming hours on absence).
           (request.resource.data.status != 'absent_reported' || request.resource.data.workedHours == 0) &&
           (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['submittedAt']) ||
            request.resource.data.submittedAt == request.time) &&
+          // Staff can never touch manager approval details
           !request.resource.data.diff(resource.data).affectedKeys().hasAny(['approvedBy', 'approvedAt', 'managerNotes']) &&
-          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
-           request.resource.data.status == 'pending' ||
+          // If status is updated, staff can only set it to 'pending', 'draft', or
+          // 'absent_reported' (a self-reported absence with zero worked hours).
+          // Staff can never set the manager-confirmed 'absent' or 'approved'.
+          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) || 
+           request.resource.data.status == 'pending' || 
            request.resource.data.status == 'draft' ||
            (request.resource.data.status == 'absent_reported' && request.resource.data.workedHours == 0)) &&
-          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['rejectedReason']) ||
-           !('rejectedReason' in request.resource.data) ||
-           request.resource.data.rejectedReason == null ||
+          // If rejectedReason is updated, it can only be cleared/nullified
+          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['rejectedReason']) || 
+           !('rejectedReason' in request.resource.data) || 
+           request.resource.data.rejectedReason == null || 
            request.resource.data.rejectedReason == '')
         )
       );
-
+      
+      // Managers can delete any timesheet. Staff may delete only their own
+      // not-yet-confirmed absence report (the "undo" path); they can never delete
+      // submitted hours or a manager-confirmed absence.
       allow delete: if isManager() || (
         isAuthenticated() &&
         resource.data.staffId == request.auth.uid &&
         resource.data.status == 'absent_reported'
       );
     }
-
+    
+    // AuditLogs collection
     match /auditLogs/{logId} {
+      // Only managers can read audit logs
       allow read: if isManager();
+      // Only managers or the Worker (via Admin SDK / service account) may create audit entries.
+      // Staff must never be able to write to the audit trail directly.
       allow create: if isManager();
       allow update, delete: if isManager();
     }
-
+    
+    // ImportBatches collection
     match /importBatches/{batchId} {
       allow read, write: if isManager();
     }
-
+    
+    // Wages collection
     match /wages/{wageId} {
       allow read: if isManager();
       allow write: if isManager();
     }
 
+    // Payslips: manager-controlled payroll. Staff may ONLY read their own
+    // SUBMITTED (or archived, i.e. superseded-but-published) payslips —
+    // drafts, reviews and approvals are invisible to them. Staff can never
+    // write. This is the security boundary for the whole payroll feature;
+    // the client-side filtering is UX only.
+    match /payslips/{payslipId} {
+      allow read: if isManager() || (
+        isAuthenticated() &&
+        resource.data.staffId == request.auth.uid &&
+        resource.data.status in ['submitted', 'archived']
+      );
+      allow write: if isManager();
+    }
+    
+    // Settings collection
     match /settings/{docId} {
       allow read: if isAuthenticated();
       allow write: if isManager();
     }
 
+    // Master roster spreadsheets can contain sensitive staff and business data.
     match /masterSheets/{sheetId} {
       allow read, write: if isManager();
       match /chunks/{chunkId} {
@@ -199,35 +256,116 @@ service cloud.firestore {
       }
     }
 
+    // Tasks — manager-defined recurring/one-off tasks, visible to all staff.
+    // (These were live in production but missing from this file; restored
+    // from the deployed-rules snapshot so a deploy doesn't drop them.)
+    match /tasks/{taskId} {
+      allow read: if isAuthenticated();
+      allow write: if isManager();
+    }
+
+    // Staff submit their own completions (completedBy must be themselves) and
+    // cannot overwrite a completion another staff member already submitted —
+    // they may only update a doc they own or one reopened by a manager redo
+    // (completed == false). Managers handle review writes: redo requests,
+    // cloud-photo cleanup, and managerDownloadedAt stamps.
+    match /task_completions/{completionId} {
+      allow read: if isAuthenticated();
+      allow write: if isManager();
+      allow create: if isAuthenticated() &&
+        request.resource.data.completedBy == request.auth.uid &&
+        (request.resource.data.staffPhotoUrl == null || request.resource.data.staffPhotoUrl is string);
+      allow update: if isAuthenticated() &&
+        request.resource.data.completedBy == request.auth.uid &&
+        (resource.data.completed == false || resource.data.completedBy == request.auth.uid) &&
+        (request.resource.data.staffPhotoUrl == null || request.resource.data.staffPhotoUrl is string);
+      allow delete: if isManager();
+    }
+
+    // Daily Jobs — reusable manager-curated job library (permanent) plus
+    // shift-scoped assignments. Staff read their own assignments and may only
+    // toggle the completion fields; managers own everything else.
+    match /daily_job_templates/{templateId} {
+      allow read: if isManager();
+      allow write: if isManager();
+    }
+
+    match /daily_job_assignments/{assignmentId} {
+      allow read: if isManager() ||
+        (isAuthenticated() && resource.data.staffId == request.auth.uid);
+      allow create, delete: if isManager();
+      allow update: if isManager() ||
+        (isAuthenticated() &&
+         resource.data.staffId == request.auth.uid &&
+         request.resource.data.diff(resource.data).affectedKeys()
+           .hasOnly(['completed', 'completedAt', 'completedBy']) &&
+         (request.resource.data.completedBy == request.auth.uid ||
+          request.resource.data.completedBy == null));
+    }
+
+    // Shift attendance — verified clock-in/out records written by the iOS app.
+    // Server timestamps are enforced: staff can only ever write clockInAt /
+    // clockOutAt as request.time (i.e. FieldValue.serverTimestamp()), so a
+    // manipulated device clock cannot forge the recorded times. Location
+    // fields (GeoPoints, geofence verdicts, device clocks) ride alongside.
+    match /shift_attendance/{shiftId} {
+      function attendanceShift() {
+        return get(/databases/$(database)/documents/shifts/$(shiftId)).data;
+      }
+
+      allow read: if isManager() || (
+        isAuthenticated() && resource.data.staffId == request.auth.uid
+      );
+
+      // Clock-in: only for the staff member the shift is assigned to,
+      // only on a published shift, with a server-stamped clockInAt and the
+      // shift's own date (keeps the manager window query honest).
+      allow create: if isAuthenticated() &&
+        request.resource.data.staffId == request.auth.uid &&
+        request.resource.data.shiftId == shiftId &&
+        exists(/databases/$(database)/documents/shifts/$(shiftId)) &&
+        attendanceShift().staffId == request.auth.uid &&
+        attendanceShift().status == 'published' &&
+        request.resource.data.date == attendanceShift().date &&
+        request.resource.data.clockInAt == request.time &&
+        !request.resource.data.keys().hasAny(['clockOutAt']);
+
+      // Clock-out (and any later merge): identity fields are frozen, and the
+      // server-time fields may only ever be written as request.time.
+      allow update: if isAuthenticated() &&
+        resource.data.staffId == request.auth.uid &&
+        request.resource.data.staffId == resource.data.staffId &&
+        request.resource.data.shiftId == resource.data.shiftId &&
+        request.resource.data.date == resource.data.date &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['clockInAt']) ||
+         request.resource.data.clockInAt == request.time) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['clockOutAt']) ||
+         request.resource.data.clockOutAt == request.time);
+
+      // Attendance records are an audit trail — staff can never delete them.
+      allow delete: if isManager();
+    }
+
+    // Messages collection — manager-to-staff one-way messaging
     match /messages/{messageId} {
+      // Message body must be non-empty and at most 500 characters.
       function isValidMessageData() {
         return request.resource.data.body is string &&
           request.resource.data.body.size() > 0 &&
           request.resource.data.body.size() <= 500;
       }
 
+      // Managers: full read; write only with valid body
       allow read: if isManager();
       allow create, update: if isManager() && isValidMessageData();
       allow delete: if isManager();
+      // Staff: read own messages only
       allow read: if isAuthenticated() && resource.data.recipientId == request.auth.uid;
+      // Staff: can only mark their own messages as read
       allow update: if isAuthenticated() &&
         resource.data.recipientId == request.auth.uid &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']) &&
         request.resource.data.read == true;
-    }
-
-    match /tasks/{taskId} {
-      allow read: if isAuthenticated();
-      allow write: if isManager();
-    }
-
-    match /task_completions/{completionId} {
-      allow read: if isAuthenticated();
-      allow write: if isManager();
-      allow create, update: if isAuthenticated() &&
-        request.resource.data.completedBy == request.auth.uid &&
-        (request.resource.data.staffPhotoUrl == null || request.resource.data.staffPhotoUrl is string);
-      allow delete: if isManager();
     }
   }
 }

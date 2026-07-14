@@ -9,6 +9,9 @@ struct SubmitHoursSheet: View {
 
     let shift: Shift
     let existing: Timesheet?
+    /// Device-recorded clock in/out session for this shift, if any — seeds
+    /// the times and break for a first submission.
+    let clock: ClockSession?
 
     @State private var start: Date
     @State private var end: Date
@@ -19,14 +22,33 @@ struct SubmitHoursSheet: View {
     @State private var showingUncompletedTasksAlert = false
     @State private var forceSubmit = false
 
-    init(shift: Shift, existing: Timesheet?) {
+    init(shift: Shift, existing: Timesheet?, clock: ClockSession? = nil) {
         self.shift = shift
         self.existing = existing
-        let startSeed = existing.flatMap { TimeConvert.date(from: $0.actualStart) } ?? TimeConvert.date(from: shift.rosteredStart) ?? Date()
-        let endSeed = existing.flatMap { TimeConvert.date(from: $0.actualEnd) } ?? TimeConvert.date(from: shift.rosteredEnd) ?? Date()
+        self.clock = (clock?.shiftId == shift.id) ? clock : nil
+        // Seed priority: previously submitted values → recorded clock session
+        // → rostered times. A recorded session with no breaks seeds 0m break.
+        // Early check-ins are clamped to the rostered start: the pre-shift
+        // window is unpaid, so paid time never begins before the roster says.
+        let clockSeed = self.clock
+        let startSeed = existing.flatMap { TimeConvert.date(from: $0.actualStart) }
+            ?? clockSeed.map { $0.paidStart(rosterStart: shift.startDateTime) }
+            ?? TimeConvert.date(from: shift.rosteredStart) ?? Date()
+        // "Use rostered end time" choice at clock-out seeds the roster's end;
+        // "stayed back for extra work" seeds the actual clock-out (editable).
+        let clockEndSeed: Date? = clockSeed.flatMap { session in
+            session.useRosteredEnd == true
+                ? TimeConvert.date(from: shift.rosteredEnd)
+                : session.clockOutAt
+        }
+        let endSeed = existing.flatMap { TimeConvert.date(from: $0.actualEnd) }
+            ?? clockEndSeed
+            ?? TimeConvert.date(from: shift.rosteredEnd) ?? Date()
         _start = State(initialValue: startSeed)
         _end = State(initialValue: endSeed)
-        _breakMinutes = State(initialValue: existing?.actualBreakMinutes ?? shift.breakMinutes)
+        _breakMinutes = State(initialValue: existing?.actualBreakMinutes
+                              ?? clockSeed.map { $0.timesheetBreakMinutes() }
+                              ?? shift.breakMinutes)
         _notes = State(initialValue: existing?.staffNotes ?? "")
     }
 
@@ -96,7 +118,7 @@ struct SubmitHoursSheet: View {
                         Task { await submit() }
                     } label: {
                         if isWorking { ProgressView().tint(.white) }
-                        else { Text(existing?.status == .rejected ? "Resubmit hours" : "Submit hours") }
+                        else { Text(submitTitle) }
                     }
                     .buttonStyle(PrimaryButtonStyle())
                     .disabled(isWorking || workedHours <= 0)
@@ -126,7 +148,7 @@ struct SubmitHoursSheet: View {
     }
 
     private var summaryHeader: some View {
-        GlassCard {
+        HeroCard {
             VStack(alignment: .leading, spacing: 10) {
                 Text(RosterFormat.date(shift.date))
                     .font(.subheadline.weight(.semibold))
@@ -197,20 +219,35 @@ struct SubmitHoursSheet: View {
         .buttonStyle(.plain)
     }
 
+    /// Editable-until-approved: pending/draft edits and rejected resubmissions
+    /// all go through the update path; only a first submission creates.
+    private var isEditingExisting: Bool {
+        guard let existing else { return false }
+        return existing.status == .rejected || existing.status == .pending || existing.status == .draft
+    }
+
+    private var submitTitle: String {
+        switch existing?.status {
+        case .rejected: return "Resubmit hours"
+        case .pending, .draft: return "Update hours"
+        default: return "Submit hours"
+        }
+    }
+
     private func submit() async {
         errorMessage = nil
         guard workedHours > 0 else { errorMessage = "Worked hours must be greater than zero."; return }
         guard let user = repo.currentUser else { errorMessage = "Not signed in."; return }
-        
+
         if pendingTasksCount > 0 && !forceSubmit {
             showingUncompletedTasksAlert = true
             return
         }
-        
+
         isWorking = true
         defer { isWorking = false; forceSubmit = false }
         do {
-            if let existing, existing.status == .rejected {
+            if let existing, isEditingExisting {
                 try await repo.resubmitTimesheet(id: existing.id, actualStart: startHHmm, actualEnd: endHHmm,
                                                  breakMinutes: breakMinutes, workedHours: workedHours, notes: notes)
             } else {
@@ -218,6 +255,8 @@ struct SubmitHoursSheet: View {
                                                actualEnd: endHHmm, breakMinutes: breakMinutes,
                                                workedHours: workedHours, notes: notes)
             }
+            // The recorded session's data now lives on the timesheet.
+            if repo.clockSession?.shiftId == shift.id { repo.clearClockSession() }
             Haptics.success()
             dismiss()
         } catch {

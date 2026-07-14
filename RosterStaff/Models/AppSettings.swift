@@ -20,7 +20,7 @@ struct AppSettings: Equatable {
     var acn: String
     var businessNotes: String
 
-    static let fallback = AppSettings(companyName: "Sura Roster")
+    static let fallback = AppSettings(companyName: "Rosterra")
 
     init(companyName: String,
          businessAddress: String = "",
@@ -47,7 +47,8 @@ struct AppSettings: Equatable {
     }
 
     init(data: [String: Any]) {
-        self.companyName = FS.string(data, "companyName") ?? "Sura Roster"
+        let rawName = FS.stringValue(data, "companyName")
+        self.companyName = rawName.isEmpty ? "Rosterra" : rawName
         self.businessAddress = FS.stringValue(data, "businessAddress")
         self.businessStreet = FS.stringValue(data, "businessStreet")
         self.businessSuburb = FS.stringValue(data, "businessSuburb")

@@ -9,17 +9,19 @@ struct AccountView: View {
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage("preferredColorScheme") private var preferredColorSchemeSetting: String = "system"
 
-    @State private var showChangePassword = false
-    @State private var showChangeEmail = false
+    @State private var activeSheet: AccountSheet?
     @State private var isEmailVerified = false
     @State private var showSignOutConfirm = false
     @State private var deviceAuthOn = false
     @State private var deviceAuthWorking = false
     @State private var pushEnabled = false
     @State private var toastMessage: ToastMessage?
-    @State private var showPasswordPrompt = false
-    @State private var showImagePicker = false
     @State private var profileImage: UIImage? = nil
+
+    private enum AccountSheet: Identifiable {
+        case changePassword, changeEmail, verifyPassword, imagePicker
+        var id: String { String(describing: self) }
+    }
 
     private let device = DeviceAuthService.shared
 
@@ -31,12 +33,17 @@ struct AccountView: View {
     var body: some View {
         NavigationStack {
             List {
+                TitlePillCollapseReporter()
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 photoSection
                 if user?.emailChangeRequired == true {
                     emailRequestSection
                 }
                 detailsSection
                 statsSection
+                payslipsSection
                 notificationsSection
                 appearanceSection
                 securitySection
@@ -53,32 +60,43 @@ struct AccountView: View {
                     ScreenTitlePill(title: "Account", icon: "person.crop.circle.fill")
                 }
             }
-            .sheet(isPresented: $showChangePassword) {
-                ChangePasswordView(isForced: false)
-            }
-            .sheet(isPresented: $showChangeEmail) {
-                ChangeEmailView { message in
-                    toastMessage = ToastMessage(kind: .success, text: message)
-                }
-            }
-            .sheet(isPresented: $showPasswordPrompt) {
-                if let email = user?.email {
-                    VerifyPasswordSheet(email: email) { verifiedPassword in
-                        Task {
-                            guard let uid = auth.uid else { return }
-                            do {
-                                try await device.enable(uid: uid)
-                                BiometricCredentialStore.save(email: email, password: verifiedPassword)
-                                auth.temporaryPassword = verifiedPassword
-                                deviceAuthOn = true
-                                auth.refreshDeviceAuthEnabled()
-                                Haptics.success()
-                                toastMessage = ToastMessage(kind: .success, text: "\(device.biometryLabel) enabled")
-                            } catch {
-                                toastMessage = ToastMessage(kind: .error, text: "Could not enable \(device.biometryLabel)")
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .changePassword:
+                    ChangePasswordView(isForced: false)
+                case .changeEmail:
+                    ChangeEmailView { message in
+                        toastMessage = ToastMessage(kind: .success, text: message)
+                    }
+                case .verifyPassword:
+                    if let email = user?.email {
+                        VerifyPasswordSheet(email: email) { verifiedPassword in
+                            Task {
+                                guard let uid = auth.uid else { return }
+                                do {
+                                    try await device.enable(uid: uid)
+                                    BiometricCredentialStore.save(email: email, password: verifiedPassword)
+                                    auth.temporaryPassword = verifiedPassword
+                                    deviceAuthOn = true
+                                    auth.refreshDeviceAuthEnabled()
+                                    Haptics.success()
+                                    toastMessage = ToastMessage(kind: .success, text: "\(device.biometryLabel) enabled")
+                                } catch {
+                                    toastMessage = ToastMessage(kind: .error, text: "Could not enable \(device.biometryLabel)")
+                                }
                             }
                         }
                     }
+                case .imagePicker:
+                    ImagePicker(image: Binding(
+                        get: { profileImage },
+                        set: { newImg in
+                            if let newImg {
+                                saveProfileImage(newImg)
+                                profileImage = newImg
+                            }
+                        }
+                    ))
                 }
             }
             .alert("Sign out?", isPresented: $showSignOutConfirm) {
@@ -91,17 +109,6 @@ struct AccountView: View {
             .task {
                 await refreshStatuses()
                 loadLocalProfileImage()
-            }
-            .sheet(isPresented: $showImagePicker) {
-                ImagePicker(image: Binding(
-                    get: { profileImage },
-                    set: { newImg in
-                        if let newImg {
-                            saveProfileImage(newImg)
-                            profileImage = newImg
-                        }
-                    }
-                ))
             }
         }
     }
@@ -118,7 +125,7 @@ struct AccountView: View {
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
                 Button {
-                    showChangeEmail = true
+                    activeSheet = .changeEmail
                 } label: {
                     Text("Change email").frame(maxWidth: .infinity)
                 }
@@ -132,7 +139,7 @@ struct AccountView: View {
         Section {
             VStack(spacing: 12) {
                 Button {
-                    showImagePicker = true
+                    activeSheet = .imagePicker
                 } label: {
                     ZStack(alignment: .bottomTrailing) {
                         if let profileImage {
@@ -219,7 +226,7 @@ struct AccountView: View {
                     }
                     Spacer()
                     Button {
-                        showChangeEmail = true
+                        activeSheet = .changeEmail
                     } label: {
                         Image(systemName: "pencil")
                             .font(.footnote)
@@ -228,9 +235,24 @@ struct AccountView: View {
                     .buttonStyle(.plain)
                 }
                 
+                if let employeeId = user?.employeeId, !employeeId.isEmpty {
+                    Divider().overlay(Theme.separator)
+
+                    // Employee ID (manager-assigned)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Employee ID")
+                            .font(.footnote.weight(.bold))
+                            .foregroundStyle(Theme.textTertiary)
+                            .textCase(.uppercase)
+                        Text(employeeId)
+                            .font(.body)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                }
+
                 if let member = user?.memberSince {
                     Divider().overlay(Theme.separator)
-                    
+
                     // Member Since
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Member Since")
@@ -285,6 +307,20 @@ struct AccountView: View {
         .background(RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous).fill(Theme.card))
     }
 
+    // MARK: Payslips
+
+    private var payslipsSection: some View {
+        Section("Pay") {
+            NavigationLink {
+                PayslipsView()
+            } label: {
+                // No count badge: payslips load one month at a time on demand,
+                // so the full history is deliberately never fetched here.
+                Label("Payslips", systemImage: "banknote")
+            }
+        }
+    }
+
     // MARK: Notifications
 
     private var notificationsSection: some View {
@@ -337,7 +373,7 @@ struct AccountView: View {
                 .disabled(deviceAuthWorking)
             }
             Button {
-                showChangePassword = true
+                activeSheet = .changePassword
             } label: {
                 Label("Change password", systemImage: "key")
             }
@@ -364,7 +400,8 @@ struct AccountView: View {
             HStack {
                 Label("Version", systemImage: "info.circle")
                 Spacer()
-                Text(appVersion).foregroundStyle(Theme.textSecondary)
+                Text(ReleaseHistory.current.versionString)
+                    .foregroundStyle(Theme.textSecondary)
             }
         }
     }
@@ -381,12 +418,6 @@ struct AccountView: View {
     }
 
     // MARK: Helpers
-
-    private var appVersion: String {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
-        return "\(version) (\(build))"
-    }
 
     private func refreshStatuses() async {
         try? await Auth.auth().currentUser?.reload()
@@ -423,7 +454,7 @@ struct AccountView: View {
                     // Password not in memory, show verification sheet
                     deviceAuthOn = false
                     auth.refreshDeviceAuthEnabled()
-                    showPasswordPrompt = true
+                    activeSheet = .verifyPassword
                 }
             } else {
                 device.disable(uid: uid)

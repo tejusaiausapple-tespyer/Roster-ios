@@ -14,7 +14,7 @@ struct ManagerBlockedView: View {
                 Text("This app is for staff")
                     .font(.title3.weight(.bold))
                     .foregroundStyle(Theme.textPrimary)
-                Text("You're signed in with a manager account. Please use the Sura Roster web app to manage your team.")
+                Text("You're signed in with a manager account. Please use the Rosterra web app to manage your team.")
                     .font(.subheadline)
                     .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)

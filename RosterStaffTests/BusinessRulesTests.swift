@@ -105,6 +105,34 @@ final class BusinessRulesTests: XCTestCase {
         XCTAssertFalse(BusinessRules.isWeekLockedForStaff(weekStartKey: "2026-06-08", at: now), "next week editable")
     }
 
+    /// The staff Availability screen writes weekly availability under
+    /// `dayFormatter.string(from: monday)` while the manager Availability
+    /// screen reads it back under `weekStartKey(monday)`. These must be the
+    /// same key for every navigable week offset or manager and staff silently
+    /// disagree about which week an entry belongs to.
+    func testStaffWriteKeyMatchesManagerReadKey() {
+        let now = TestSupport.instant("2026-07-05", "12:00") // Sunday
+        for offset in -4...12 {
+            let monday = RosterCalendar.addWeeks(offset, to: RosterCalendar.weekStart(now))
+            let staffWriteKey = RosterCalendar.dayFormatter.string(from: monday)
+            let managerReadKey = RosterCalendar.weekStartKey(monday)
+            XCTAssertEqual(staffWriteKey, managerReadKey, "offset \(offset)")
+        }
+    }
+
+    func testManagerAvailabilityWeekLock() {
+        let now = TestSupport.instant("2026-06-03", "12:00") // Wed of week 2026-06-01
+        let locked: Set<String> = ["2026-06-08"]
+        XCTAssertTrue(BusinessRules.isWeekLockedForStaff(weekStartKey: "2026-06-08", managerLockedWeeks: locked, at: now),
+                      "manager-locked future week is locked")
+        XCTAssertFalse(BusinessRules.isWeekLockedForStaff(weekStartKey: "2026-06-15", managerLockedWeeks: locked, at: now),
+                       "other future weeks stay editable")
+        XCTAssertTrue(BusinessRules.isWeekLockedForStaff(weekStartKey: "2026-06-01", managerLockedWeeks: [], at: now),
+                      "current week still locked with no manager locks")
+        XCTAssertFalse(BusinessRules.isWeekLockedForStaff(weekStartKey: "2026-06-08", managerLockedWeeks: [], at: now),
+                       "unlocked future week editable")
+    }
+
     func testRecurringWeekKeysSpanHorizon() {
         let now = TestSupport.instant("2026-06-01", "12:00") // Monday
         let keys = BusinessRules.recurringWeekKeys(fromMonday: now, at: now)
@@ -149,10 +177,13 @@ final class BusinessRulesTests: XCTestCase {
         // Status gate: drafts never submittable
         XCTAssertFalse(BusinessRules.canSubmitHours(shift: draft, timesheet: nil, at: afterShiftEnd))
 
-        // Timesheet gate: only rejected allows resubmission
+        // Timesheet gate: editable until approved (pending/rejected/draft),
+        // locked once approved or absence-confirmed.
         XCTAssertTrue(BusinessRules.canSubmitHours(shift: published, timesheet: TestSupport.timesheet(status: "rejected"), at: afterShiftEnd))
-        XCTAssertFalse(BusinessRules.canSubmitHours(shift: published, timesheet: TestSupport.timesheet(status: "pending"), at: afterShiftEnd))
+        XCTAssertTrue(BusinessRules.canSubmitHours(shift: published, timesheet: TestSupport.timesheet(status: "pending"), at: afterShiftEnd),
+                      "submitted hours stay editable until approved")
         XCTAssertFalse(BusinessRules.canSubmitHours(shift: published, timesheet: TestSupport.timesheet(status: "approved"), at: afterShiftEnd))
+        XCTAssertFalse(BusinessRules.canSubmitHours(shift: published, timesheet: TestSupport.timesheet(status: "absent"), at: afterShiftEnd))
     }
 
     func testCanReportAbsenceGates() {

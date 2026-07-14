@@ -55,6 +55,10 @@ struct ManagerCompanyDetailsView: View {
 
     var body: some View {
         Form {
+            TitlePillCollapseReporter()
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             Section("Company") {
                 LabeledContent("Name") {
                     TextField("Company name", text: $companyName)

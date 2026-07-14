@@ -4,8 +4,18 @@ struct HomeView: View {
     @Environment(RosterRepository.self) private var repo
     @Environment(AppRouter.self) private var router
 
-    @State private var showMessages = false
-    @State private var shareURL: URL?
+    @State private var activeSheet: HomeSheet?
+
+    private enum HomeSheet: Identifiable {
+        case messages
+        case share(URL)
+        var id: String {
+            switch self {
+            case .messages: return "messages"
+            case .share(let url): return "share-\(url.absoluteString)"
+            }
+        }
+    }
     @State private var toastMessage: ToastMessage?
 
     private var now: Date { Date() }
@@ -29,8 +39,15 @@ struct HomeView: View {
         HoursMetrics.compute(timesheets: repo.timesheets, shifts: repo.shifts, now: now)
     }
 
+    /// Manager → Company details → Company Name (`settings/app.companyName`).
+    private var headerCompanyName: String {
+        let name = repo.appSettings.companyName.trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? AppSettings.fallback.companyName : name
+    }
+
     var body: some View {
-        NavigationStack {
+        let companyName = headerCompanyName
+        return NavigationStack {
             TabScroll {
                 if repo.isLoading {
                     SkeletonCard()
@@ -42,23 +59,23 @@ struct HomeView: View {
                     upcomingSection
                 }
             }
-            .navigationTitle(greetingTitle)
+            .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    
-                    ScreenTitlePill(title: greetingTitle, icon: "house.fill")
+                ToolbarItem(placement: .topBarLeading) {
+                    ToolbarLeadingTitlePill(title: companyName)
+                        .accessibilityAddTraits(.isHeader)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     messagesButton
                 }
             }
             .refreshable { await repo.refreshFromServer() }
-            .sheet(isPresented: $showMessages) {
-                NotificationsSheet()
-            }
-            .sheet(item: $shareURL) { url in
-                ShareSheet(items: [url])
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .messages: NotificationsSheet()
+                case .share(let url): ShareSheet(items: [url])
+                }
             }
             .toast($toastMessage)
         }
@@ -79,38 +96,37 @@ struct HomeView: View {
     }
 
     private var messagesButton: some View {
-        Button {
-            showMessages = true
+        // Badge counts unread messages + pending Daily Jobs for the current shift.
+        let badgeCount = repo.unreadMessageCount + repo.pendingDailyJobCount
+        return Button {
+            activeSheet = .messages
         } label: {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: "bell")
                     .font(.body.weight(.semibold))
-                if repo.unreadMessageCount > 0 {
-                    Text("\(min(repo.unreadMessageCount, 9))")
+                if badgeCount > 0 {
+                    // Overlap the bell by ~a third — offset ≈ badge radius/2
+                    // keeps it attached to the icon instead of floating.
+                    Text("\(min(badgeCount, 9))")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.white)
                         .frame(width: 16, height: 16)
                         .background(Circle().fill(Theme.error))
-                        .offset(x: 8, y: -8)
+                        .offset(x: 5, y: -5)
                 }
             }
         }
-        .accessibilityLabel("Notifications, \(repo.unreadMessageCount) unread")
+        .accessibilityLabel("Notifications, \(badgeCount) unread")
     }
 
-    // MARK: Company
+    // MARK: Greeting header
 
-    @ViewBuilder
     private var companyHeader: some View {
-        if !repo.appSettings.companyName.isEmpty {
-            Text(repo.appSettings.companyName)
-                .font(.caption.weight(.bold))
-                .tracking(1.2)
-                .textCase(.uppercase)
-                .foregroundStyle(Theme.brand)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityAddTraits(.isHeader)
-        }
+        Text(greetingTitle)
+            .font(.title2.weight(.bold))
+            .foregroundStyle(Theme.textPrimary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityAddTraits(.isHeader)
     }
 
     // MARK: Today
@@ -134,8 +150,22 @@ struct HomeView: View {
                     actions: shiftActions(for: shift)
                 )
                 .contextMenu { calendarMenu(shift) }
+                if isClockable(shift) {
+                    ClockInCard(shift: shift) {
+                        router.pendingSubmitShiftId = shift.id
+                        router.select(.roster)
+                    }
+                }
             }
         }
+    }
+
+    /// Clock in/out applies until hours are submitted: no timesheet yet, or
+    /// there's an active/ended session for this shift awaiting submission.
+    private func isClockable(_ shift: Shift) -> Bool {
+        if repo.clockSession?.shiftId == shift.id { return true }
+        guard repo.clockSession == nil else { return false } // busy on another shift
+        return repo.timesheet(forShift: shift.id) == nil
     }
 
     // MARK: Hours
@@ -203,7 +233,7 @@ struct HomeView: View {
             toastMessage = ToastMessage(kind: .success, text: "Added to Calendar")
             Haptics.success()
         case .sharedFile(let url):
-            shareURL = url
+            activeSheet = .share(url)
         case .failed(let message):
             toastMessage = ToastMessage(kind: .error, text: message)
             Haptics.error()

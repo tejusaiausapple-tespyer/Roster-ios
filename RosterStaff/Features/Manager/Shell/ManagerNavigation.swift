@@ -10,6 +10,7 @@ enum ManagerTab: String, CaseIterable, Identifiable {
     case reports
     case tenure
     case wage
+    case payroll
     case account
 
     var id: String { rawValue }
@@ -25,6 +26,7 @@ enum ManagerTab: String, CaseIterable, Identifiable {
         case .reports: return "Reports"
         case .tenure: return "Tenure & Hours"
         case .wage: return "Wage"
+        case .payroll: return "Payroll"
         case .account: return "Account"
         }
     }
@@ -40,6 +42,7 @@ enum ManagerTab: String, CaseIterable, Identifiable {
         case .reports: return "chart.bar"
         case .tenure: return "rosette"
         case .wage: return "dollarsign.circle"
+        case .payroll: return "banknote"
         case .account: return "gear"
         }
     }

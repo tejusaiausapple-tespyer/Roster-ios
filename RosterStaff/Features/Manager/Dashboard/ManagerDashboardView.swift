@@ -4,16 +4,27 @@ import FirebaseAuth
 struct ManagerDashboardView: View {
     @Environment(RosterRepository.self) private var repo
 
-    @State private var showNewShiftEditor = false
+    @State private var activeSheet: DashboardSheet?
+
+    private enum DashboardSheet: Identifiable {
+        case newShift
+        case newTask
+        case assignJobs(Shift)
+        var id: String {
+            switch self {
+            case .newShift: return "newShift"
+            case .newTask: return "newTask"
+            case .assignJobs(let shift): return "assignJobs-\(shift.id)"
+            }
+        }
+    }
 
     private var todayKey: String {
         RosterCalendar.todayKey()
     }
     
     private var formattedDate: String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .full
-        return formatter.string(from: Date())
+        RosterFormat.dateFull(Date())
     }
     
     private var weekday: Int {
@@ -32,12 +43,13 @@ struct ManagerDashboardView: View {
 
     /// Lifecycle status per shift (Scheduled → In Progress → Pending →
     /// Awaiting Approval → Approved), derived by BusinessRules from the
-    /// schedule + timesheet. "In Progress" is schedule-based for now — a
-    /// future Staff Portal "Start Shift" action will track actual starts.
+    /// timesheet, the verified attendance record (actual clock-in/out),
+    /// and the schedule — in that order.
     private func lifecycleStatus(for shift: Shift) -> ManagerShiftStatus {
         BusinessRules.managerShiftStatus(
             shift: shift,
-            timesheet: repo.timesheets.first(where: { $0.shiftId == shift.id })
+            timesheet: repo.timesheets.first(where: { $0.shiftId == shift.id }),
+            attendance: repo.attendance(forShift: shift.id)
         )
     }
 
@@ -98,6 +110,15 @@ struct ManagerDashboardView: View {
                 
                 ScrollView {
                     VStack(spacing: 20) {
+                        // Data-layer errors (listener failures) were previously
+                        // silent — the dashboard is the manager's landing screen,
+                        // so surface them here.
+                        if let loadError = repo.loadError {
+                            Banner(kind: .error,
+                                   title: "Some data failed to load",
+                                   message: loadError)
+                        }
+
                         // Hero Header Card
                         headerCard
                         
@@ -129,6 +150,7 @@ struct ManagerDashboardView: View {
                     .padding(.horizontal, Theme.screenPadding)
                     .padding(.top, 12)
                     .padding(.bottom, 32)
+                    .tracksTitlePillCollapse()
                 }
                 .refreshable {
                     await repo.refreshFromServer()
@@ -141,8 +163,12 @@ struct ManagerDashboardView: View {
                     ScreenTitlePill(title: "Dashboard", icon: "square.grid.2x2.fill")
                 }
             }
-            .sheet(isPresented: $showNewShiftEditor) {
-                ManagerShiftEditorSheet(defaultDateKey: todayKey)
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .newShift: ManagerShiftEditorSheet(defaultDateKey: todayKey)
+                case .newTask: ManagerTaskEditorSheet(task: nil, defaultDateKey: todayKey)
+                case .assignJobs(let shift): DailyJobAssignSheet(shift: shift)
+                }
             }
         }
     }
@@ -213,7 +239,7 @@ struct ManagerDashboardView: View {
             metricCard(
                 value: "\(pendingTimesheetsCount) Awaiting",
                 label: "Pending Timesheets",
-                icon: "doc.text.badge.clock",
+                icon: "doc.badge.clock",
                 color: pendingTimesheetsCount > 0 ? Theme.warning : Theme.textSecondary
             )
         }
@@ -254,14 +280,11 @@ struct ManagerDashboardView: View {
             
             HStack(spacing: 12) {
                 actionButton(title: "New Shift", icon: "calendar.badge.plus", color: Theme.brand) {
-                    showNewShiftEditor = true
+                    activeSheet = .newShift
                 }
-                NavigationLink {
-                    ManagerPlaceholderView(tab: .tasks)
-                } label: {
-                    actionLabel(title: "New Task", icon: "checkmark.circle.badge.questionmark", color: Theme.accent)
+                actionButton(title: "New Task", icon: "checkmark.circle.badge.questionmark", color: Theme.accent) {
+                    activeSheet = .newTask
                 }
-                .buttonStyle(.plain)
                 NavigationLink {
                     ManagerStaffView(embedInNavigationStack: false)
                 } label: {
@@ -316,17 +339,24 @@ struct ManagerDashboardView: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(todaysShifts.enumerated()), id: \.element.id) { index, shift in
-                        let staffMember = repo.allUsers.first(where: { $0.id == shift.staffId })
+                        let staffMember = repo.user(id: shift.staffId)
                         let status = lifecycleStatus(for: shift)
 
-                        rosterRow(
-                            name: staffMember?.fullName ?? "Staff Member",
-                            role: shift.department ?? "General",
-                            time: "\(shift.rosteredStart) - \(shift.rosteredEnd)",
-                            status: status.title,
-                            tint: tint(for: status),
-                            inProgress: status == .inProgress
-                        )
+                        Button {
+                            activeSheet = .assignJobs(shift)
+                        } label: {
+                            rosterRow(
+                                name: staffMember?.fullName ?? "Staff Member",
+                                role: shift.department ?? "General",
+                                time: "\(shift.rosteredStart) - \(shift.rosteredEnd)",
+                                status: status.title,
+                                tint: tint(for: status),
+                                inProgress: status == .inProgress,
+                                jobs: repo.dailyJobs(forShift: shift.id)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Opens Daily Jobs assignment")
 
                         if index < todaysShifts.count - 1 {
                             Divider().overlay(Theme.separator)
@@ -337,12 +367,18 @@ struct ManagerDashboardView: View {
                     RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous)
                         .fill(Theme.card)
                 )
+                // Clip the stacked rows to the card's rounded shape so a
+                // highlighted row's full-bleed background/accent bar follows the
+                // rounded corners instead of poking past them (which read as a
+                // doubled edge on the top/bottom row).
+                .clipShape(RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous))
             }
         }
     }
     
     private func rosterRow(name: String, role: String, time: String, status: String,
-                           tint: Color, inProgress: Bool = false) -> some View {
+                           tint: Color, inProgress: Bool = false,
+                           jobs: [DailyJobAssignment] = []) -> some View {
         // The in-progress shift takes visual priority: brand bar + tinted row.
         HStack(spacing: 12) {
             Circle()
@@ -356,6 +392,16 @@ struct ManagerDashboardView: View {
                 Text("\(role) • \(time)")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
+                if !jobs.isEmpty {
+                    let done = jobs.filter(\.completed).count
+                    HStack(spacing: 3) {
+                        Image(systemName: done == jobs.count ? "checkmark.circle.fill" : "checklist")
+                            .font(.caption2)
+                        Text("Jobs \(done)/\(jobs.count)")
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .foregroundStyle(done == jobs.count ? Theme.accent : Theme.warning)
+                }
             }
 
             Spacer()
@@ -395,7 +441,7 @@ struct ManagerDashboardView: View {
                 VStack(spacing: 0) {
                     ForEach(Array(recentCompletions.enumerated()), id: \.element.id) { index, completion in
                         let task = repo.tasks.first(where: { $0.id == completion.taskId })
-                        let staffMember = repo.allUsers.first(where: { $0.id == completion.completedBy })
+                        let staffMember = repo.user(id: completion.completedBy)
                         
                         taskLogRow(
                             name: staffMember?.fullName ?? "Staff",
@@ -451,9 +497,7 @@ struct ManagerDashboardView: View {
     
     private func formatTime(_ date: Date?) -> String {
         guard let date else { return "—" }
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return RosterFormat.time(date)
     }
 }
 

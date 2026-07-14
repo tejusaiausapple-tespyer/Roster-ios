@@ -54,7 +54,9 @@ RosterRepository.start(uid:)
     │   ├── Listen: tasks WHERE active == true
     │   ├── Listen: task_completions WHERE date IN shift window (−28…+56 days)
     │   │           (no per-user filter — both roles see all completions in window)
-    │   └── Listen: settings/app (companyName)
+    │   ├── Listen: settings/app (companyName / ABN / address)
+    │   ├── Listen: settings/locations (manager work locations + geofences)
+    │   └── Listen: settings/availabilityLocks (locked roster weeks)
     │
     └── ROLE listeners (attached once the user doc arrives):
         │
@@ -63,12 +65,17 @@ RosterRepository.start(uid:)
         │   │           AND date IN shift window (−28…+56 days)
         │   ├── Listen: timesheets WHERE staffId == uid
         │   │           (client-side filtered to submittedAt ≥ 5 years back)
-        │   └── Listen: messages WHERE recipientId == uid AND sentAt ≥ 30 days back
+        │   ├── Listen: messages WHERE recipientId == uid AND sentAt ≥ 30 days back
+        │   ├── Listen: shift_attendance WHERE staffId == uid (own verified clock-in/out)
+        │   └── Listen: daily_job_assignments WHERE staffId == uid AND date IN shift window
         │
         └── If role == .manager:
             ├── Listen: shifts WHERE date IN shift window (−28…+56 days) — all staff, all statuses
             ├── Listen: timesheets WHERE submittedAt ≥ 90 days back — all staff
-            └── Listen: users (ALL) → populates allUsers
+            ├── Listen: users (ALL) → populates allUsers
+            ├── Listen: shift_attendance (all records in the shift window)
+            ├── Listen: daily_job_templates (permanent job library) + daily_job_assignments (window)
+            └── Listen: wages (manager-only — awards, earnings lines, staff wage profiles)
 ```
 
 ### Shared Properties (both roles use)
@@ -90,6 +97,16 @@ RosterRepository.start(uid:)
 | Property | Type | Description |
 |----------|------|-------------|
 | `allUsers` | `[AppUser]` | All staff members (for name resolution, staff picker) |
+| `wageAwards` | `[WageAward]` | Xero-AU-style pay awards + classifications (manager-only `wages` collection) |
+| `earningsLines` | `[EarningsLine]` | Earnings lines with rate types + super/tax flags |
+| `staffWageProfiles` | `[StaffWageProfile]` | Per-staff wage/super profiles |
+| `locations` | `[RosterLocation]` | Manager-defined work locations (`settings/locations`) |
+| `lockedAvailabilityWeeks` | `Set<String>` | Roster weeks whose staff availability the manager has locked (`settings/availabilityLocks`) |
+
+> Both-role properties added since this doc was first written: `attendanceRecords`
+> (`[ShiftAttendance]`), `dailyJobTemplates` (`[DailyJobTemplate]`, manager-loaded),
+> `dailyJobAssignments` (`[DailyJobAssignment]`). Staff stream only their own attendance /
+> assignments; managers stream all in the shift window.
 
 ---
 
@@ -164,9 +181,14 @@ Both sides use the exact same data models. There is no separate "manager model" 
 | `Timesheet` | Submitting/viewing own hours | Approving/rejecting all timesheets |
 | `AppUser` | Own profile only | All staff profiles (name resolution, staff picker) |
 | `Message` | Reading notifications | (Not actively used yet in manager UI) |
-| `RosterTask` | Completing tasks | Viewing completion logs |
-| `TaskCompletion` | Recording own completions | Viewing all completions |
-| `AppSettings` | Company name display | Company name display |
+| `RosterTask` | Completing tasks | Creating/editing/reviewing tasks |
+| `TaskCompletion` | Recording own completions | Viewing all completions, redo requests |
+| `AppSettings` | Company name display | Company name / ABN / address display + edit |
+| `ShiftAttendance` | Clock-in/out (server-timestamped) | Verified Attendance card, geofence verdicts |
+| `DailyJobTemplate` / `DailyJobAssignment` | Complete/undo assigned jobs | Curate job library, assign per shift |
+| `RosterLocation` | (workplace geofence for clock-in) | Create/edit work locations |
+| `WageModels` (award/line/profile) | — (never exposed to staff) | Wage module (manager-only) |
+| `ClockSession` | Live device-local clock timer | — |
 
 ---
 
@@ -179,6 +201,12 @@ Both sides use the exact same data models. There is no separate "manager model" 
 | `DeviceAuthService` | Biometric gate | Biometric gate |
 | `CalendarService` | Add shifts to calendar | Not used |
 | `FirebaseBootstrap` | Initialize Firebase | Same |
+| `LocationService` | GPS fix for clock-in/out geofence | — |
+| `NotificationService` | Register/sync FCM push token | Same |
+| `ServerClock` | Server-time reference (clock-skew detection) | Same |
+| `ShiftReminderScheduler` | Local shift-start / forgot-clock reminders | — |
+| `ImageCompressor` | Downscale/compress task proof photos (≤2 MB) | Reads |
+| `TaskPhotoCache` | Sandbox cache for task photos | Sandbox cache + 90-day review retention |
 
 ---
 
@@ -224,10 +252,22 @@ There's no polling, no manual refresh needed (though pull-to-refresh is availabl
 
 ### Firestore Rules (server-side)
 
-While the app uses client-side role filtering, Firestore Security Rules on the server enforce:
-- Staff can only read/write documents where `staffId == request.auth.uid`
-- Managers can read all documents and write shift/timesheet approval fields
-- All writes require authentication (`request.auth != null`)
+While the app uses client-side role filtering, Firestore Security Rules on the server enforce
+(authoritative copy: `docs/reference/firestore.rules.deployed`):
+- Staff read/write is scoped to their own records (`staffId`/`recipientId`/`completedBy ==
+  request.auth.uid`), with per-field whitelists — e.g. staff can never write approval fields
+  (`approvedBy`/`approvedAt`/`managerNotes`), and a self-reported absence must carry zero hours.
+- Managers can read all documents and write shift/timesheet approval fields (`isManager()` =
+  role `manager` + status `active`).
+- All writes require authentication (`request.auth != null`).
+- `shift_attendance` is an **append-only audit trail**: staff can never delete records, and
+  `clockInAt`/`clockOutAt` may only ever be written as `request.time`
+  (`FieldValue.serverTimestamp()`), so a manipulated device clock can't forge them.
+- The `wages` collection is **unreadable by staff** — earnings data is manager-only.
+
+> Access control is role-based, not tenant-based: the app is intentionally single-tenant
+> (one business per Firebase project), so there is no `businessId` partition key yet. See the
+> tenancy note in `docs/agents.md`.
 
 ### Client-Side Enforcement
 

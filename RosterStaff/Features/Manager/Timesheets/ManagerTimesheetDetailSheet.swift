@@ -12,6 +12,14 @@ struct ManagerTimesheetDetailSheet: View {
     @State private var showRejectionDialog = false
     @State private var rejectedReason: String = ""
     @State private var isSubmitting = false
+    @State private var toast: ToastMessage?
+    @State private var rejectError: String?
+
+    // Manager time corrections (pending timesheets only)
+    @State private var isEditingTimes = false
+    @State private var editedStart: Date = Date()
+    @State private var editedEnd: Date = Date()
+    @State private var editedBreak: Int = 0
 
     init(timesheet: Timesheet, shift: Shift?, isEmbedded: Bool = false) {
         self.timesheet = timesheet
@@ -20,8 +28,14 @@ struct ManagerTimesheetDetailSheet: View {
         _managerNotes = State(initialValue: timesheet.managerNotes ?? "")
     }
     
+    /// Live copy from the repository, so manager corrections show immediately;
+    /// falls back to the passed-in snapshot.
+    private var liveTimesheet: Timesheet {
+        repo.timesheets.first(where: { $0.id == timesheet.id }) ?? timesheet
+    }
+
     private var staffMember: AppUser? {
-        repo.allUsers.first(where: { $0.id == timesheet.staffId })
+        repo.user(id: timesheet.staffId)
     }
     
     private var rosteredHours: Double {
@@ -29,11 +43,11 @@ struct ManagerTimesheetDetailSheet: View {
     }
     
     private var actualHours: Double {
-        timesheet.workedHours
+        liveTimesheet.workedHours
     }
     
     private var rate: Double {
-        staffMember?.hourlyRate ?? 25.0
+        staffMember?.hourlyRate ?? BusinessRules.defaultHourlyRate
     }
     
     private var rosteredCost: Double {
@@ -45,7 +59,22 @@ struct ManagerTimesheetDetailSheet: View {
     }
     
     private var hoursMismatch: Bool {
-        abs(rosteredHours - actualHours) > 0.01
+        !isAbsence && abs(rosteredHours - actualHours) > 0.01
+    }
+
+    /// Staff-reported (awaiting review) OR manager-confirmed absence.
+    private var isAbsence: Bool {
+        timesheet.status == .absentReported || timesheet.status == .absent
+    }
+
+    /// A staff absence report still awaiting the manager's decision.
+    private var isAbsenceReported: Bool {
+        timesheet.status == .absentReported
+    }
+
+    /// Whether the manager can act (approve/confirm + reject) on this record.
+    private var isActionable: Bool {
+        timesheet.status == .pending || timesheet.status == .absentReported
     }
     
     var body: some View {
@@ -57,16 +86,32 @@ struct ManagerTimesheetDetailSheet: View {
                     VStack(spacing: 20) {
                         // Staff Profile Card
                         staffHeaderCard
+
+                        // Absence context — clearly distinguishes a no-show
+                        // report from a worked-hours submission.
+                        if isAbsence {
+                            absenceBanner
+                        }
+
+                        // Comparison Dashboard Grid (worked-hours submissions only)
+                        if !isAbsence {
+                            comparisonCard
+
+                            // Financial Variance Widget
+                            financialVarianceCard
+                        }
+
+                        // Verified attendance (server times + GPS), when recorded
+                        if let attendance = repo.attendance(forShift: timesheet.shiftId) {
+                            AttendanceCard(attendance: attendance, shift: shift)
+                        }
                         
-                        // Comparison Dashboard Grid
-                        comparisonCard
-                        
-                        // Financial Variance Widget
-                        financialVarianceCard
-                        
-                        // Staff Notes Card
+                        // Staff Notes Card — the absence reason for a no-show,
+                        // otherwise free-text notes on a worked-hours submission.
                         if let staffNotes = timesheet.staffNotes, !staffNotes.isEmpty {
-                            notesCard(title: "Staff Notes", content: staffNotes, icon: "note.text")
+                            notesCard(title: isAbsence ? "Absence Reason" : "Staff Notes",
+                                      content: staffNotes,
+                                      icon: isAbsence ? "person.fill.xmark" : "note.text")
                         }
                         
                         // Manager Notes Editor
@@ -78,7 +123,7 @@ struct ManagerTimesheetDetailSheet: View {
                     .padding(Theme.screenPadding)
                 }
                 .safeAreaInset(edge: .bottom) {
-                    if timesheet.status == .pending {
+                    if isActionable {
                         pinnedActionBar
                     }
                 }
@@ -95,6 +140,7 @@ struct ManagerTimesheetDetailSheet: View {
             .sheet(isPresented: $showRejectionDialog) {
                 rejectionDialogSheet
             }
+            .toast($toast)
         }
     }
     
@@ -135,6 +181,31 @@ struct ManagerTimesheetDetailSheet: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.cornerLarge).strokeBorder(Theme.separator, lineWidth: 1))
     }
     
+    /// Banner shown for absence records so the manager immediately sees this is
+    /// a no-show, not a worked-hours submission.
+    private var absenceBanner: some View {
+        let tint = Theme.warning
+        return HStack(spacing: 12) {
+            Image(systemName: "person.fill.xmark")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(isAbsenceReported ? "Absence reported" : "Absence confirmed")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(isAbsenceReported
+                     ? "Staff reported they did not attend this shift. Confirm the absence or reject to ask for worked hours."
+                     : "You confirmed this shift as a no-show.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            Spacer()
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: Theme.cornerLarge).fill(tint.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cornerLarge).strokeBorder(tint.opacity(0.3), lineWidth: 1))
+    }
+
     private var comparisonCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("SHIFT COMPARISON")
@@ -178,15 +249,34 @@ struct ManagerTimesheetDetailSheet: View {
                     Text("Actual Worked")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(hoursMismatch ? Theme.warning : Theme.brand)
-                    
-                    Text("\(timesheet.actualStart) - \(timesheet.actualEnd)")
+
+                    Text("\(liveTimesheet.actualStart) - \(liveTimesheet.actualEnd)")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Theme.textPrimary)
-                    Text("\(timesheet.actualBreakMinutes)m break")
+                    Text("\(liveTimesheet.actualBreakMinutes)m break")
                         .font(.caption)
                         .foregroundStyle(Theme.textTertiary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            // Correction editor: fix staff mistakes without a reject round-trip.
+            if timesheet.status == .pending {
+                Divider().overlay(Theme.separator)
+                if isEditingTimes {
+                    editTimesForm
+                } else {
+                    Button {
+                        editedStart = TimeConvert.date(from: liveTimesheet.actualStart) ?? Date()
+                        editedEnd = TimeConvert.date(from: liveTimesheet.actualEnd) ?? Date()
+                        editedBreak = liveTimesheet.actualBreakMinutes
+                        withAnimation { isEditingTimes = true }
+                    } label: {
+                        Label("Adjust submitted times", systemImage: "pencil.line")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Theme.brand)
+                    }
+                }
             }
         }
         .padding(16)
@@ -194,6 +284,54 @@ struct ManagerTimesheetDetailSheet: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.cornerLarge).strokeBorder(Theme.separator, lineWidth: 1))
     }
     
+    /// Inline time-correction form shown inside the comparison card.
+    private var editTimesForm: some View {
+        VStack(spacing: 10) {
+            HStack {
+                Text("Start")
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                DatePicker("", selection: $editedStart, displayedComponents: .hourAndMinute)
+                    .labelsHidden()
+            }
+            HStack {
+                Text("End")
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                DatePicker("", selection: $editedEnd, displayedComponents: .hourAndMinute)
+                    .labelsHidden()
+            }
+            Stepper("Break: \(editedBreak)m", value: $editedBreak,
+                    in: BusinessRules.breakMinutesMin...BusinessRules.breakMinutesMax,
+                    step: BusinessRules.breakMinutesStep)
+                .font(.subheadline.weight(.medium))
+
+            HStack(spacing: 12) {
+                Button("Cancel") {
+                    withAnimation { isEditingTimes = false }
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.textSecondary)
+
+                Spacer()
+
+                Button {
+                    saveAdjustedTimes()
+                } label: {
+                    if isSubmitting {
+                        ProgressView()
+                    } else {
+                        Text("Save correction")
+                            .font(.subheadline.weight(.bold))
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.brand)
+                .disabled(isSubmitting)
+            }
+        }
+    }
+
     private var financialVarianceCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("FINANCIAL ESTIMATES & VARIANCE")
@@ -270,7 +408,7 @@ struct ManagerTimesheetDetailSheet: View {
                 .padding(8)
                 .background(RoundedRectangle(cornerRadius: Theme.cornerMedium).fill(Theme.background))
                 .overlay(RoundedRectangle(cornerRadius: Theme.cornerMedium).strokeBorder(Theme.separator, lineWidth: 1))
-                .disabled(timesheet.status != .pending || isSubmitting)
+                .disabled(!isActionable || isSubmitting)
         }
         .padding(16)
         .background(RoundedRectangle(cornerRadius: Theme.cornerLarge).fill(Theme.card))
@@ -288,7 +426,9 @@ struct ManagerTimesheetDetailSheet: View {
                             .font(.subheadline.weight(.bold))
                             .foregroundStyle(Theme.textPrimary)
                         if let appAt = timesheet.approvedAt {
-                            Text("Approved on \(appAt)")
+                            // approvedAt is an ISO-8601 string; render it as a
+                            // readable date-time instead of the raw value.
+                            Text("Approved on \(FS.isoFormatter.date(from: appAt).map { RosterFormat.dateTime($0) } ?? appAt)")
                                 .font(.caption2)
                                 .foregroundStyle(Theme.textSecondary)
                         }
@@ -362,14 +502,14 @@ struct ManagerTimesheetDetailSheet: View {
             .disabled(isSubmitting)
 
             Button {
-                approve()
+                if isAbsenceReported { confirmAbsence() } else { approve() }
             } label: {
                 HStack {
                     if isSubmitting {
                         ProgressView().tint(.white)
                     } else {
-                        Image(systemName: "checkmark.circle")
-                        Text("Approve")
+                        Image(systemName: isAbsenceReported ? "person.fill.checkmark" : "checkmark.circle")
+                        Text(isAbsenceReported ? "Confirm absence" : "Approve")
                     }
                 }
                 .font(.subheadline.weight(.bold))
@@ -392,6 +532,10 @@ struct ManagerTimesheetDetailSheet: View {
                 Text("Specify a reason for rejecting this timesheet. The staff member will see this message and must resubmit their actual times.")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
+
+                if let rejectError {
+                    Banner(kind: .error, title: rejectError)
+                }
                 
                 TextField("E.g. Hours worked don't match store clock-in sheet", text: $rejectedReason)
                     .padding(12)
@@ -430,24 +574,64 @@ struct ManagerTimesheetDetailSheet: View {
     }
     
     // MARK: - Actions
-    
-    private func approve() {
+
+    private func saveAdjustedTimes() {
         isSubmitting = true
         Task {
+            defer { isSubmitting = false }
             do {
-                try await repo.approveTimesheet(id: timesheet.id, managerNotes: managerNotes.isEmpty ? nil : managerNotes)
-                Haptics.success()
-                isSubmitting = false
-                dismiss()
+                try await repo.managerAdjustTimesheet(
+                    id: timesheet.id,
+                    actualStart: TimeConvert.hhmm(from: editedStart),
+                    actualEnd: TimeConvert.hhmm(from: editedEnd),
+                    breakMinutes: editedBreak
+                )
+                Haptics.saveSuccess()
+                withAnimation { isEditingTimes = false }
+                toast = ToastMessage(kind: .success, text: "Times corrected")
             } catch {
-                isSubmitting = false
+                toast = ToastMessage(kind: .error, text: "Couldn't save. \(error.localizedDescription)")
+                Haptics.saveError()
             }
         }
     }
-    
-    private func reject() {
+
+    private func approve() {
         isSubmitting = true
         Task {
+            defer { isSubmitting = false }
+            do {
+                try await repo.approveTimesheet(id: timesheet.id, managerNotes: managerNotes.isEmpty ? nil : managerNotes)
+                Haptics.success()
+                dismiss()
+            } catch {
+                // Keep the sheet open so nothing the manager typed is lost.
+                toast = ToastMessage(kind: .error, text: "Approve failed. \(error.localizedDescription)")
+                Haptics.error()
+            }
+        }
+    }
+
+    private func confirmAbsence() {
+        isSubmitting = true
+        Task {
+            defer { isSubmitting = false }
+            do {
+                try await repo.confirmAbsence(id: timesheet.id, managerNotes: managerNotes.isEmpty ? nil : managerNotes)
+                Haptics.success()
+                dismiss()
+            } catch {
+                toast = ToastMessage(kind: .error, text: "Couldn't confirm absence. \(error.localizedDescription)")
+                Haptics.error()
+            }
+        }
+    }
+
+    private func reject() {
+        isSubmitting = true
+        rejectError = nil
+        Task {
+            defer { isSubmitting = false }
             do {
                 try await repo.rejectTimesheet(
                     id: timesheet.id,
@@ -455,11 +639,13 @@ struct ManagerTimesheetDetailSheet: View {
                     managerNotes: managerNotes.isEmpty ? nil : managerNotes
                 )
                 Haptics.success()
-                isSubmitting = false
                 showRejectionDialog = false
                 dismiss()
             } catch {
-                isSubmitting = false
+                // Shown inside the rejection sheet (a toast underneath would
+                // be hidden by it); the typed reason is preserved.
+                rejectError = "Reject failed. \(error.localizedDescription)"
+                Haptics.error()
             }
         }
     }

@@ -13,7 +13,7 @@ struct SetupRequiredView: View {
                 Text("Firebase setup required")
                     .font(.title3.weight(.bold))
                     .foregroundStyle(Theme.textPrimary)
-                Text("Add GoogleService-Info.plist for the iOS app (bundle id com.sura.roster.staff) to:")
+                Text("Add GoogleService-Info.plist for the iOS app (bundle id \(Bundle.main.bundleIdentifier ?? "com.surainvestments.roster")) to:")
                     .font(.subheadline)
                     .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)

@@ -22,15 +22,17 @@ struct TasksView: View {
     
     private var activeTasksForSelectedDay: [RosterTask] {
         let weekday = weekdayNumber(for: selectedDayDate)
-        return repository.tasks.filter { task in
-            if task.frequency == "once" {
-                return task.date == selectedDayKey
-            } else if task.frequency == "weekly" {
-                return task.dayOfWeek?.contains(weekday) ?? false
-            } else {
-                return true // "daily"
+        let uid = repository.currentUser?.id
+        return repository.tasks
+            .filter { $0.isActive(onDayKey: selectedDayKey, weekday: weekday) && $0.isAssigned(to: uid) }
+            .sorted { a, b in
+                let ac = isTaskCompleted(a), bc = isTaskCompleted(b)
+                if ac != bc { return !ac }
+                if a.priorityLevel.weight != b.priorityLevel.weight {
+                    return a.priorityLevel.weight < b.priorityLevel.weight
+                }
+                return (a.dueTime ?? "99:99") < (b.dueTime ?? "99:99")
             }
-        }
     }
     
     private var totalTasksCount: Int {
@@ -115,11 +117,37 @@ struct TasksView: View {
                                         Card(accentColor: isCompleted ? Theme.accent : Theme.warning) {
                                             HStack(alignment: .top, spacing: 14) {
                                                 VStack(alignment: .leading, spacing: 6) {
-                                                    Text(task.title)
-                                                        .font(.body.weight(.bold))
-                                                        .foregroundStyle(Theme.textPrimary)
-                                                        .multilineTextAlignment(.leading)
-                                                    
+                                                    HStack(spacing: 6) {
+                                                        if task.priorityLevel == .high {
+                                                            Image(systemName: "exclamationmark.circle.fill")
+                                                                .font(.caption)
+                                                                .foregroundStyle(Theme.error)
+                                                        }
+                                                        Text(task.title)
+                                                            .font(.body.weight(.bold))
+                                                            .foregroundStyle(Theme.textPrimary)
+                                                            .multilineTextAlignment(.leading)
+                                                    }
+
+                                                    if let due = task.dueTime, !isCompleted {
+                                                        HStack(spacing: 4) {
+                                                            Image(systemName: "clock").font(.caption2)
+                                                            Text("Due by \(due)")
+                                                                .font(.caption.weight(.semibold))
+                                                        }
+                                                        .foregroundStyle(Theme.warning)
+                                                    }
+
+                                                    if completion?.isRedoRequested == true {
+                                                        HStack(spacing: 4) {
+                                                            Image(systemName: "arrow.uturn.backward.circle.fill")
+                                                                .font(.caption)
+                                                            Text("Redo requested")
+                                                                .font(.caption.weight(.semibold))
+                                                        }
+                                                        .foregroundStyle(Theme.warning)
+                                                    }
+
                                                     if let desc = task.description, !desc.isEmpty {
                                                         Text(desc)
                                                             .font(.subheadline)
@@ -155,6 +183,7 @@ struct TasksView: View {
                             }
                             .padding(.horizontal, Theme.screenPadding)
                             .padding(.bottom, 24)
+                            .tracksTitlePillCollapse()
                         }
                     }
                 }
@@ -175,8 +204,12 @@ struct TasksView: View {
     // MARK: - Helpers
     
     private var markedKeys: Set<String> {
-        // Mark keys that have completions
-        Set(repository.taskCompletions.filter { $0.completed }.map { $0.date })
+        // Mark days where a task relevant to this user was completed
+        let uid = repository.currentUser?.id
+        let myTaskIds = Set(repository.tasks.filter { $0.isAssigned(to: uid) }.compactMap { $0.id })
+        return Set(repository.taskCompletions
+            .filter { $0.completed && myTaskIds.contains($0.taskId) }
+            .map { $0.date })
     }
     
     private func isTaskCompleted(_ task: RosterTask) -> Bool {
@@ -196,10 +229,10 @@ struct TasksView: View {
     private func miniStat(value: String, label: String, tint: Color = Theme.textPrimary) -> some View {
         VStack(spacing: 2) {
             Text(value)
-                .font(.system(size: 20, weight: .bold))
+                .font(.system(.title3, design: .default).weight(.bold))
                 .foregroundStyle(tint)
             Text(label)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(.caption2, design: .default).weight(.semibold))
                 .foregroundStyle(Theme.textSecondary)
                 .textCase(.uppercase)
         }
@@ -208,9 +241,7 @@ struct TasksView: View {
     
     private func formatTime(_ date: Date?) -> String {
         guard let date else { return "" }
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return RosterFormat.time(date)
     }
 }
 
@@ -221,7 +252,9 @@ struct TaskCompletionDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     
     @State private var showingCamera = false
-    @State private var capturedImage: UIImage? = nil
+    @State private var capturedImages: [UIImage] = []
+    @State private var cameraImage: UIImage? = nil
+    @State private var noteText = ""
     @State private var isSubmitting = false
     @State private var errorMessage: String? = nil
     @State private var fullscreenImageURL: URL? = nil
@@ -328,7 +361,11 @@ struct TaskCompletionDetailSheet: View {
                                             .font(.footnote)
                                             .foregroundStyle(Theme.textSecondary)
                                         Spacer()
-                                        Text(repository.currentUser?.fullName ?? comp.completedBy ?? "Staff")
+                                        // Resolve the actual completer, not whoever is viewing.
+                                        Text(repository.allUsers.first(where: { $0.id == comp.completedBy })?.fullName
+                                             ?? (comp.completedBy == repository.currentUser?.id
+                                                 ? repository.currentUser?.fullName : nil)
+                                             ?? "Staff")
                                             .font(.body.weight(.semibold))
                                             .foregroundStyle(Theme.textPrimary)
                                     }
@@ -347,59 +384,117 @@ struct TaskCompletionDetailSheet: View {
                                 .background(Theme.card)
                                 .clipShape(RoundedRectangle(cornerRadius: Theme.cornerMedium))
                                 
-                                Text("Verification Photo")
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(Theme.textPrimary)
-                                    .padding(.top, 4)
-                                
-                                TaskPhotoView(taskId: task.id ?? "", date: dateKey, urlString: comp.staffPhotoUrl)
-                                    .frame(maxWidth: .infinity)
-                                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerMedium))
+                                if let note = comp.note, !note.isEmpty {
+                                    Text("Note: \(note)")
+                                        .font(.footnote)
+                                        .foregroundStyle(Theme.textSecondary)
+                                }
+
+                                if task.photoRequired {
+                                    Text("Verification Photo")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(Theme.textPrimary)
+                                        .padding(.top, 4)
+
+                                    // Staff photos are local-only: once the
+                                    // week-end sweep clears the cache, show a
+                                    // placeholder rather than re-downloading.
+                                    TaskPhotoView(taskId: task.id ?? "", date: dateKey,
+                                                  urlStrings: comp.photoUrls, localOnly: true)
+                                        .frame(maxWidth: .infinity)
+                                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerMedium))
+                                }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                         } else {
                             // Completion action
                             VStack(alignment: .leading, spacing: 14) {
-                                Text("Upload Verification Photo")
-                                    .font(.headline)
-                                    .foregroundStyle(Theme.textPrimary)
-                                
-                                if let capturedImage {
-                                    Image(uiImage: capturedImage)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fit)
-                                        .frame(maxHeight: 240)
-                                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerMedium))
-                                        .overlay(alignment: .topTrailing) {
-                                            Button {
-                                                self.capturedImage = nil
-                                            } label: {
-                                                Image(systemName: "xmark.circle.fill")
-                                                    .font(.title2)
-                                                    .foregroundStyle(.white)
-                                                    .shadow(radius: 2)
-                                            }
-                                            .padding(8)
+                                if let comp = completion, comp.isRedoRequested {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Label("Redo requested by your manager", systemImage: "arrow.uturn.backward.circle.fill")
+                                            .font(.subheadline.weight(.bold))
+                                            .foregroundStyle(Theme.warning)
+                                        if let reason = comp.redoReason, !reason.isEmpty {
+                                            Text("Reason: \(reason)")
+                                                .font(.footnote)
+                                                .foregroundStyle(Theme.textSecondary)
                                         }
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding()
+                                    .background(Theme.warning.opacity(0.1))
+                                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerMedium))
+                                }
+
+                                if !task.photoRequired {
+                                    Text("Mark as Done")
+                                        .font(.headline)
+                                        .foregroundStyle(Theme.textPrimary)
+                                    Text("No photo needed for this task — just tick it off below.")
+                                        .font(.subheadline)
+                                        .foregroundStyle(Theme.textSecondary)
                                 } else {
-                                    Button {
-                                        showingCamera = true
-                                    } label: {
-                                        HStack {
-                                            Image(systemName: "camera.fill")
-                                            Text("Open Camera")
+                                    Text("Upload Verification Photo")
+                                        .font(.headline)
+                                        .foregroundStyle(Theme.textPrimary)
+                                }
+
+                                if task.photoRequired {
+                                    if !capturedImages.isEmpty {
+                                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 10)], spacing: 10) {
+                                            ForEach(Array(capturedImages.enumerated()), id: \.offset) { index, image in
+                                                Image(uiImage: image)
+                                                    .resizable()
+                                                    .aspectRatio(contentMode: .fill)
+                                                    .frame(height: 100)
+                                                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerMedium))
+                                                    .overlay(alignment: .topTrailing) {
+                                                        Button {
+                                                            capturedImages.remove(at: index)
+                                                        } label: {
+                                                            Image(systemName: "xmark.circle.fill")
+                                                                .font(.title3)
+                                                                .foregroundStyle(.white)
+                                                                .shadow(radius: 2)
+                                                        }
+                                                        .padding(4)
+                                                    }
+                                            }
                                         }
-                                        .font(.subheadline.weight(.semibold))
-                                        .padding()
-                                        .frame(maxWidth: .infinity)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous)
-                                                .strokeBorder(Theme.brand, lineWidth: 1.5)
-                                        )
-                                        .foregroundStyle(Theme.brand)
+                                    }
+
+                                    if capturedImages.count < RosterRepository.maxPhotosPerCompletion {
+                                        Button {
+                                            showingCamera = true
+                                        } label: {
+                                            HStack {
+                                                Image(systemName: "camera.fill")
+                                                Text(capturedImages.isEmpty
+                                                     ? "Open Camera"
+                                                     : "Add Another Photo (\(capturedImages.count)/\(RosterRepository.maxPhotosPerCompletion))")
+                                            }
+                                            .font(.subheadline.weight(.semibold))
+                                            .padding()
+                                            .frame(maxWidth: .infinity)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous)
+                                                    .strokeBorder(Theme.brand, lineWidth: 1.5)
+                                            )
+                                            .foregroundStyle(Theme.brand)
+                                        }
+                                    } else {
+                                        Text("Photo limit reached (\(RosterRepository.maxPhotosPerCompletion)).")
+                                            .font(.caption)
+                                            .foregroundStyle(Theme.textTertiary)
                                     }
                                 }
                                 
+                                TextField("Add a note (optional)", text: $noteText, axis: .vertical)
+                                    .lineLimit(2...4)
+                                    .padding(12)
+                                    .background(Theme.card)
+                                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerMedium))
+
                                 if let errorMessage {
                                     Text(errorMessage)
                                         .font(.caption)
@@ -422,10 +517,10 @@ struct TaskCompletionDetailSheet: View {
                                     .foregroundStyle(.white)
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 16)
-                                    .background(capturedImage == nil ? Color.gray : Theme.brandStrong)
+                                    .background((task.photoRequired && capturedImages.isEmpty) ? Color.gray : Theme.brandStrong)
                                     .clipShape(RoundedRectangle(cornerRadius: Theme.cornerMedium))
                                 }
-                                .disabled(capturedImage == nil || isSubmitting)
+                                .disabled((task.photoRequired && capturedImages.isEmpty) || isSubmitting)
                             }
                         }
                     }
@@ -442,14 +537,20 @@ struct TaskCompletionDetailSheet: View {
                 }
             }
             .sheet(isPresented: $showingCamera) {
-                CameraPicker(image: $capturedImage)
+                CameraPicker(image: $cameraImage)
+            }
+            .onChange(of: cameraImage) {
+                if let cameraImage {
+                    capturedImages.append(cameraImage)
+                    self.cameraImage = nil
+                }
             }
             .sheet(item: $fullscreenImageURL) { url in
                 FullscreenImageView(url: url)
             }
         }
     }
-    
+
     private func submitCompletion() {
         guard let taskId = task.id else { return }
         isSubmitting = true
@@ -457,75 +558,91 @@ struct TaskCompletionDetailSheet: View {
         
         Task {
             do {
-                try await repository.completeTask(taskId: taskId, date: dateKey, image: capturedImage)
+                try await repository.completeTask(
+                    taskId: taskId, date: dateKey,
+                    images: task.photoRequired ? capturedImages : [],
+                    note: noteText)
                 isSubmitting = false
+                Haptics.submitSuccess()
                 dismiss()
             } catch {
                 errorMessage = error.localizedDescription
                 isSubmitting = false
+                Haptics.submitError()
             }
         }
     }
     
     private func formatDateTime(_ date: Date?) -> String {
         guard let date else { return "" }
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return RosterFormat.dateTime(date)
     }
 }
 
 struct TaskPhotoView: View {
     let taskId: String
     let date: String
-    let urlString: String?
+    let urlStrings: [String]
+    /// Staff mode: never hit Firebase — show the sandbox copies if they still
+    /// exist, otherwise a "submitted" placeholder. Managers (default) may
+    /// download once, after which the local cache serves every view.
+    var localOnly: Bool = false
     @Environment(RosterRepository.self) private var repository
-    @State private var image: UIImage? = nil
+    @State private var images: [UIImage] = []
     @State private var isLoading = false
-    
-    @ViewBuilder
+    @State private var didLoad = false
+
     var body: some View {
-        if let image {
-            Image(uiImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.cornerMedium))
-                .onAppear {
-                    // Refresh from cache on load
-                    if self.image == nil {
-                        self.image = TaskPhotoCache.load(taskId: taskId, date: date)
+        Group {
+            if !images.isEmpty {
+                VStack(spacing: 10) {
+                    ForEach(Array(images.enumerated()), id: \.offset) { _, image in
+                        Image(uiImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerMedium))
                     }
                 }
-        } else if isLoading {
-            ProgressView()
-                .padding()
-        } else if let urlString, !urlString.isEmpty {
-            Color.clear
-                .task {
-                    isLoading = true
-                    image = TaskPhotoCache.load(taskId: taskId, date: date)
-                    if image == nil {
-                        image = await repository.downloadAndCachePhoto(taskId: taskId, date: date, urlString: urlString)
-                    }
-                    isLoading = false
-                }
-        } else {
-            HStack(spacing: 6) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(Theme.accent)
-                Text("Photo verified & cleared")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.textSecondary)
-            }
-            .padding(.vertical, 8)
-            .onAppear {
-                // Check cache if download URL was deleted
-                if self.image == nil {
-                    self.image = TaskPhotoCache.load(taskId: taskId, date: date)
-                }
+            } else if isLoading {
+                ProgressView()
+                    .padding()
+            } else if didLoad {
+                placeholder(localOnly ? "Photo submitted" : "Photo verified & cleared")
+            } else {
+                Color.clear.frame(height: 1)
             }
         }
+        .task(id: urlStrings) {
+            isLoading = true
+            images = TaskPhotoCache.loadAll(taskId: taskId, date: date)
+            if images.isEmpty && !localOnly && !urlStrings.isEmpty {
+                images = await repository.downloadAndCachePhotos(taskId: taskId, date: date, urlStrings: urlStrings)
+            }
+            isLoading = false
+            didLoad = true
+        }
+    }
+
+    private func placeholder(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(Theme.accent)
+            Text(text)
+                .font(.footnote)
+                .foregroundStyle(Theme.textSecondary)
+        }
+        .padding(.vertical, 8)
+    }
+
+    private var submittedPlaceholder: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(Theme.accent)
+            Text("Photo submitted")
+                .font(.footnote)
+                .foregroundStyle(Theme.textSecondary)
+        }
+        .padding(.vertical, 8)
     }
 }
 

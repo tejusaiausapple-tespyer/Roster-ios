@@ -65,13 +65,32 @@ struct WorkerAPIClient {
         for (key, value) in weeklyAvailability {
             weekly[key] = value.asDictionary
         }
-        _ = try await post(path: "api/staff/availability",
-                           body: ["userId": userId, "weeklyAvailability": weekly])
+        let result = try await post(path: "api/staff/availability",
+                                    body: ["userId": userId, "weeklyAvailability": weekly])
+        guard result["ok"] as? Bool == true else {
+            throw WorkerAPIError.server(
+                (result["error"] as? String) ?? "Availability could not be saved. Please try again.")
+        }
     }
 
     /// POST /api/complete-password-change — clears the first-login flag.
     func completePasswordChange() async throws {
         _ = try await post(path: "api/complete-password-change", body: nil, forceRefreshToken: true)
+    }
+
+    // MARK: - Manager endpoints
+
+    /// POST /api/create-auth-user — manager-only. Creates the Firebase Auth
+    /// account and returns its uid (localId). The Firestore profile doc is
+    /// written by the caller (RosterRepository.createStaff), mirroring the
+    /// web app's addUser flow.
+    func createAuthUser(email: String, password: String) async throws -> String {
+        let json = try await post(path: "api/create-auth-user",
+                                  body: ["email": email, "password": password])
+        guard let localId = json["localId"] as? String, !localId.isEmpty else {
+            throw WorkerAPIError.server("Account was created but no user id was returned.")
+        }
+        return localId
     }
 
     // MARK: - Notification triggers (best-effort, fire-and-forget)

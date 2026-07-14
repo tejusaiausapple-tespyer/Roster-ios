@@ -59,6 +59,34 @@ final class ModelParsingTests: XCTestCase {
         XCTAssertFalse(user.mustChangePassword)
     }
 
+    func testEmployeeIdParsing() {
+        let user = AppUser(id: "u1", data: [
+            "fullName": "Ada Lovelace", "email": "ada@x.com", "employeeId": "EMP001",
+        ])!
+        XCTAssertEqual(user.employeeId, "EMP001")
+
+        let noId = AppUser(id: "u2", data: ["fullName": "Bob", "email": "bob@x.com"])!
+        XCTAssertNil(noId.employeeId, "absent employeeId parses as nil, not empty string")
+    }
+
+    func testEmergencyContactFieldsAndLegacyFallback() {
+        let legacy = AppUser(id: "u2", data: [
+            "fullName": "Bob", "email": "bob@x.com",
+            "emergencyContact": "Jane Doe",
+        ])!
+        XCTAssertEqual(legacy.emergencyContactName, "Jane Doe")
+
+        let structured = AppUser(id: "u3", data: [
+            "fullName": "Carol", "email": "carol@x.com",
+            "emergencyContactName": "Pat",
+            "emergencyContactPhone": "0400000000",
+            "emergencyContactAddress": "1 Main St",
+            "emergencyContactEmail": "pat@example.com",
+        ])!
+        XCTAssertEqual(structured.emergencyContactPhone, "0400000000")
+        XCTAssertEqual(structured.emergencyContactEmail, "pat@example.com")
+    }
+
     func testStaffProfileCompletionGate() {
         let incomplete = TestSupport.user()
         XCTAssertTrue(incomplete.needsProfileCompletion, "staff missing dob/address/phone")
@@ -156,7 +184,8 @@ final class ModelParsingTests: XCTestCase {
     }
 
     func testAppSettingsFallbackName() {
-        XCTAssertEqual(AppSettings(data: [:]).companyName, "Sura Roster")
+        XCTAssertEqual(AppSettings(data: [:]).companyName, "Rosterra")
+        XCTAssertEqual(AppSettings(data: ["companyName": ""]).companyName, "Rosterra")
     }
 
     // MARK: - RosterLocation
@@ -184,6 +213,56 @@ final class ModelParsingTests: XCTestCase {
     func testLocationParsingRejectsIncomplete() {
         XCTAssertNil(RosterLocation(dict: ["suburb": "Norwood"]))
         XCTAssertNil(RosterLocation(dict: ["state": "SA"]))
+    }
+
+    // MARK: - Wages module
+
+    func testWageAwardRoundTripAndKindGuard() {
+        let award = WageAward(id: "a1", name: "General Retail Industry Award",
+                              code: "MA000004", industry: "Retail",
+                              classifications: [AwardClassification(level: "2", title: "Retail Employee Level 2", baseHourlyRate: 26.18)])
+        let restored = WageAward(id: "a1", data: award.asDictionary)
+        XCTAssertEqual(restored, award)
+        XCTAssertNil(EarningsLine(id: "a1", data: award.asDictionary),
+                     "kind discriminator prevents cross-parsing")
+    }
+
+    func testEarningsLineRoundTripAndSummary() {
+        let overtime = EarningsLine(id: "e1", name: "Overtime 1.5x",
+                                    category: .overtime, rateType: .multipleOfOrdinary, multiplier: 1.5)
+        XCTAssertEqual(EarningsLine(id: "e1", data: overtime.asDictionary), overtime)
+        XCTAssertEqual(overtime.rateSummary, "1.5× ordinary")
+
+        let level = EarningsLine(id: "e3", name: "Adult 20+", category: .ordinaryHours,
+                                 rateType: .fixedAmount, fixedRate: 36.85,
+                                 awardId: "a1", level: "20+", baseHourlyRate: 36.85,
+                                 weekendHourlyRate: 48.07)
+        XCTAssertTrue(level.isClassificationLevel)
+        XCTAssertEqual(level.rateSummary, "$36.85 M–F · $48.07 Wknd/PH")
+        XCTAssertEqual(EarningsLine(id: "e3", data: level.asDictionary), level)
+
+        let kmAllowance = EarningsLine(id: "e2", name: "Vehicle allowance",
+                                       category: .allowance, rateType: .ratePerUnit,
+                                       fixedRate: 0.96, unitName: "km", exemptFromSuper: true)
+        XCTAssertEqual(kmAllowance.rateSummary, "$0.96/km")
+        XCTAssertEqual(EarningsLine(id: "e2", data: kmAllowance.asDictionary), kmAllowance)
+    }
+
+    func testStaffWageProfileRoundTrip() {
+        let profile = StaffWageProfile(staffId: "u1", awardId: "a1",
+                                       classificationLevel: "2", earningsLineIds: ["e1", "e2"])
+        XCTAssertEqual(profile.id, "staff_u1")
+        let restored = StaffWageProfile(id: profile.id, data: profile.asDictionary)
+        XCTAssertEqual(restored, profile)
+
+        let bare = StaffWageProfile(staffId: "u2")
+        let restoredBare = StaffWageProfile(id: bare.id, data: bare.asDictionary)
+        XCTAssertEqual(restoredBare?.awardId, nil)
+    }
+
+    func testUserSuperRateParsing() {
+        XCTAssertEqual(TestSupport.user(extra: ["superRate": 12.0]).superRate, 12.0)
+        XCTAssertNil(TestSupport.user().superRate)
     }
 
     // MARK: - Availability round-trip

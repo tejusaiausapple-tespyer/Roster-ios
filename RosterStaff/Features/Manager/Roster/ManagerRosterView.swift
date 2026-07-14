@@ -18,6 +18,13 @@ struct ManagerRosterView: View {
     @State private var selectedDayKey = RosterCalendar.todayKey()
     @State private var activeSheet: ActiveSheet? = nil
     @State private var showNoStaffAlert = false
+    @State private var toast: ToastMessage?
+    /// In-flight guard: a second tap on Copy Last Week would duplicate the
+    /// entire week's shifts.
+    @State private var isCopyingWeek = false
+    @State private var showPublishDialog = false
+    /// Single shift awaiting the Publish Only / Publish & Lock choice.
+    @State private var pendingPublishShift: Shift? = nil
 
     /// A single sheet source of truth. Using two separate `.sheet` modifiers on
     /// one view causes SwiftUI to present unreliably (slow / sometimes never,
@@ -55,7 +62,9 @@ struct ManagerRosterView: View {
     }
 
     // Filters state
-    @State private var selectedStaffFilter: String = "All staff"
+    /// Staff filter keyed by user id, not display name — names can collide
+    /// or change mid-session. nil = all staff.
+    @State private var selectedStaffFilterId: String? = nil
     @State private var selectedStatusFilter: String = "All statuses"
 
     private var hasStaff: Bool { repo.allUsers.contains { $0.role == .staff } }
@@ -112,9 +121,8 @@ struct ManagerRosterView: View {
     }
 
     private func filterByStaff(_ shift: Shift) -> Bool {
-        if selectedStaffFilter == "All staff" { return true }
-        guard let staff = repo.allUsers.first(where: { $0.fullName == selectedStaffFilter }) else { return false }
-        return shift.staffId == staff.id
+        guard let selectedStaffFilterId else { return true }
+        return shift.staffId == selectedStaffFilterId
     }
 
     private func filterByStatus(_ shift: Shift) -> Bool {
@@ -143,7 +151,13 @@ struct ManagerRosterView: View {
         Set(weekShifts.map { $0.date })
     }
 
-    private var isStaffFilterActive: Bool { selectedStaffFilter != "All staff" }
+    private var isStaffFilterActive: Bool { selectedStaffFilterId != nil }
+
+    private var selectedStaffFilterName: String {
+        selectedStaffFilterId.flatMap { id in
+            repo.user(id: id)?.fullName
+        } ?? "All staff"
+    }
     private var isStatusFilterActive: Bool { selectedStatusFilter != "All statuses" }
 
     // MARK: - Roster Metrics Math
@@ -158,13 +172,19 @@ struct ManagerRosterView: View {
 
     private var grossWages: Double {
         weekShifts.reduce(0.0) { sum, shift in
-            let rate = repo.allUsers.first(where: { $0.id == shift.staffId })?.hourlyRate ?? 25.0
+            let rate = repo.user(id: shift.staffId)?.hourlyRate ?? BusinessRules.defaultHourlyRate
             return sum + (shift.scheduledHours * rate)
         }
     }
 
     private var superannuation: Double {
-        grossWages * 0.1125 // 11.25% Super
+        // Per-staff super where set, otherwise the SG default (12%).
+        weekShifts.reduce(0.0) { sum, shift in
+            let user = repo.user(id: shift.staffId)
+            let rate = user?.hourlyRate ?? BusinessRules.defaultHourlyRate
+            let superPercent = user?.superRate ?? BusinessRules.defaultSuperRatePercent
+            return sum + (shift.scheduledHours * rate * superPercent / 100)
+        }
     }
 
     private var totalLabourCost: Double {
@@ -246,7 +266,7 @@ struct ManagerRosterView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    ScreenTitlePill(title: "Roster Planner", icon: "calendar.fill")
+                    ScreenTitlePill(title: "Roster Planner", icon: "calendar.circle.fill")
                 }
             }
             .confirmationDialog(
@@ -268,7 +288,7 @@ struct ManagerRosterView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 if let action = activeDragDropAction {
-                    let staff = repo.allUsers.first(where: { $0.id == action.shift.staffId })?.fullName ?? "Staff"
+                    let staff = repo.user(id: action.shift.staffId)?.fullName ?? "Staff"
                     Text("Move or copy \(staff)'s shift to this day?")
                 }
             }
@@ -291,6 +311,33 @@ struct ManagerRosterView: View {
                     Text("This permanently deletes \(req.label) for the week of \(dateRangeString). This cannot be undone.")
                 }
             }
+            .confirmationDialog(
+                "Publish Roster",
+                isPresented: $showPublishDialog,
+                titleVisibility: .visible
+            ) {
+                Button("Publish Only") { publishWeeklyDrafts(lockWeek: false) }
+                Button("Publish & Lock Availability") { publishWeeklyDrafts(lockWeek: true) }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Publish \(weeklyDraftsCount) draft shift\(weeklyDraftsCount == 1 ? "" : "s")? \"Publish & Lock\" also freezes staff availability for this week so the published roster can't drift out of sync. You can unlock later from the ⋯ menu.")
+            }
+            .confirmationDialog(
+                "Publish Shift",
+                isPresented: Binding(
+                    get: { pendingPublishShift != nil },
+                    set: { if !$0 { pendingPublishShift = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                if let shift = pendingPublishShift {
+                    Button("Publish Only") { publishSingleShift(shift, lockWeek: false) }
+                    Button("Publish & Lock Availability") { publishSingleShift(shift, lockWeek: true) }
+                }
+                Button("Cancel", role: .cancel) { pendingPublishShift = nil }
+            } message: {
+                Text("\"Publish & Lock\" also freezes staff availability for that shift's week. You can unlock later from the ⋯ menu.")
+            }
         }
         // Sheet is attached to the NavigationStack (a stable view) rather than
         // the GeometryReader, and kept separate from the confirmationDialogs, so
@@ -308,6 +355,7 @@ struct ManagerRosterView: View {
         } message: {
             Text("No staff members are available. Please add staff before creating shifts.")
         }
+        .toast($toast)
     }
 
     // MARK: - iPad / macOS Week-Grid Layout
@@ -461,14 +509,14 @@ struct ManagerRosterView: View {
 
     private var staffFilterChip: some View {
         Menu {
-            Button("All staff") { selectedStaffFilter = "All staff" }
+            Button("All staff") { selectedStaffFilterId = nil }
             ForEach(repo.allUsers.filter { $0.role == .staff }) { staff in
-                Button(staff.fullName) { selectedStaffFilter = staff.fullName }
+                Button(staff.fullName) { selectedStaffFilterId = staff.id }
             }
         } label: {
             filterChipLabel(icon: "person.crop.circle", title: "Staff", active: isStaffFilterActive)
         }
-        .accessibilityLabel(isStaffFilterActive ? "Staff filter: \(selectedStaffFilter)" : "Filter by staff")
+        .accessibilityLabel(isStaffFilterActive ? "Staff filter: \(selectedStaffFilterName)" : "Filter by staff")
     }
 
     private var statusFilterChip: some View {
@@ -505,12 +553,18 @@ struct ManagerRosterView: View {
     private var moreMenu: some View {
         Menu {
             Button(action: copyLastWeek) {
-                Label("Copy Last Week", systemImage: "doc.on.doc")
+                Label(isCopyingWeek ? "Copying…" : "Copy Last Week", systemImage: "doc.on.doc")
             }
-            Button(action: publishWeeklyDrafts) {
+            .disabled(isCopyingWeek)
+            Button { showPublishDialog = true } label: {
                 Label("Publish Week (\(weeklyDraftsCount))", systemImage: "paperplane")
             }
             .disabled(weeklyDraftsCount == 0)
+            Divider()
+            Button(action: toggleWeekAvailabilityLock) {
+                Label(isWeekAvailabilityLocked ? "Unlock Staff Availability" : "Lock Staff Availability",
+                      systemImage: isWeekAvailabilityLocked ? "lock.open" : "lock")
+            }
         } label: {
             Image(systemName: "ellipsis")
                 .font(.headline.weight(.bold))
@@ -570,6 +624,7 @@ struct ManagerRosterView: View {
 
             // Shared vertical scroll — all columns scroll together
             ScrollView(.vertical, showsIndicators: false) {
+                TitlePillCollapseReporter()
                 HStack(alignment: .top, spacing: 0) {
                     ForEach(0..<7, id: \.self) { i in
                         dayColumn(index: i).frame(width: colWidth)
@@ -705,7 +760,7 @@ struct ManagerRosterView: View {
 
     // Shift card — CONTENT layer, deliberately solid (no glass) for legibility.
     private func gridShiftCard(_ shift: Shift) -> some View {
-        let staffMember = repo.allUsers.first(where: { $0.id == shift.staffId })
+        let staffMember = repo.user(id: shift.staffId)
         let ts = repo.timesheet(forShift: shift.id)
 
         let displayStatus: StaffShiftDisplayStatus = {
@@ -792,7 +847,7 @@ struct ManagerRosterView: View {
 
             if isDraft {
                 Button {
-                    publishSingleShift(shift)
+                    pendingPublishShift = shift
                 } label: {
                     Label("Publish Shift", systemImage: "paperplane")
                 }
@@ -862,6 +917,7 @@ struct ManagerRosterView: View {
                     .padding(.horizontal, Theme.screenPadding)
                     .padding(.top, 12)
                     .padding(.bottom, 80)
+                    .tracksTitlePillCollapse()
                 }
                 .refreshable {
                     await repo.refreshFromServer()
@@ -921,7 +977,7 @@ struct ManagerRosterView: View {
     }
 
     private func shiftCardRow(_ shift: Shift) -> some View {
-        let staffMember = repo.allUsers.first(where: { $0.id == shift.staffId })
+        let staffMember = repo.user(id: shift.staffId)
         let ts = repo.timesheet(forShift: shift.id)
 
         let displayStatus: StaffShiftDisplayStatus = {
@@ -1008,7 +1064,7 @@ struct ManagerRosterView: View {
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             if isDraft {
                 Button {
-                    publishSingleShift(shift)
+                    pendingPublishShift = shift
                 } label: {
                     Label("Publish", systemImage: "paperplane")
                 }
@@ -1090,7 +1146,10 @@ struct ManagerRosterView: View {
     // MARK: - Actions
 
     private func copyLastWeek() {
+        guard !isCopyingWeek else { return }
+        isCopyingWeek = true
         Task {
+            defer { isCopyingWeek = false }
             do {
                 let lastWeekMonday = RosterCalendar.addDays(-7, to: monday)
                 let lastWeekDays = RosterCalendar.weekDays(for: lastWeekMonday)
@@ -1104,6 +1163,10 @@ struct ManagerRosterView: View {
                     .getDocuments()
 
                 let lastWeekShifts = snap.documents.compactMap { Shift(id: $0.documentID, data: $0.data()) }
+                guard !lastWeekShifts.isEmpty else {
+                    toast = ToastMessage(kind: .info, text: "No shifts last week to copy")
+                    return
+                }
 
                 for oldShift in lastWeekShifts {
                     guard let oldDate = RosterCalendar.dateFromKey(oldShift.date) else { continue }
@@ -1123,43 +1186,76 @@ struct ManagerRosterView: View {
                         status: .draft
                     )
                 }
+                toast = ToastMessage(kind: .success,
+                                     text: "Copied \(lastWeekShifts.count) shift\(lastWeekShifts.count == 1 ? "" : "s") as drafts")
                 Haptics.success()
             } catch {
-                // Handle error
+                toast = ToastMessage(kind: .error, text: "Copy failed. \(error.localizedDescription)")
+                Haptics.error()
             }
         }
     }
 
-    private func publishWeeklyDrafts() {
+    /// Monday key of the displayed week — the availability-lock unit.
+    private var displayedWeekKey: String { weekKeys.first ?? RosterCalendar.weekStartKey(Date()) }
+
+    private var isWeekAvailabilityLocked: Bool {
+        repo.lockedAvailabilityWeeks.contains(displayedWeekKey)
+    }
+
+    private func toggleWeekAvailabilityLock() {
+        let locking = !isWeekAvailabilityLocked
+        Task {
+            do {
+                try await repo.setAvailabilityWeekLock(weekKey: displayedWeekKey, locked: locking)
+                toast = ToastMessage(kind: .success,
+                                     text: locking ? "Staff availability locked for this week"
+                                                   : "Staff availability unlocked")
+                Haptics.success()
+            } catch {
+                toast = ToastMessage(kind: .error, text: "Lock update failed. \(error.localizedDescription)")
+                Haptics.error()
+            }
+        }
+    }
+
+    private func publishWeeklyDrafts(lockWeek: Bool) {
         guard let first = weekKeys.first, let last = weekKeys.last else { return }
+        let count = weeklyDraftsCount
         Task {
             do {
                 try await repo.publishAllDrafts(from: first, to: last)
+                if lockWeek {
+                    try await repo.setAvailabilityWeekLock(weekKey: first, locked: true)
+                }
+                toast = ToastMessage(kind: .success,
+                                     text: "Published \(count) shift\(count == 1 ? "" : "s")\(lockWeek ? " — availability locked" : "")")
                 Haptics.success()
             } catch {
-                // Handle error
+                toast = ToastMessage(kind: .error, text: "Publish failed. \(error.localizedDescription)")
+                Haptics.error()
             }
         }
     }
 
-    private func publishSingleShift(_ shift: Shift) {
+    private func publishSingleShift(_ shift: Shift, lockWeek: Bool) {
+        pendingPublishShift = nil
         Task {
             do {
-                try await repo.saveShift(
-                    id: shift.id,
-                    staffId: shift.staffId,
-                    date: shift.date,
-                    start: shift.rosteredStart,
-                    end: shift.rosteredEnd,
-                    breakMinutes: shift.breakMinutes,
-                    location: shift.location,
-                    department: shift.department,
-                    notes: shift.notes,
-                    status: .published
-                )
+                try await repo.publishShift(shift)
+                if lockWeek, let shiftDate = RosterCalendar.dateFromKey(shift.date) {
+                    try await repo.setAvailabilityWeekLock(
+                        weekKey: RosterCalendar.weekStartKey(shiftDate), locked: true)
+                }
+                // Same notification the batch publish sends (parity).
+                await WorkerAPIClient.shared.sendNotification(event: "roster-published",
+                                                              shiftIds: [shift.id])
+                toast = ToastMessage(kind: .success,
+                                     text: "Shift published\(lockWeek ? " — availability locked" : "")")
                 Haptics.success()
             } catch {
-                // Handle error
+                toast = ToastMessage(kind: .error, text: "Publish failed. \(error.localizedDescription)")
+                Haptics.error()
             }
         }
     }
@@ -1170,7 +1266,8 @@ struct ManagerRosterView: View {
                 try await repo.deleteShift(id: shift.id)
                 Haptics.light()
             } catch {
-                // Handle error
+                toast = ToastMessage(kind: .error, text: "Delete failed. \(error.localizedDescription)")
+                Haptics.error()
             }
         }
     }
@@ -1184,7 +1281,7 @@ struct ManagerRosterView: View {
         guard !targets.isEmpty else { return }
 
         let label: String
-        if let staffId, let name = repo.allUsers.first(where: { $0.id == staffId })?.fullName {
+        if let staffId, let name = repo.user(id: staffId)?.fullName {
             label = "\(targets.count) shift\(targets.count == 1 ? "" : "s") for \(name)"
         } else {
             label = "all \(targets.count) shift\(targets.count == 1 ? "" : "s")"
@@ -1199,10 +1296,19 @@ struct ManagerRosterView: View {
             : allWeekShifts.filter { $0.staffId == request.staffId }
 
         Task {
+            var failures = 0
             for shift in targets {
-                try? await repo.deleteShift(id: shift.id)
+                do { try await repo.deleteShift(id: shift.id) } catch { failures += 1 }
             }
-            Haptics.success()
+            if failures > 0 {
+                toast = ToastMessage(kind: .error,
+                                     text: "Deleted \(targets.count - failures) of \(targets.count) shifts — \(failures) failed")
+                Haptics.error()
+            } else {
+                toast = ToastMessage(kind: .success,
+                                     text: "Deleted \(targets.count) shift\(targets.count == 1 ? "" : "s")")
+                Haptics.success()
+            }
         }
         bulkDeleteRequest = nil
     }
@@ -1235,7 +1341,8 @@ struct ManagerRosterView: View {
                 )
                 Haptics.success()
             } catch {
-                // Handle error
+                toast = ToastMessage(kind: .error, text: "Move failed. \(error.localizedDescription)")
+                Haptics.error()
             }
         }
     }
@@ -1257,7 +1364,8 @@ struct ManagerRosterView: View {
                 )
                 Haptics.success()
             } catch {
-                // Handle error
+                toast = ToastMessage(kind: .error, text: "Copy failed. \(error.localizedDescription)")
+                Haptics.error()
             }
         }
     }

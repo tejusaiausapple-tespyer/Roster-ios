@@ -55,6 +55,22 @@ enum RosterFormat {
         formatter("d MMM yyyy, h:mm a").string(from: date)
     }
 
+    /// Clock time of an instant, rendered in the business timezone.
+    static func time(_ date: Date) -> String {
+        formatter("h:mm a").string(from: date)
+    }
+
+    /// "Monday, 6 July 2026" in the business timezone.
+    static func dateFull(_ date: Date) -> String {
+        formatter("EEEE, d MMMM yyyy").string(from: date)
+    }
+
+    /// "HH:mm" of an instant in the business timezone — comparable against
+    /// stored roster/due-time strings.
+    static func hhmm(_ date: Date) -> String {
+        formatter("HH:mm").string(from: date)
+    }
+
     /// Range label like "5 – 11 May" for a week (Mon...Sun).
     static func weekRange(monday: Date) -> String {
         let sunday = RosterCalendar.addDays(6, to: monday)

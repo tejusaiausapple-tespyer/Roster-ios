@@ -45,6 +45,10 @@ struct RosterView: View {
         NavigationStack {
             ScrollViewReader { proxy in
                 List {
+                    TitlePillCollapseReporter()
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                     if !actionNeeded.isEmpty {
                         actionNeededSection
                     }
@@ -71,12 +75,6 @@ struct RosterView: View {
                 }
             }
             .refreshable { await repo.refreshFromServer() }
-            .sheet(item: $submitShift) { shift in
-                SubmitHoursSheet(shift: shift, existing: repo.timesheet(forShift: shift.id))
-            }
-            .sheet(item: $absentShift) { shift in
-                ReportAbsenceSheet(shift: shift, existing: repo.timesheet(forShift: shift.id))
-            }
             .sheet(item: $shareURL) { url in ShareSheet(items: [url]) }
             .confirmationDialog("Undo absence report?",
                                 isPresented: Binding(get: { undoTarget != nil }, set: { if !$0 { undoTarget = nil } }),
@@ -89,9 +87,18 @@ struct RosterView: View {
                 Text("This removes your absence report so you can submit hours instead.")
             }
             .toast($toastMessage)
-            .task(id: router.pendingSubmitShiftId) { await handlePendingSubmit() }
-            .task(id: router.pendingAbsentShiftId) { await handlePendingAbsent() }
         }
+        // Attached to the stack (not its root content) so deep links still fire
+        // and the sheets still present while History is pushed on top.
+        .sheet(item: $submitShift) { shift in
+            SubmitHoursSheet(shift: shift, existing: repo.timesheet(forShift: shift.id),
+                             clock: repo.clockSession)
+        }
+        .sheet(item: $absentShift) { shift in
+            ReportAbsenceSheet(shift: shift, existing: repo.timesheet(forShift: shift.id))
+        }
+        .task(id: router.pendingSubmitShiftId) { await handlePendingSubmit() }
+        .task(id: router.pendingAbsentShiftId) { await handlePendingAbsent() }
     }
 
     // MARK: Header (stats + week selector)
@@ -236,28 +243,35 @@ struct RosterView: View {
         } header: {
             dayHeader(key, count: dayShifts.count)
                 .id(key)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
         }
     }
 
     private func dayHeader(_ key: String, count: Int) -> some View {
         HStack {
-            Text(RosterFormat.date(key))
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(key == RosterCalendar.todayKey() ? Theme.brand : Theme.textPrimary)
-                .textCase(nil)
-            if count > 0 {
-                Text("\(count)")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(Theme.textSecondary)
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(Capsule().fill(Theme.card))
+            HStack(spacing: 6) {
+                Text(RosterFormat.date(key))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(key == RosterCalendar.todayKey() ? Theme.brand : Theme.textPrimary)
+                    .textCase(nil)
+                if count > 0 {
+                    Text("\(count)")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(Capsule().fill(Theme.background))
+                }
             }
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background(Capsule().fill(Theme.card))
+            .shadow(color: .black.opacity(0.06), radius: 3, y: 1)
             Spacer()
         }
         .padding(.horizontal, Theme.screenPadding)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity)
-        .background(Theme.background)
+        .background(Color.clear)
     }
 
     private var emptyDayRow: some View {
@@ -295,7 +309,8 @@ struct RosterView: View {
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             if canSubmit {
                 Button { submitShift = shift } label: {
-                    Label(ts?.status == .rejected ? "Resubmit" : "Submit", systemImage: "square.and.pencil")
+                    Label(ts?.status == .rejected ? "Resubmit" : (ts != nil ? "Edit" : "Submit"),
+                          systemImage: "square.and.pencil")
                 }.tint(Theme.brand)
             }
             if canAbsence {

@@ -29,17 +29,7 @@ struct ManagerPlaceholderView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                HStack(spacing: 6) {
-                    Image(systemName: tab.icon)
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Color(hex: 0x4F46E5))
-                    Text(tab.title)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Color(UIColor.label))
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Capsule().fill(Color(hex: 0x4F46E5).opacity(0.12)))
+                ScreenTitlePill(title: tab.title, icon: tab.icon)
             }
         }
     }

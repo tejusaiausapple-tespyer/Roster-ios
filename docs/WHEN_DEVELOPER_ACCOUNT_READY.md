@@ -18,7 +18,17 @@ Then:
 - Create an **APNs key** (or certificate) in Certificates, Identifiers & Profiles if not already done.
 - In Firebase Console → Project Settings → Cloud Messaging → **Apple app configuration**, upload the APNs key (.p8) for the iOS app.
 
-### 2. Xcode / project
+### 2. App code (one-line activation + FCM hookup)
+- Set `AppConfig.pushEnabled = true` (`RosterStaff/Services/AppConfig.swift`).
+  Everything downstream is already wired: authorization prompt, APNs
+  registration, token upload to `users/{uid}.fcmToken`, foreground /
+  background / terminated handling, and notification haptics.
+- In `NotificationService.updateAPNSToken(_:)`, replace the raw-hex fallback
+  with `Messaging.messaging().apnsToken = deviceToken` and add a
+  `MessagingDelegate` that forwards FCM tokens to `updateFCMToken(_:)`
+  (marked with comments in the file).
+
+### 3. Xcode / project
 - Set `DEVELOPMENT_TEAM` in `project.yml` to your paid team ID (or pick the team in Xcode Signing & Capabilities).
 - In `project.yml`, re-add the FirebaseMessaging dependency:
   ```yaml
@@ -45,10 +55,10 @@ Then:
 - Run `xcodegen generate` from the project root.
 - In Xcode: target **RosterStaff** → Signing & Capabilities → **+ Capability** → Push Notifications (if not auto-added).
 
-### 3. Backend (already done)
+### 4. Backend (already done)
 - `firestore.rules` already allows `ios-native` for notification token `platform` (user deployed rules).
 
-### 4. Verify
+### 5. Verify
 - Build on a **real device** (simulator does not deliver real APNs).
 - Sign in as staff → app should register FCM token to `users/{uid}/notificationTokens/`.
 - Confirm a test push (e.g. manager approves timesheet) arrives.

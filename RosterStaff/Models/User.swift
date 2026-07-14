@@ -6,6 +6,9 @@ struct AppUser: Identifiable, Equatable {
     var fullName: String
     var email: String
     var phone: String?
+    /// Manager-assigned employee ID (letters + numbers, e.g. "EMP001").
+    /// Shown on the staff profile and snapshotted onto payslips.
+    var employeeId: String?
     var role: UserRole
     var employmentType: EmploymentType?
     var mustChangePassword: Bool
@@ -13,7 +16,12 @@ struct AppUser: Identifiable, Equatable {
     var startDate: String?
     var dob: String?
     var address: String?
+    /// Legacy single-field emergency contact (kept in sync with name for PWA compat).
     var emergencyContact: String?
+    var emergencyContactName: String?
+    var emergencyContactPhone: String?
+    var emergencyContactAddress: String?
+    var emergencyContactEmail: String?
     var notes: String?
     var defaultLocation: String?
     var needsSetup: Bool
@@ -24,6 +32,9 @@ struct AppUser: Identifiable, Equatable {
     var availability: UserAvailability?
     var weeklyAvailability: [String: UserAvailability]
     var hourlyRate: Double?
+    /// Superannuation percentage for this employee (e.g. 12.0), manager-set.
+    /// Used by upcoming payroll calculations.
+    var superRate: Double?
     var profileUpdateRequired: Bool
     /// Set by a manager to prompt the staff member to change their own sign-in
     /// email (staff completes the change via Firebase's verified flow).
@@ -44,6 +55,7 @@ struct AppUser: Identifiable, Equatable {
         self.fullName = FS.stringValue(data, "fullName")
         self.email = FS.stringValue(data, "email")
         self.phone = FS.string(data, "phone")
+        self.employeeId = FS.string(data, "employeeId")
         self.role = UserRole(rawValue: FS.stringValue(data, "role", default: "staff")) ?? .staff
         self.employmentType = FS.string(data, "employmentType").flatMap { EmploymentType(rawValue: $0) }
         self.mustChangePassword = FS.bool(data, "mustChangePassword")
@@ -52,6 +64,14 @@ struct AppUser: Identifiable, Equatable {
         self.dob = FS.string(data, "dob")
         self.address = FS.string(data, "address")
         self.emergencyContact = FS.string(data, "emergencyContact")
+        self.emergencyContactName = FS.string(data, "emergencyContactName")
+        self.emergencyContactPhone = FS.string(data, "emergencyContactPhone")
+        self.emergencyContactAddress = FS.string(data, "emergencyContactAddress")
+        self.emergencyContactEmail = FS.string(data, "emergencyContactEmail")
+        if self.emergencyContactName?.isEmpty != false,
+           let legacy = self.emergencyContact, !legacy.isEmpty {
+            self.emergencyContactName = legacy
+        }
         self.notes = FS.string(data, "notes")
         self.defaultLocation = FS.string(data, "defaultLocation")
         self.needsSetup = FS.bool(data, "needsSetup")
@@ -74,6 +94,7 @@ struct AppUser: Identifiable, Equatable {
         }
         self.weeklyAvailability = weekly
         self.hourlyRate = (data["hourlyRate"] as? NSNumber)?.doubleValue
+        self.superRate = (data["superRate"] as? NSNumber)?.doubleValue
         self.profileUpdateRequired = FS.bool(data, "profileUpdateRequired")
         self.emailChangeRequired = FS.bool(data, "emailChangeRequired")
     }
