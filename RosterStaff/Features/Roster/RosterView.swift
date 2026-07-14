@@ -233,7 +233,9 @@ struct RosterView: View {
     private func daySection(_ key: String) -> some View {
         let dayShifts = shifts(on: key)
         Section {
-            if dayShifts.isEmpty {
+            if repo.isLoading {
+                loadingDayRow
+            } else if dayShifts.isEmpty {
                 emptyDayRow
             } else {
                 ForEach(dayShifts) { shift in
@@ -285,6 +287,13 @@ struct RosterView: View {
                     .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [5]))
                     .foregroundStyle(Theme.separator)
             )
+            .listRowInsets(EdgeInsets(top: 4, leading: Theme.screenPadding, bottom: 4, trailing: Theme.screenPadding))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+    }
+
+    private var loadingDayRow: some View {
+        SkeletonBlock(height: 44, cornerRadius: Theme.cornerMedium)
             .listRowInsets(EdgeInsets(top: 4, leading: Theme.screenPadding, bottom: 4, trailing: Theme.screenPadding))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)

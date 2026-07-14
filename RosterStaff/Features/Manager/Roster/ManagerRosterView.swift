@@ -703,7 +703,9 @@ struct ManagerRosterView: View {
         let isTargeted = dragOverDayKey == dayKey
 
         return VStack(spacing: 10) {
-            if dayShifts.isEmpty {
+            if repo.isLoading {
+                SkeletonBlock(height: 60, cornerRadius: Theme.cornerMedium)
+            } else if dayShifts.isEmpty {
                 columnEmptyState(dayKey: dayKey)
             } else {
                 ForEach(dayShifts) { shift in
@@ -906,7 +908,10 @@ struct ManagerRosterView: View {
                     VStack(spacing: 12) {
                         let dayShifts = shifts(on: selectedDayKey)
 
-                        if dayShifts.isEmpty {
+                        if repo.isLoading {
+                            SkeletonCard()
+                            SkeletonCard()
+                        } else if dayShifts.isEmpty {
                             emptyStateCard
                         } else {
                             ForEach(dayShifts) { shift in
