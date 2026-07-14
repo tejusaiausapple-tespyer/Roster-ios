@@ -32,7 +32,7 @@ struct WorkerAPIClient {
 
     private func post(path: String, body: [String: Any]?, forceRefreshToken: Bool = false) async throws -> [String: Any] {
         let token = try await idToken(forceRefresh: forceRefreshToken)
-        var request = URLRequest(url: AppConfig.apiBaseURL.appending(path: path))
+        var request = URLRequest(url: AppConfig.apiBaseURL.appending(path: path), timeoutInterval: 15)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
