@@ -53,6 +53,8 @@ targets:
         product: FirebaseFirestore
       - package: Firebase
         product: FirebaseStorage
+      - package: Firebase
+        product: FirebaseCrashlytics
       # FirebaseMessaging omitted on personal/free Apple teams (requires Push capability).
       # Re-add when paid Developer account is ready — see WHEN_DEVELOPER_ACCOUNT_READY.md
     settings:
@@ -68,6 +70,15 @@ targets:
         SUPPORTS_MACCATALYST: YES     # Enable Mac Catalyst (runs natively on macOS)
         DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    postCompileScripts:
+      - name: Crashlytics Upload Symbols
+        script: |
+          if [ "${CONFIGURATION}" = "Release" ]; then
+            "${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run"
+          fi
+        inputFiles:
+          - ${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${TARGET_NAME}
+        basedOnDependencyAnalysis: false
 
   RosterStaffTests:
     type: bundle.unit-test

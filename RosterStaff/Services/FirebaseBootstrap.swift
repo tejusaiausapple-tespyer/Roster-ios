@@ -2,6 +2,7 @@ import Foundation
 import FirebaseCore
 import FirebaseFirestore
 import FirebaseAuth
+import FirebaseCrashlytics
 
 /// Configures Firebase once at launch and exposes shared handles.
 /// Firestore is configured with offline persistence so cached shifts/timesheets
@@ -21,6 +22,7 @@ enum FirebaseBootstrap {
             return
         }
         FirebaseApp.configure()
+        Crashlytics.crashlytics().setCrashlyticsCollectionEnabled(true)
 
         let settings = FirestoreSettings()
         settings.cacheSettings = PersistentCacheSettings(sizeBytes: NSNumber(value: FirestoreCacheSizeUnlimited))
