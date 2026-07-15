@@ -24,3 +24,11 @@ echo "$GOOGLE_SERVICE_INFO_PLIST_BASE64" | base64 --decode > "$CI_PRIMARY_REPOSI
 #    clone doesn't have one, so build it here, after the plist above exists.
 brew install xcodegen
 xcodegen generate
+
+# 3. Xcode Cloud disables automatic SPM resolution and requires a
+#    Package.resolved to already exist at
+#    Rosterra.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+#    before it will build. Since the .xcodeproj above is freshly generated on
+#    every single run (never committed), that file never exists yet — resolve
+#    explicitly here so it's in place before Xcode Cloud's own build phase.
+xcodebuild -resolvePackageDependencies -project Rosterra.xcodeproj -scheme Rosterra
