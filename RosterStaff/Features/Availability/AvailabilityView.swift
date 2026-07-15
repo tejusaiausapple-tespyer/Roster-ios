@@ -147,6 +147,11 @@ struct AvailabilityView: View {
                 .background(Circle().fill(Theme.brand.opacity(enabled ? 0.10 : 0.04)))
         }
         .disabled(!enabled)
+        // Matches the shared WeekSelector's wording (Roster uses that component
+        // directly; Availability can't — it navigates by week, not by day, so
+        // WeekSelector's day-chip strip doesn't apply here) so VoiceOver users
+        // hear the same "Previous/Next week" phrasing on both screens.
+        .accessibilityLabel(system == "chevron.left" ? "Previous week" : "Next week")
     }
 
     // MARK: Day list
