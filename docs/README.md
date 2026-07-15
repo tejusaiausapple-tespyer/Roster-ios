@@ -12,7 +12,7 @@ This directory contains all project documentation for the Rosterra iOS app.
 | [`staff-guide.md`](staff-guide.md) | Developers | Staff-side feature documentation — all employee-facing screens and flows |
 | [`manager-guide.md`](manager-guide.md) | Developers | Manager-side feature documentation — admin screens and approval flows |
 | [`architecture.md`](architecture.md) | Developers | How staff and manager sides connect — shared services, data flow, real-time sync |
-| [`WHEN_DEVELOPER_ACCOUNT_READY.md`](WHEN_DEVELOPER_ACCOUNT_READY.md) | Setup | Push notification enablement checklist (waiting for Apple Developer account) |
+| [`WHEN_DEVELOPER_ACCOUNT_READY.md`](WHEN_DEVELOPER_ACCOUNT_READY.md) | Setup | Push notification enablement — resolved 2026-07-15, now a closure note |
 | [`smoke-test.md`](smoke-test.md) | QA | Manual regression checklist — run before merging any milestone/change |
 | [`manager-roster-redesign-plan.md`](manager-roster-redesign-plan.md) | Archive | Completed 2026 roster redesign plan (historical reference) |
 

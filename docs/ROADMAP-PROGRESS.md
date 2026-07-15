@@ -273,10 +273,15 @@
     payslips rendering the business details from `settings/app` (company
     name, address, ABN, contact — already captured via Account → Company
     Details). Slot alongside the Wage tab work.
-- [ ] **M12 — App Store & push** (BLOCKED on paid Apple Developer account;
-      checklist in docs/WHEN_DEVELOPER_ACCOUNT_READY.md)
+- [x] **M12 — App Store & push** (paid team `GS2KGPX9P8` wired 2026-07-15;
+      see docs/WHEN_DEVELOPER_ACCOUNT_READY.md, now a closure note)
   - [x] NSCameraUsageDescription added to Info.plist (2026-07-06)
-  - Passkey keep-or-remove decision (registration UI never wired)
+  - [x] Push wired end-to-end: APNs → FCM (`MessagingDelegate`) → Firestore `fcmToken`
+  - [x] Associated Domains entitlement live; `apple-app-site-association` TEAMID
+        placeholder bug found + fixed (was still live in production)
+  - [ ] Passkey keep-or-remove decision still open — entitlement/domain
+        association work is done, but `PasskeyManager.register()` has no UI
+        entry point anywhere in the app, so registration can't be triggered yet
 
 ---
 

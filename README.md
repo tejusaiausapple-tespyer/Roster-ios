@@ -153,9 +153,9 @@ xcodegen generate
 - Forced password change flow
 - Profile completion enforcement
 - iPad/Mac adaptive layouts (sidebar + width-driven grids, Liquid Glass on iOS 26+)
+- Push notifications (paid team wired 2026-07-15; APNs → FCM → Firestore end-to-end)
 
 ### 🚧 Planned
-- Push notifications (waiting for Apple Developer account)
 - Manager task management UI (placeholder tab)
 - Manager tenure & hours view (placeholder tab)
 - Manager wage/payroll view (placeholder tab)
