@@ -5,7 +5,7 @@ Simulator (iPhone) at minimum; run on iPad and Mac Catalyst for milestones that
 touch layout, signing, or the keychain.
 
 ## Prerequisites
-- `GoogleService-Info.plist` present in `RosterStaff/Resources/`
+- `GoogleService-Info.plist` present in `Rosterra/Resources/`
 - One staff test account and one manager test account
 
 ## Staff flow

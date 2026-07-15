@@ -1,5 +1,5 @@
 import XCTest
-@testable import RosterStaff
+@testable import Rosterra
 
 /// Locks in the behavior of the pure business logic that both role UIs depend
 /// on. All `now` values are injected; wall-clock times are Australia/Adelaide.

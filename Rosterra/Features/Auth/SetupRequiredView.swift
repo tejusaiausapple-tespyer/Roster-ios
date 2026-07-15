@@ -17,7 +17,7 @@ struct SetupRequiredView: View {
                     .font(.subheadline)
                     .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)
-                Text("RosterStaff/Resources/GoogleService-Info.plist")
+                Text("Rosterra/Resources/GoogleService-Info.plist")
                     .font(.footnote.monospaced().weight(.semibold))
                     .foregroundStyle(Theme.textPrimary)
                     .padding(12)

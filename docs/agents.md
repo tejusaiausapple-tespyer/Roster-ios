@@ -1,6 +1,6 @@
-# agents.md — AI Agent Context for RosterStaff
+# agents.md — AI Agent Context for Rosterra
 
-> **PURPOSE**: This file provides ALL context an AI agent needs to understand, modify, debug, or extend the RosterStaff iOS project. AI agents MUST read this file first and update it when making structural changes.
+> **PURPOSE**: This file provides ALL context an AI agent needs to understand, modify, debug, or extend the Rosterra iOS project. AI agents MUST read this file first and update it when making structural changes.
 
 ---
 
@@ -15,7 +15,7 @@ added shift_attendance / daily-jobs / wages collections, manager tabs, single-te
 
 | Field | Value |
 |-------|-------|
-| Name | RosterStaff (Xcode target) — app display name: "Rosterra" (`Info.plist` `CFBundleDisplayName`, applied 2026-07-07; see `docs/BRANDING.md`) |
+| Name | Rosterra (Xcode target, project, and app display name — unified 2026-07-15; see `docs/BRANDING.md`) |
 | Type | Native iOS app (SwiftUI) |
 | Platform | iOS 17.0+, iPhone + iPad + Mac Catalyst |
 | Language | Swift 5.0 |
@@ -31,7 +31,7 @@ added shift_attendance / daily-jobs / wages collections, manager tabs, single-te
 
 ## What This App Does
 
-RosterStaff is a staff rostering and scheduling app for a single business (Sura Investments Pty Ltd). It has two user roles:
+Rosterra is a staff rostering and scheduling app for a single business (Sura Investments Pty Ltd). It has two user roles:
 
 1. **Staff** — View assigned shifts, submit worked hours (timesheets), manage weekly availability, complete assigned tasks with photo proof, view messages/notifications.
 2. **Manager** — Create/edit/publish shifts, approve/reject timesheets, view dashboard metrics, manage the roster across all staff.
@@ -49,7 +49,7 @@ Both roles share a single codebase. The app routes to the correct UI based on `A
 ## Architecture Overview
 
 ```
-RosterStaffApp (entry point)
+RosterraApp (entry point)
 └── RootView (auth state router)
     ├── LoginView (unauthenticated)
     ├── MainTabView (staff role)
@@ -80,7 +80,7 @@ RosterStaffApp (entry point)
 ### Layer Structure
 
 ```
-RosterStaff/
+Rosterra/
 ├── App/                    # Entry point, AppDelegate, RootView
 ├── Models/                 # Data models (Shift, Timesheet, User, etc.)
 ├── Services/               # Firebase, Auth, API, Calendar, etc.
@@ -120,7 +120,7 @@ RosterStaff/
 ### App Lifecycle
 | File | Purpose |
 |------|---------|
-| `App/RosterStaffApp.swift` | `@main` entry point, configures Firebase, injects `RosterRepository` + `AuthViewModel` |
+| `App/RosterraApp.swift` | `@main` entry point, configures Firebase, injects `RosterRepository` + `AuthViewModel` |
 | `App/AppDelegate.swift` | UIKit app delegate for push notification registration |
 | `App/RootView.swift` | Auth state router — renders the screen chosen by `AppRoute` |
 | `App/AppRoute.swift` | Pure routing decision (unit-tested): setup → restoring → login → profileLoading → forcedPasswordChange → profileCompletion → deviceAuthGate → manager/staff main. Gates apply to BOTH roles |
@@ -183,7 +183,7 @@ RosterStaff/
 ## Data Flow
 
 ### Authentication Flow
-1. `RosterStaffApp` configures Firebase and creates `AuthViewModel` + `RosterRepository`
+1. `RosterraApp` configures Firebase and creates `AuthViewModel` + `RosterRepository`
 2. `RootView` observes `AuthViewModel.state` (enum: `.loading`, `.unauthenticated`, `.authenticated`)
 3. On successful login → `RosterRepository.start(uid:)` begins Firestore listeners
 4. Role-based routing: `AppUser.role == .manager` → `ManagerMainView`, else → `MainTabView`
@@ -393,7 +393,7 @@ Defined in `project.yml` under `packages:` using the Firebase GitHub URL.
 
 ### Prerequisites
 - macOS with Xcode 15+
-- `GoogleService-Info.plist` in `RosterStaff/Resources/` (not in git)
+- `GoogleService-Info.plist` in `Rosterra/Resources/` (not in git)
 - Firebase project with Auth + Firestore + Storage enabled
 - Cloudflare Worker deployed at `sura-roster.com`
 
@@ -403,7 +403,7 @@ Defined in `project.yml` under `packages:` using the Firebase GitHub URL.
 xcodegen generate
 
 # Open in Xcode
-open RosterStaff.xcodeproj
+open Rosterra.xcodeproj
 ```
 
 ### Key Config Files
@@ -412,7 +412,7 @@ open RosterStaff.xcodeproj
 | `project.yml` | XcodeGen project definition |
 | `Resources/GoogleService-Info.plist` | Firebase config (gitignored) |
 | `Resources/Info.plist` | iOS app metadata |
-| `Resources/RosterStaff.entitlements` | **Keychain Sharing** (`keychain-access-groups`) — required for Firebase Auth on macOS/Mac Catalyst; wired via `CODE_SIGN_ENTITLEMENTS` in `project.yml`. Associated Domains (passkeys) + push are commented out (need a paid team). |
+| `Resources/Rosterra.entitlements` | **Keychain Sharing** (`keychain-access-groups`) — required for Firebase Auth on macOS/Mac Catalyst; wired via `CODE_SIGN_ENTITLEMENTS` in `project.yml`. Associated Domains (passkeys) + `aps-environment` (push) are live as of 2026-07-15 under paid team `GS2KGPX9P8`. |
 
 ---
 

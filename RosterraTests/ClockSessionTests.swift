@@ -1,5 +1,5 @@
 import XCTest
-@testable import RosterStaff
+@testable import Rosterra
 
 /// Clock in/out session math: break accumulation, worked time, and the
 /// rounding/clamping that feeds the timesheet break stepper.

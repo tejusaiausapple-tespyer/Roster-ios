@@ -1,4 +1,4 @@
-# RosterStaff — Session Bootstrap
+# Rosterra — Session Bootstrap
 
 An AI engineering workspace for this project lives OUTSIDE the repo at
 `~/Desktop/RosterStaff-AI/`. It holds process, standards, templates, and
@@ -13,7 +13,7 @@ persistent memory. This file only bootstraps it — do not duplicate content her
 
 ## Hard rules (full list: RosterStaff-AI/00-core/PROJECT_RULES.md)
 - Never merge to `main` — Sura merges after verifying on device. Push the branch, hand off.
-- Never weaken tests. Run `xcodebuild test -project RosterStaff.xcodeproj -scheme RosterStaff` before handoff.
+- Never weaken tests. Run `xcodebuild test -project Rosterra.xcodeproj -scheme Rosterra` before handoff.
 - All dates via `RosterCalendar` (Australia/Adelaide, Monday weeks); Firestore parsing via `FS` helpers.
 - Deployed Firestore rules = `docs/reference/firestore.rules.deployed`; check indexes before compound queries.
 - New Swift files → `xcodegen generate` (explicit file refs).

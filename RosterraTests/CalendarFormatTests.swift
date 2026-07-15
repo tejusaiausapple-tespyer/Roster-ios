@@ -1,5 +1,5 @@
 import XCTest
-@testable import RosterStaff
+@testable import Rosterra
 
 /// RosterCalendar (Adelaide-pinned date math) and RosterFormat (display).
 final class CalendarFormatTests: XCTestCase {

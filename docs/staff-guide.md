@@ -1,6 +1,6 @@
 # Staff Side Documentation
 
-> Complete technical reference for the staff-facing features of RosterStaff.
+> Complete technical reference for the staff-facing features of Rosterra.
 
 ---
 

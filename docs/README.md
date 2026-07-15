@@ -1,6 +1,6 @@
-# RosterStaff Documentation
+# Rosterra Documentation
 
-This directory contains all project documentation for the RosterStaff iOS app.
+This directory contains all project documentation for the Rosterra iOS app.
 
 ---
 
@@ -22,9 +22,9 @@ This directory contains all project documentation for the RosterStaff iOS app.
 
 - **Root README**: [`../README.md`](../README.md) — Project overview, setup, tech stack
 - **Project config**: `../project.yml` — XcodeGen definition
-- **App entry**: `../RosterStaff/App/RosterStaffApp.swift`
-- **Core data layer**: `../RosterStaff/Services/RosterRepository.swift`
-- **Business rules**: `../RosterStaff/Models/BusinessRules.swift`
+- **App entry**: `../Rosterra/App/RosterraApp.swift`
+- **Core data layer**: `../Rosterra/Services/RosterRepository.swift`
+- **Business rules**: `../Rosterra/Models/BusinessRules.swift`
 
 ---
 

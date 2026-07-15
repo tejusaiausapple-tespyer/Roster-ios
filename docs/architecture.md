@@ -8,7 +8,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        RosterStaff iOS App                        │
+│                        Rosterra iOS App                        │
 ├──────────────────────────┬──────────────────────────────────────┤
 │      Staff UI            │         Manager UI                    │
 │  (MainTabView)           │    (ManagerMainView)                  │

@@ -1,5 +1,5 @@
 import Foundation
-@testable import RosterStaff
+@testable import Rosterra
 
 /// Shared builders for domain objects, constructed through the same
 /// `init?(id:data:)` paths production uses (so parsing is exercised too).

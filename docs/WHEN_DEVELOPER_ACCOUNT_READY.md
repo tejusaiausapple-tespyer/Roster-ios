@@ -8,7 +8,7 @@
   (`Messaging.messaging().apnsToken`), and receives the FCM registration
   token via `MessagingDelegate.didReceiveRegistrationToken`, which is what
   gets uploaded to `users/{uid}.fcmToken`.
-- `RosterStaff.entitlements` has `aps-environment: production` and
+- `Rosterra.entitlements` has `aps-environment: production` and
   Associated Domains (`webcredentials:sura-roster.com`) for passkeys.
 - `Info.plist` declares the `remote-notification` background mode.
 

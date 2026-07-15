@@ -1,6 +1,6 @@
 import XCTest
 import FirebaseFirestore
-@testable import RosterStaff
+@testable import Rosterra
 
 /// FS coercion helpers and model `init?(id:data:)` parsing — the tolerant
 /// boundary between loosely-typed Firestore documents and the typed domain.

@@ -70,4 +70,4 @@ HTTPS download-token URLs are still supported when reviewing older completions.
   `ManagerTaskEditorSheet.swift`, `ManagerTaskDetailSheet.swift`
 - Data layer: `Services/RosterRepository.swift` (saveTask, completeTask,
   requestTaskRedo, deleteTaskCloudPhoto, cleanupExpiredTaskCloudPhotos)
-- Tests: `RosterStaffTests/RosterTaskTests.swift`
+- Tests: `RosterraTests/RosterTaskTests.swift`

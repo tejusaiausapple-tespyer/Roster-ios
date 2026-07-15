@@ -8,7 +8,7 @@ xcuserdata/
 *.xcuserstate
 
 # XcodeGen output is regenerated from project.yml
-RosterStaff.xcodeproj/
+Rosterra.xcodeproj/
 
 # Swift Package Manager
 .swiftpm/
@@ -18,7 +18,7 @@ Packages/
 Package.resolved
 
 # Firebase config — never commit real credentials
-RosterStaff/Resources/GoogleService-Info.plist
+Rosterra/Resources/GoogleService-Info.plist
 
 # macOS
 .DS_Store

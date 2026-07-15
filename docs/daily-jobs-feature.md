@@ -46,7 +46,7 @@ templates never expire.
 - Manager: `Features/Manager/Dashboard/DailyJobAssignSheet.swift` (+ roster
   row wiring in `ManagerDashboardView.swift`)
 - Staff: `Features/Home/NotificationsSheet.swift`, bell badge in `HomeView.swift`
-- Tests: `RosterStaffTests/DailyJobTests.swift`
+- Tests: `RosterraTests/DailyJobTests.swift`
 
 ## Future (per plan, not built yet)
 

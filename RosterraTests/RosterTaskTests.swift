@@ -1,5 +1,5 @@
 import XCTest
-@testable import RosterStaff
+@testable import Rosterra
 
 final class RosterTaskTests: XCTestCase {
 

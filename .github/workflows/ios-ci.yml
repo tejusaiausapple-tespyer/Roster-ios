@@ -20,20 +20,20 @@ jobs:
         run: xcodegen generate
 
       - name: Resolve Swift packages
-        run: xcodebuild -resolvePackageDependencies -project RosterStaff.xcodeproj -scheme RosterStaff
+        run: xcodebuild -resolvePackageDependencies -project Rosterra.xcodeproj -scheme Rosterra
 
       - name: Build
         run: |
           set -o pipefail
           xcodebuild build \
-            -project RosterStaff.xcodeproj \
-            -scheme RosterStaff \
+            -project Rosterra.xcodeproj \
+            -scheme Rosterra \
             -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest'
 
       - name: Test
         run: |
           set -o pipefail
           xcodebuild test \
-            -project RosterStaff.xcodeproj \
-            -scheme RosterStaff \
+            -project Rosterra.xcodeproj \
+            -scheme Rosterra \
             -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest'

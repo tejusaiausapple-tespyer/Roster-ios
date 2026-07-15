@@ -1,6 +1,6 @@
 # Manager Side Documentation
 
-> Complete technical reference for the manager-facing features of RosterStaff.
+> Complete technical reference for the manager-facing features of Rosterra.
 
 ---
 

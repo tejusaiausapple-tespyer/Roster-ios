@@ -1,5 +1,5 @@
 import XCTest
-@testable import RosterStaff
+@testable import Rosterra
 
 /// Exhaustive truth table for the RootView routing decision. This locks in
 /// the Milestone 3 fix: forced-password-change and device-auth gates apply to

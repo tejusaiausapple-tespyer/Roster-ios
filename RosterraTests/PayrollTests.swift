@@ -1,5 +1,5 @@
 import XCTest
-@testable import RosterStaff
+@testable import Rosterra
 
 /// Payroll arithmetic, hour bucketing, status workflow flags, and Firestore
 /// round-tripping for the Payroll module. All money math must survive these —

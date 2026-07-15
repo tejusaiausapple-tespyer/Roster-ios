@@ -3,7 +3,7 @@
 > Handoff document. Any agent/developer continuing this work: read `docs/agents.md`
 > first, then this file. One branch per milestone; merge to `main` only after
 > Sura builds & verifies on device (see `docs/smoke-test.md`) and the test suite
-> passes (`xcodebuild test -project RosterStaff.xcodeproj -scheme RosterStaff`).
+> passes (`xcodebuild test -project Rosterra.xcodeproj -scheme Rosterra`).
 > Run `xcodegen generate` after pulling if Swift files were added/removed.
 
 **Repo:** https://github.com/tejusaiausapple-tespyer/Roster-ios.git
@@ -27,7 +27,7 @@
   - Collection names, tab bar, password rules, listener diagram, auth flow,
     duplicate headings, stale status lists all fixed
 - [x] **M2 — Testing foundation** (merged)
-  - `RosterStaffTests` target + scheme in `project.yml`; 58 tests
+  - `RosterraTests` target + scheme in `project.yml`; 58 tests
     (BusinessRules, HoursMetrics, Calendar/Format, model parsing)
 - [x] **M3 — Security & access gates** (merged; verified on device)
   - `App/AppRoute.swift`: pure routing; managers now pass forced-password +

@@ -1,5 +1,5 @@
 import XCTest
-@testable import RosterStaff
+@testable import Rosterra
 
 /// Hours rollups shown on Home, History, and Account. Buckets are keyed by
 /// *shift date* (not submission date), in Australia/Adelaide.

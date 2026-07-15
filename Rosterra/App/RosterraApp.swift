@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct RosterStaffApp: App {
+struct RosterraApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @AppStorage("preferredColorScheme") private var preferredColorSchemeSetting: String = "system"
 

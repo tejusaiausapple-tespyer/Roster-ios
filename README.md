@@ -1,4 +1,4 @@
-# RosterStaff (Rosterra)
+# Rosterra
 
 Native iOS app for staff rostering, shift management, timesheet submission, and task tracking. Built for Sura Investments Pty Ltd.
 
@@ -6,7 +6,7 @@ Native iOS app for staff rostering, shift management, timesheet submission, and 
 
 ## What It Does
 
-RosterStaff is a two-role workforce management app:
+Rosterra is a two-role workforce management app:
 
 **For Staff (Employees):**
 - View assigned shifts on a weekly roster
@@ -43,7 +43,7 @@ RosterStaff is a two-role workforce management app:
 ## Project Structure
 
 ```
-RosterStaff/
+Rosterra/
 ├── App/                    # Entry point, AppDelegate, RootView
 ├── Models/                 # Data models (Shift, Timesheet, User, etc.)
 ├── Services/               # Firebase, Auth, API, Calendar services
@@ -80,8 +80,8 @@ RosterStaff/
 ### Steps
 
 1. Clone the repository
-2. Place `GoogleService-Info.plist` in `RosterStaff/Resources/`
-3. Open `RosterStaff.xcodeproj` in Xcode
+2. Place `GoogleService-Info.plist` in `Rosterra/Resources/`
+3. Open `Rosterra.xcodeproj` in Xcode
 4. Wait for SPM to resolve dependencies (Firebase SDK)
 5. Build and run on simulator or device
 
@@ -102,7 +102,7 @@ xcodegen generate
 | `project.yml` | XcodeGen project definition (targets, dependencies, settings) |
 | `Resources/GoogleService-Info.plist` | Firebase configuration (gitignored) |
 | `Resources/Info.plist` | iOS app metadata (display name, permissions) |
-| `Resources/RosterStaff.entitlements` | Associated domains, capabilities |
+| `Resources/Rosterra.entitlements` | Associated domains, capabilities |
 | `Services/AppConfig.swift` | API URL, relying party, timeouts |
 
 ---
