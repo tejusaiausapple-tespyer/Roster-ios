@@ -44,10 +44,17 @@ if [ "$xcodegen_installed" -ne 1 ]; then
 fi
 xcodegen generate
 
-# 3. Xcode Cloud disables automatic SPM resolution and requires a
-#    Package.resolved to already exist at
+# 3. Xcode Cloud sets IDEPackageOnlyUseVersionsFromResolvedFile=YES by
+#    default, which makes SPM refuse to resolve anything unless a
+#    Package.resolved already exists — and errors out (exit 74) instead of
+#    generating one. Our .xcodeproj is generated fresh every run and never
+#    committed, so that file never exists yet. Turn the flag off so the
+#    resolve below is allowed to create it. (This default is not set on a
+#    normal dev Mac, which is why this only bites in Xcode Cloud.)
+defaults write com.apple.dt.Xcode IDEPackageOnlyUseVersionsFromResolvedFile -bool NO
+defaults write com.apple.dt.Xcode IDEDisableAutomaticPackageResolution -bool NO
+
+# 4. Now generate Package.resolved at
 #    Rosterra.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
-#    before it will build. Since the .xcodeproj above is freshly generated on
-#    every single run (never committed), that file never exists yet — resolve
-#    explicitly here so it's in place before Xcode Cloud's own build phase.
+#    so it's in place before Xcode Cloud's own build phase runs.
 xcodebuild -resolvePackageDependencies -project Rosterra.xcodeproj -scheme Rosterra
