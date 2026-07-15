@@ -46,6 +46,7 @@ targets:
     resources:
       - path: RosterStaff/Resources/GoogleService-Info.plist
         optional: true
+      - path: RosterStaff/Resources/PrivacyInfo.xcprivacy
     dependencies:
       - package: Firebase
         product: FirebaseAuth
