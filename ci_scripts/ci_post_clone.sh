@@ -22,7 +22,26 @@ echo "$GOOGLE_SERVICE_INFO_PLIST_BASE64" | base64 --decode > "$CI_PRIMARY_REPOSI
 
 # 2. The .xcodeproj is gitignored (generated from project.yml) — Xcode Cloud's
 #    clone doesn't have one, so build it here, after the plist above exists.
-brew install xcodegen
+#    Homebrew is preinstalled on Xcode Cloud, but `brew install` normally
+#    triggers an implicit `brew update` first (fetching the whole formula
+#    index over the network) — that step is a well-known flaky point on
+#    ephemeral CI runners (I/O errors, HTTP failures). Skip it and retry the
+#    install itself a couple of times before giving up.
+export HOMEBREW_NO_AUTO_UPDATE=1
+export HOMEBREW_NO_INSTALL_CLEANUP=1
+xcodegen_installed=0
+for attempt in 1 2 3; do
+  if brew install xcodegen; then
+    xcodegen_installed=1
+    break
+  fi
+  echo "warning: brew install xcodegen failed (attempt $attempt/3), retrying..." >&2
+  sleep 5
+done
+if [ "$xcodegen_installed" -ne 1 ]; then
+  echo "error: brew install xcodegen failed after 3 attempts." >&2
+  exit 1
+fi
 xcodegen generate
 
 # 3. Xcode Cloud disables automatic SPM resolution and requires a
