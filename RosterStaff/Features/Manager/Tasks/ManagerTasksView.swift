@@ -167,21 +167,16 @@ struct ManagerTasksView: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Spacer()
-            Image(systemName: "checklist")
-                .font(.system(size: 48))
-                .foregroundStyle(Theme.textTertiary)
-            Text(filter == .all ? "No Tasks Scheduled" : "Nothing Here")
-                .font(.headline)
-                .foregroundStyle(Theme.textPrimary)
-            Text(filter == .all
-                 ? "Tap + to create a task for this date."
-                 : "No \(filter.rawValue.lowercased()) tasks for this date.")
-                .font(.subheadline)
-                .foregroundStyle(Theme.textSecondary)
+            EmptyStateView(
+                icon: "checklist",
+                title: filter == .all ? "No Tasks Scheduled" : "Nothing Here",
+                message: filter == .all
+                    ? "Tap + to create a task for this date."
+                    : "No \(filter.rawValue.lowercased()) tasks for this date."
+            )
             Spacer()
         }
         .frame(maxWidth: .infinity)
-        .padding()
     }
 
     private func taskCard(_ task: RosterTask) -> some View {

@@ -91,19 +91,14 @@ struct TasksView: View {
                     if activeTasksForSelectedDay.isEmpty {
                         VStack(spacing: 12) {
                             Spacer()
-                            Image(systemName: "checklist")
-                                .font(.system(size: 48))
-                                .foregroundStyle(Theme.textTertiary)
-                            Text("No Tasks Scheduled")
-                                .font(.headline)
-                                .foregroundStyle(Theme.textPrimary)
-                            Text("No tasks are assigned for this date.")
-                                .font(.subheadline)
-                                .foregroundStyle(Theme.textSecondary)
+                            EmptyStateView(
+                                icon: "checklist",
+                                title: "No Tasks Scheduled",
+                                message: "No tasks are assigned for this date."
+                            )
                             Spacer()
                         }
                         .frame(maxWidth: .infinity)
-                        .padding()
                     } else {
                         ScrollView {
                             LazyVStack(spacing: 12) {

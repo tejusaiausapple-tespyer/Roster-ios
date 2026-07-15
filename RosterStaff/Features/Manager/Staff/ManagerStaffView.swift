@@ -222,16 +222,10 @@ struct ManagerStaffView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "person.2.slash")
-                .font(.system(size: 44, weight: .light))
-                .foregroundStyle(Theme.textTertiary)
-            Text(searchText.isEmpty ? "No \(statusFilter == .all ? "" : statusFilter.title.lowercased() + " ")staff" : "No matches for \"\(searchText)\"")
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(Theme.textSecondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        EmptyStateView(
+            icon: "person.2.slash",
+            title: searchText.isEmpty ? "No \(statusFilter == .all ? "" : statusFilter.title.lowercased() + " ")staff" : "No matches for \"\(searchText)\""
+        )
     }
 
     // MARK: - Summary footer

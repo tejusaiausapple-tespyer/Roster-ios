@@ -264,15 +264,8 @@ struct ManagerAvailabilityView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "calendar.badge.exclamationmark")
-                .font(.system(size: 44, weight: .light))
-                .foregroundStyle(Theme.textTertiary)
-            Text("No staff to show")
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(Theme.textSecondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        EmptyStateView(icon: "calendar.badge.exclamationmark", title: "No staff to show")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Summary footer
