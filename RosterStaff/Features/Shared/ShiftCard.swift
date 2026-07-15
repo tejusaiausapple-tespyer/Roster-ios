@@ -62,43 +62,50 @@ struct ShiftCard: View {
 
     private var inner: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 3) {
-                    if showDate {
-                        Text(RosterFormat.date(shift.date))
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(tertiaryTextColor)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        if showDate {
+                            Text(RosterFormat.date(shift.date))
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(tertiaryTextColor)
+                        }
+                        Text("\(RosterFormat.time(shift.rosteredStart)) – \(RosterFormat.time(shift.rosteredEnd))")
+                            .font(isHero ? .title2.weight(.bold) : .headline)
+                            .foregroundStyle(primaryTextColor)
                     }
-                    Text("\(RosterFormat.time(shift.rosteredStart)) – \(RosterFormat.time(shift.rosteredEnd))")
-                        .font(isHero ? .title2.weight(.bold) : .headline)
-                        .foregroundStyle(primaryTextColor)
+                    Spacer()
+                    StatusPill(status, compact: variant == .compact)
                 }
-                Spacer()
-                StatusPill(status, compact: variant == .compact)
-            }
 
-            HStack(spacing: 14) {
-                if let location = shift.location, !location.isEmpty {
-                    metaItem(icon: "mappin.and.ellipse", text: location)
+                HStack(spacing: 14) {
+                    if let location = shift.location, !location.isEmpty {
+                        metaItem(icon: "mappin.and.ellipse", text: location)
+                    }
+                    metaItem(icon: "clock", text: RosterFormat.hours(shift.scheduledHours))
+                    if shift.breakMinutes > 0 {
+                        metaItem(icon: "cup.and.saucer", text: "\(shift.breakMinutes)m break")
+                    }
                 }
-                metaItem(icon: "clock", text: RosterFormat.hours(shift.scheduledHours))
-                if shift.breakMinutes > 0 {
-                    metaItem(icon: "cup.and.saucer", text: "\(shift.breakMinutes)m break")
+
+                if let notes = shift.notes, !notes.isEmpty {
+                    Text(notes)
+                        .font(.footnote)
+                        .foregroundStyle(secondaryTextColor)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(isHero ? Color.white.opacity(0.12) : Theme.background.opacity(0.6)))
+                }
+
+                if let ts = timesheet {
+                    timesheetSummary(ts)
                 }
             }
-
-            if let notes = shift.notes, !notes.isEmpty {
-                Text(notes)
-                    .font(.footnote)
-                    .foregroundStyle(secondaryTextColor)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(isHero ? Color.white.opacity(0.12) : Theme.background.opacity(0.6)))
-            }
-
-            if let ts = timesheet {
-                timesheetSummary(ts)
-            }
+            // One coherent VoiceOver announcement for the whole info block
+            // instead of a separate stop per date/time/status/location/hours/
+            // break/notes fragment. Action buttons stay outside this element
+            // so they remain individually focusable.
+            .accessibilityElement(children: .combine)
 
             if showsInlineActions {
                 actionRow
@@ -136,6 +143,7 @@ struct ShiftCard: View {
                 Image(systemName: "checkmark.seal")
                     .font(.caption)
                     .foregroundStyle(tertiaryTextColor)
+                    .accessibilityHidden(true)
                 Text("Worked \(RosterFormat.hours(ts.workedHours)) · \(RosterFormat.time(ts.actualStart))–\(RosterFormat.time(ts.actualEnd))")
                     .font(.caption)
                     .foregroundStyle(secondaryTextColor)
@@ -153,6 +161,7 @@ struct ShiftCard: View {
             Image(systemName: icon)
                 .font(.caption2)
                 .foregroundStyle(tertiaryTextColor)
+                .accessibilityHidden(true)
             Text(text)
                 .font(.footnote.weight(.medium))
                 .foregroundStyle(secondaryTextColor)

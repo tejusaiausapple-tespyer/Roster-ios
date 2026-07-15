@@ -84,8 +84,8 @@ struct InlinePillButtonStyle: ButtonStyle {
         configuration.label
             .font(.caption.weight(.semibold))
             .foregroundStyle(filled ? Color.white : tint)
-            .padding(.vertical, 8)
             .padding(.horizontal, 14)
+            .frame(minHeight: 44) // Apple's 44x44pt minimum tappable area — these are frequently-tapped primary actions (Submit hours, Didn't attend).
             .background(
                 Capsule().fill(filled ? AnyShapeStyle(tint) : AnyShapeStyle(tint.opacity(0.12)))
             )
