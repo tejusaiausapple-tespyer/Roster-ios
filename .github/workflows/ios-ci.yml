@@ -1,0 +1,39 @@
+name: iOS CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Resolve Swift packages
+        run: xcodebuild -resolvePackageDependencies -project RosterStaff.xcodeproj -scheme RosterStaff
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project RosterStaff.xcodeproj \
+            -scheme RosterStaff \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest'
+
+      - name: Test
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project RosterStaff.xcodeproj \
+            -scheme RosterStaff \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest'
