@@ -10,9 +10,11 @@ struct ManagerPayrollView: View {
 
     enum ActiveSheet: Identifiable {
         case payslip(Payslip)
+        case gaps([PayrollGapItem])
         var id: String {
             switch self {
             case .payslip(let slip): return "payslip-\(slip.id)"
+            case .gaps: return "gaps"
             }
         }
     }
@@ -93,6 +95,12 @@ struct ManagerPayrollView: View {
             switch sheet {
             case .payslip(let slip):
                 ManagerPayslipDetailSheet(payslipId: slip.id)
+            case .gaps(let gaps):
+                PayrollGapsSheet(
+                    gaps: gaps,
+                    weekLabel: RosterFormat.weekRange(monday: weekMonday),
+                    onGenerateAnyway: { runGeneration() }
+                )
             }
         }
         .toast($toast)
@@ -269,6 +277,16 @@ struct ManagerPayrollView: View {
     // MARK: Actions
 
     private func generateDrafts() {
+        guard !isGenerating else { return }
+        let gaps = repo.payrollGaps(weekStart: weekMonday)
+        if !gaps.isEmpty {
+            activeSheet = .gaps(gaps)
+            return
+        }
+        runGeneration()
+    }
+
+    private func runGeneration() {
         guard !isGenerating else { return }
         isGenerating = true
         Task {

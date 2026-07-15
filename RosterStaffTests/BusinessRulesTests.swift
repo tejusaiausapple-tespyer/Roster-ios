@@ -264,4 +264,106 @@ final class BusinessRulesTests: XCTestCase {
         let symbolRule = rules.first { !$0.required }
         XCTAssertEqual(symbolRule?.isMet, false)
     }
+
+    // MARK: - Payroll gaps
+
+    /// Monday of the week under test, well in the past so every shift in it
+    /// has ended by `now` unless a test explicitly overrides `now`.
+    private let gapsWeekMonday = TestSupport.instant("2026-06-01", "00:00")
+    private let gapsNow = TestSupport.instant("2026-06-08", "12:00") // following Monday noon
+
+    private func names(_ overrides: [String: String] = [:]) -> (String) -> String {
+        { overrides[$0] ?? "Unknown staff" }
+    }
+
+    func testPayrollGapsFlagsUnsubmittedPublishedShift() {
+        let shift = TestSupport.shift(staffId: "staff-1", date: "2026-06-02", status: "published")
+        let gaps = BusinessRules.payrollGaps(
+            shifts: [shift], timesheetFor: { _ in nil },
+            nameFor: names(["staff-1": "Jordan Lee"]),
+            weekStart: gapsWeekMonday, at: gapsNow)
+
+        XCTAssertEqual(gaps.count, 1)
+        XCTAssertEqual(gaps[0].staffName, "Jordan Lee")
+        XCTAssertEqual(gaps[0].reason, .notSubmitted)
+    }
+
+    func testPayrollGapsFlagsPendingApprovalAndRejected() {
+        let pendingShift = TestSupport.shift(id: "s1", staffId: "staff-1", date: "2026-06-02", status: "published")
+        let rejectedShift = TestSupport.shift(id: "s2", staffId: "staff-2", date: "2026-06-03", status: "published")
+        let timesheets: [String: Timesheet] = [
+            "s1": TestSupport.timesheet(id: "s1", shiftId: "s1", staffId: "staff-1", status: "pending"),
+            "s2": TestSupport.timesheet(id: "s2", shiftId: "s2", staffId: "staff-2", status: "rejected"),
+        ]
+
+        let gaps = BusinessRules.payrollGaps(
+            shifts: [pendingShift, rejectedShift], timesheetFor: { timesheets[$0] },
+            nameFor: names(), weekStart: gapsWeekMonday, at: gapsNow)
+
+        XCTAssertEqual(gaps.count, 2)
+        XCTAssertEqual(gaps.first { $0.shiftId == "s1" }?.reason, .pendingApproval)
+        XCTAssertEqual(gaps.first { $0.shiftId == "s2" }?.reason, .rejected)
+    }
+
+    func testPayrollGapsExcludesApprovedAndConfirmedAbsence() {
+        let approvedShift = TestSupport.shift(id: "s1", staffId: "staff-1", date: "2026-06-02", status: "published")
+        let absentShift = TestSupport.shift(id: "s2", staffId: "staff-2", date: "2026-06-03", status: "published")
+        let timesheets: [String: Timesheet] = [
+            "s1": TestSupport.timesheet(id: "s1", shiftId: "s1", staffId: "staff-1", status: "approved"),
+            "s2": TestSupport.timesheet(id: "s2", shiftId: "s2", staffId: "staff-2", status: "absent"),
+        ]
+
+        let gaps = BusinessRules.payrollGaps(
+            shifts: [approvedShift, absentShift], timesheetFor: { timesheets[$0] },
+            nameFor: names(), weekStart: gapsWeekMonday, at: gapsNow)
+
+        XCTAssertTrue(gaps.isEmpty)
+    }
+
+    func testPayrollGapsExcludesShiftsNotYetEnded() {
+        // Shift is on the Monday of the week under test, but `now` is set to
+        // before that shift's rostered end — nothing to submit yet.
+        let notYetEndedShift = TestSupport.shift(staffId: "staff-1", date: "2026-06-02",
+                                                  start: "09:00", end: "17:00", status: "published")
+        let beforeShiftEnds = TestSupport.instant("2026-06-02", "12:00")
+
+        let gaps = BusinessRules.payrollGaps(
+            shifts: [notYetEndedShift], timesheetFor: { _ in nil },
+            nameFor: names(), weekStart: gapsWeekMonday, at: beforeShiftEnds)
+
+        XCTAssertTrue(gaps.isEmpty)
+    }
+
+    func testPayrollGapsExcludesDraftAndUnpublishedShifts() {
+        let draftShift = TestSupport.shift(staffId: "staff-1", date: "2026-06-02", status: "draft")
+
+        let gaps = BusinessRules.payrollGaps(
+            shifts: [draftShift], timesheetFor: { _ in nil },
+            nameFor: names(), weekStart: gapsWeekMonday, at: gapsNow)
+
+        XCTAssertTrue(gaps.isEmpty)
+    }
+
+    func testPayrollGapsExcludesShiftsOutsidePeriod() {
+        let outsideShift = TestSupport.shift(staffId: "staff-1", date: "2026-05-20", status: "published")
+
+        let gaps = BusinessRules.payrollGaps(
+            shifts: [outsideShift], timesheetFor: { _ in nil },
+            nameFor: names(), weekStart: gapsWeekMonday, at: gapsNow)
+
+        XCTAssertTrue(gaps.isEmpty)
+    }
+
+    func testPayrollGapsSortsByDateThenStaffName() {
+        let shiftB = TestSupport.shift(id: "s-b", staffId: "staff-b", date: "2026-06-02", status: "published")
+        let shiftA = TestSupport.shift(id: "s-a", staffId: "staff-a", date: "2026-06-02", status: "published")
+        let shiftLater = TestSupport.shift(id: "s-later", staffId: "staff-a", date: "2026-06-04", status: "published")
+
+        let gaps = BusinessRules.payrollGaps(
+            shifts: [shiftLater, shiftB, shiftA], timesheetFor: { _ in nil },
+            nameFor: names(["staff-a": "Alex", "staff-b": "Bailey"]),
+            weekStart: gapsWeekMonday, at: gapsNow)
+
+        XCTAssertEqual(gaps.map(\.shiftId), ["s-a", "s-b", "s-later"])
+    }
 }

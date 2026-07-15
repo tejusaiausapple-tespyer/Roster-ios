@@ -48,6 +48,42 @@ enum PayslipStatus: String, CaseIterable, Identifiable {
     var isStaffVisible: Bool { self == .submitted || self == .archived }
 }
 
+/// A published, already-ended shift within a payroll period that does not
+/// yet have an approved timesheet — either staff hasn't submitted, a
+/// submission is still awaiting the manager's review, or an absence report
+/// hasn't been confirmed. `generateDraftPayslips` silently skips these
+/// (it only counts approved hours), so this surfaces the gap explicitly
+/// before generation instead of leaving a manager to wonder why a staff
+/// member's payslip is missing or incomplete.
+struct PayrollGapItem: Identifiable, Equatable {
+    enum Reason: Equatable {
+        case notSubmitted
+        case draftNotSubmitted
+        case pendingApproval
+        case rejected
+        case absenceUnconfirmed
+
+        var label: String {
+            switch self {
+            case .notSubmitted: return "Not submitted"
+            case .draftNotSubmitted: return "Started, not submitted"
+            case .pendingApproval: return "Pending your approval"
+            case .rejected: return "Rejected — awaiting resubmission"
+            case .absenceUnconfirmed: return "Absence reported — needs confirmation"
+            }
+        }
+    }
+
+    var id: String { shiftId }
+    let shiftId: String
+    let staffId: String
+    let staffName: String
+    let date: String
+    let rosteredStart: String
+    let rosteredEnd: String
+    let reason: Reason
+}
+
 /// One earnings row on a payslip (snapshot — owns its own rate and amount).
 struct PayslipEarning: Equatable, Identifiable {
     var id: String

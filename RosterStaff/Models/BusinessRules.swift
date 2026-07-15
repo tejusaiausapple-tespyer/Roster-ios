@@ -212,6 +212,52 @@ enum BusinessRules {
         return .pendingSubmission
     }
 
+    /// Published, already-ended shifts in the week starting `weekStart` that
+    /// don't yet have an approved timesheet — the reason a staff member's
+    /// payslip will come up short or missing entirely when generating drafts.
+    /// A shift that hasn't ended yet isn't a gap (nothing to submit yet); a
+    /// confirmed absence is a resolved terminal state, so both are excluded.
+    static func payrollGaps(
+        shifts: [Shift],
+        timesheetFor: (String) -> Timesheet?,
+        nameFor: (String) -> String,
+        weekStart: Date,
+        at now: Date = Date()
+    ) -> [PayrollGapItem] {
+        let periodStart = RosterCalendar.dayFormatter.string(from: RosterCalendar.weekStart(weekStart))
+        let periodEnd = RosterCalendar.dayFormatter.string(from: RosterCalendar.addDays(6, to: RosterCalendar.weekStart(weekStart)))
+
+        var gaps: [PayrollGapItem] = []
+        for shift in shifts where shift.status == .published
+            && shift.date >= periodStart && shift.date <= periodEnd
+            && now >= shift.endDateTime {
+
+            let reason: PayrollGapItem.Reason
+            if let ts = timesheetFor(shift.id) {
+                switch ts.status {
+                case .approved, .absent: continue
+                case .pending: reason = .pendingApproval
+                case .rejected: reason = .rejected
+                case .draft: reason = .draftNotSubmitted
+                case .absentReported: reason = .absenceUnconfirmed
+                }
+            } else {
+                reason = .notSubmitted
+            }
+
+            gaps.append(PayrollGapItem(
+                shiftId: shift.id,
+                staffId: shift.staffId,
+                staffName: nameFor(shift.staffId),
+                date: shift.date,
+                rosteredStart: shift.rosteredStart,
+                rosteredEnd: shift.rosteredEnd,
+                reason: reason
+            ))
+        }
+        return gaps.sorted { $0.date == $1.date ? $0.staffName < $1.staffName : $0.date < $1.date }
+    }
+
     // MARK: - Email validation
 
     static func isValidEmail(_ email: String) -> Bool {

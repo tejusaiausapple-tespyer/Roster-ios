@@ -1277,6 +1277,16 @@ final class RosterRepository {
         }
     }
 
+    /// See `BusinessRules.payrollGaps` — this just supplies live repository data.
+    func payrollGaps(weekStart: Date) -> [PayrollGapItem] {
+        BusinessRules.payrollGaps(
+            shifts: shifts,
+            timesheetFor: { [weak self] shiftId in self?.timesheet(forShift: shiftId) },
+            nameFor: { [weak self] staffId in self?.user(id: staffId)?.fullName ?? "Unknown staff" },
+            weekStart: weekStart
+        )
+    }
+
     /// Create draft payslips for every eligible staff member for the week
     /// starting `weekStart` (Adelaide Monday). Eligible = active staff user
     /// with approved timesheet hours in the period and an active (or absent)
