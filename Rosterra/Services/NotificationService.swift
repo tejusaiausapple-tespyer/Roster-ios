@@ -14,13 +14,21 @@ import FirebaseMessaging
 /// REMOTE push is wired end-to-end and live behind `AppConfig.pushEnabled`.
 /// APNs hands its device token to FCM (`updateAPNSToken`), and FCM calls back
 /// with the registration token via `MessagingDelegate` (`updateFCMToken`),
-/// which is what actually gets uploaded to the user document — the backend's
-/// send pipeline sends through FCM, not raw APNs.
+/// which is uploaded into `users/{uid}/notificationTokens/{docId}` — the same
+/// subcollection the web app writes to, which the Worker's send pipeline
+/// actually reads from (see `syncTokenAfterLogin` for why this matters: a
+/// flat field on the user document, the previous approach here, is invisible
+/// to that pipeline).
 final class NotificationService: NSObject {
     static let shared = NotificationService()
 
     /// Payload key a push can set to escalate the haptic (e.g. shift cancelled).
     private static let urgentPayloadKey = "urgent"
+
+    /// UserDefaults key for the last-registered token, so `clearTokenOnLogout`
+    /// can compute the same subcollection doc id after an app relaunch (it's
+    /// only handed a uid, not the token itself).
+    private static let lastTokenDefaultsKey = "roster_last_fcm_token"
 
     /// Cached until a user is signed in (token can arrive before login).
     private var pendingToken: String?
@@ -52,32 +60,85 @@ final class NotificationService: NSObject {
         Messaging.messaging().apnsToken = deviceToken
     }
 
-    /// Persist the push token on the signed-in user's document — the same
-    /// field the web app writes, so the Worker's send pipeline covers both.
+    /// Persist the push token on the signed-in user's document.
     func updateFCMToken(_ token: String?) {
         pendingToken = token
         syncTokenAfterLogin()
     }
 
-    /// Upload any cached token once a user is signed in.
+    /// Upload any cached token once a user is signed in. Writes into
+    /// `users/{uid}/notificationTokens/{docId}` — the SAME subcollection the
+    /// web app writes to and the Worker's send pipeline (`listUserNotificationTokens`
+    /// in worker/handlers/notifications.ts) reads from. A flat `fcmToken`
+    /// field on the user document (the old approach here) is never read by
+    /// that pipeline, so tokens written that way are silently undeliverable —
+    /// this was a real, previously-shipped bug: iOS push has never actually
+    /// been reachable by the send pipeline despite the APNs/FCM wiring being
+    /// otherwise correct. Schema and field set must match
+    /// isValidNotificationTokenData in firestore.rules exactly (extra keys
+    /// are rejected); 'ios-native' is already whitelisted there as a valid
+    /// platform value.
     func syncTokenAfterLogin() {
         guard AppConfig.pushEnabled,
               let token = pendingToken,
               let uid = Auth.auth().currentUser?.uid else { return }
-        Firestore.firestore().collection("users").document(uid).setData([
-            "fcmToken": token,
-            "fcmTokenUpdatedAt": FieldValue.serverTimestamp(),
-            "fcmPlatform": "ios",
-        ], merge: true)
+        UserDefaults.standard.set(token, forKey: Self.lastTokenDefaultsKey)
+        let ref = Self.tokenDocRef(uid: uid, token: token)
+        Task {
+            do {
+                let snapshot = try await ref.getDocument()
+                let userAgent = Self.userAgentDescription()
+                if snapshot.exists {
+                    try await ref.updateData([
+                        "platform": "ios-native",
+                        "userAgent": userAgent,
+                        "enabled": true,
+                        "updatedAt": FieldValue.serverTimestamp(),
+                    ])
+                } else {
+                    try await ref.setData([
+                        "token": token,
+                        "platform": "ios-native",
+                        "userAgent": userAgent,
+                        "enabled": true,
+                        "createdAt": FieldValue.serverTimestamp(),
+                        "updatedAt": FieldValue.serverTimestamp(),
+                    ])
+                }
+            } catch {
+                // Best-effort, matching the web app's fire-and-forget token sync.
+            }
+        }
     }
 
     /// Remove the token on sign-out so a shared device stops receiving the
-    /// previous user's pushes.
+    /// previous user's pushes. Deletes the same subcollection doc
+    /// `syncTokenAfterLogin` writes — uses the last-registered token (cached
+    /// in UserDefaults, since this method is only handed a uid) to compute
+    /// its doc id.
     func clearTokenOnLogout(uid: String) {
-        guard AppConfig.pushEnabled else { return }
-        Firestore.firestore().collection("users").document(uid).setData([
-            "fcmToken": FieldValue.delete(),
-        ], merge: true)
+        guard AppConfig.pushEnabled,
+              let token = UserDefaults.standard.string(forKey: Self.lastTokenDefaultsKey) else { return }
+        Self.tokenDocRef(uid: uid, token: token).delete()
+        UserDefaults.standard.removeObject(forKey: Self.lastTokenDefaultsKey)
+    }
+
+    /// Same doc id scheme as the web app's `getTokenDocId` (`encodeURIComponent(token)`
+    /// there) — percent-encode everything outside the unreserved set so the
+    /// token is always a valid Firestore document id. Doesn't need to match
+    /// the web app's exact encoding byte-for-byte; iOS and web tokens are
+    /// always separate documents regardless.
+    private static func tokenDocRef(uid: String, token: String) -> DocumentReference {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-_.!~*'()")
+        let docId = token.addingPercentEncoding(withAllowedCharacters: allowed) ?? token
+        return Firestore.firestore().collection("users").document(uid)
+            .collection("notificationTokens").document(docId)
+    }
+
+    private static func userAgentDescription() -> String {
+        let device = UIDevice.current
+        return "\(device.systemName) \(device.systemVersion) / \(device.model)"
     }
 
     // MARK: - Delivery handling (local now; remote automatically once enabled)
