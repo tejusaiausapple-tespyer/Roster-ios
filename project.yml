@@ -11,7 +11,7 @@ settings:
     MARKETING_VERSION: "1.0.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
-    DEVELOPMENT_TEAM: "" # TODO: set your Apple Developer Team ID to enable signing / push / biometrics
+    DEVELOPMENT_TEAM: "GS2KGPX9P8"
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: NO
 
@@ -56,15 +56,12 @@ targets:
         product: FirebaseStorage
       - package: Firebase
         product: FirebaseCrashlytics
-      # FirebaseMessaging omitted on personal/free Apple teams (requires Push capability).
-      # Re-add when paid Developer account is ready — see WHEN_DEVELOPER_ACCOUNT_READY.md
+      - package: Firebase
+        product: FirebaseMessaging
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.surainvestments.roster
         INFOPLIST_FILE: RosterStaff/Resources/Info.plist
-        # Entitlements: Keychain Sharing only (required for Firebase Auth on
-        # macOS/Mac Catalyst). Push (aps-environment) and Associated Domains stay
-        # commented out in the entitlements file — they need a paid team.
         CODE_SIGN_ENTITLEMENTS: RosterStaff/Resources/RosterStaff.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1,2" # Support both iPhone (1) and iPad (2)

@@ -10,11 +10,9 @@ enum AppConfig {
     /// URL of the web app, surfaced to managers who mistakenly sign in here.
     static let webAppURL = URL(string: "https://sura-roster.com")!
 
-    /// Remote push master switch. Flip to `true` once the paid Apple
-    /// Developer account is approved and the Push Notifications capability +
-    /// FirebaseMessaging are added (docs/WHEN_DEVELOPER_ACCOUNT_READY.md).
-    /// Local shift reminders work regardless of this flag.
-    static let pushEnabled = false
+    /// Remote push master switch. Local shift reminders work regardless of
+    /// this flag.
+    static let pushEnabled = true
 
     /// Staff may start their shift this many seconds before the rostered
     /// start ("early check-in"). Paid time still begins at the rostered start.

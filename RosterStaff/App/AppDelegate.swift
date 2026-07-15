@@ -1,8 +1,7 @@
 import UIKit
 import UserNotifications
 
-/// App lifecycle hooks. Push / FCM wiring is disabled on personal Apple teams;
-/// re-enable with FirebaseMessaging when a paid Developer account is ready.
+/// App lifecycle hooks, including remote push / FCM registration.
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {

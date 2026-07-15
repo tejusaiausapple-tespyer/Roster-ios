@@ -21,30 +21,22 @@
 
 	<!--
 	  Associated Domains — required for Apple passkeys (webcredentials scoped to
-	  sura-roster.com). DISABLED for now: this capability requires a paid Apple
-	  Developer account, and enabling it breaks signing on a free/personal team.
-	  Re-enable when passkeys are implemented and a paid account is ready:
-	    <key>com.apple.developer.associated-domains</key>
-	    <array>
-	      <string>webcredentials:sura-roster.com</string>
-	    </array>
-	  Also host apple-app-site-association at
+	  sura-roster.com). Also host apple-app-site-association at
 	  https://sura-roster.com/.well-known/apple-app-site-association with a
-	  `webcredentials` section listing <TeamID>.com.surainvestments.roster.
+	  `webcredentials` section listing GS2KGPX9P8.com.surainvestments.roster.
 	-->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>webcredentials:sura-roster.com</string>
+	</array>
 
 	<!--
-	  Push Notifications are temporarily DISABLED (a free/personal Apple team does
-	  not support the aps-environment capability). To RE-ENABLE once a paid Apple
-	  Developer account is ready:
-	  1. Add:
-	         <key>aps-environment</key>
-	         <string>development</string>   <!-- or "production" for App Store -->
-	  2. In Info.plist, re-add:
-	         <key>UIBackgroundModes</key>
-	         <array><string>remote-notification</string></array>
-	  3. Enable the Push Notifications capability for the App ID in the Apple
-	     Developer portal, then re-run `xcodegen generate`.
+	  Push Notifications — production, matching a TestFlight/App Store
+	  distribution build. Also enable the Push Notifications capability for
+	  this App ID in the Apple Developer portal if not already on by default
+	  for a paid-team app.
 	-->
+	<key>aps-environment</key>
+	<string>production</string>
 </dict>
 </plist>

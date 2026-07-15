@@ -13,13 +13,18 @@ import LocalAuthentication
 /// what actually signs them in. We do not send the attestation/assertion to a
 /// server (there is no WebAuthn relying-party backend).
 ///
-/// PREREQUISITES (passkeys will not work until all are in place):
-///   1. Paid Apple Developer account + `DEVELOPMENT_TEAM` set.
-///   2. Associated Domains entitlement `webcredentials:sura-roster.com`
-///      (see RosterStaff.entitlements) wired via CODE_SIGN_ENTITLEMENTS.
-///   3. An `apple-app-site-association` file hosted at
-///      https://sura-roster.com/.well-known/apple-app-site-association with a
-///      `webcredentials` section listing `<TeamID>.com.surainvestments.roster`.
+/// Prerequisites are now all in place: paid team `GS2KGPX9P8`, the Associated
+/// Domains entitlement, and `apple-app-site-association` hosting the real
+/// team ID (was a `TEAMID` placeholder — fixed 2026-07-15).
+///
+/// NOTE: `register(email:userID:)` below is not currently called from any
+/// screen — there is no UI flow that creates a passkey, so
+/// `PasskeyStore.isRegistered` is always false and the "Sign in with
+/// Passkey" quick-login row on `LoginView` never surfaces today. Wiring a
+/// registration entry point (e.g. in Account settings) is a follow-up, not
+/// a launch blocker: with no trigger, this code path cannot fail for users.
+/// `signIn(credentialID:)` is fully wired and would work once a credential
+/// exists.
 @MainActor
 final class PasskeyManager: NSObject {
     static let shared = PasskeyManager()

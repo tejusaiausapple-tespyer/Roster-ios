@@ -3,6 +3,7 @@ import UIKit
 import UserNotifications
 import FirebaseAuth
 import FirebaseFirestore
+import FirebaseMessaging
 
 /// Notification hub: permission, local shift reminders, and the remote-push
 /// pipeline.
@@ -10,16 +11,11 @@ import FirebaseFirestore
 /// LOCAL notifications (shift reminders — see ShiftReminderScheduler) are
 /// fully live: they need no Apple entitlement.
 ///
-/// REMOTE push is wired end-to-end but held behind `AppConfig.pushEnabled`,
-/// which stays `false` until the paid Apple Developer account is approved.
-/// Activation steps live in docs/WHEN_DEVELOPER_ACCOUNT_READY.md and are:
-///   1. Add the Push Notifications capability + `aps-environment` entitlement.
-///   2. Re-add the FirebaseMessaging package (see project.yml note) and
-///      uncomment the marked block in `updateFCMToken(_:)`'s caller path.
-///   3. Set `AppConfig.pushEnabled = true`.
-/// Everything else — authorization, APNs registration, token upload to the
-/// user document, foreground/background/terminated handling, haptics —
-/// is already in place.
+/// REMOTE push is wired end-to-end and live behind `AppConfig.pushEnabled`.
+/// APNs hands its device token to FCM (`updateAPNSToken`), and FCM calls back
+/// with the registration token via `MessagingDelegate` (`updateFCMToken`),
+/// which is what actually gets uploaded to the user document — the backend's
+/// send pipeline sends through FCM, not raw APNs.
 final class NotificationService: NSObject {
     static let shared = NotificationService()
 
@@ -35,6 +31,9 @@ final class NotificationService: NSObject {
     /// and, when push is enabled, register with APNs. Called on every login;
     /// iOS only prompts once, so repeat calls are free.
     func requestAuthorizationAndRegister() {
+        if AppConfig.pushEnabled {
+            Messaging.messaging().delegate = self
+        }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
             guard granted else { return }
             if AppConfig.pushEnabled {
@@ -47,15 +46,10 @@ final class NotificationService: NSObject {
 
     // MARK: - Token pipeline (APNs / FCM)
 
-    /// APNs token from AppDelegate. With FirebaseMessaging linked this is
-    /// handed to FCM (which then calls `updateFCMToken`); until then the raw
-    /// hex token is stored so the backend can use it directly if needed.
+    /// APNs token from AppDelegate, handed to FCM. FCM exchanges it for a
+    /// registration token, delivered via `MessagingDelegate` below.
     func updateAPNSToken(_ deviceToken: Data) {
-        // When FirebaseMessaging is re-added:
-        //   Messaging.messaging().apnsToken = deviceToken
-        // and updateFCMToken(_:) is invoked from MessagingDelegate.
-        let hex = deviceToken.map { String(format: "%02x", $0) }.joined()
-        updateFCMToken(hex)
+        Messaging.messaging().apnsToken = deviceToken
     }
 
     /// Persist the push token on the signed-in user's document — the same
@@ -122,5 +116,14 @@ final class NotificationService: NSObject {
         if let flag = userInfo[Self.urgentPayloadKey] as? Bool { return flag }
         if let flag = userInfo[Self.urgentPayloadKey] as? String { return flag == "true" || flag == "1" }
         return false
+    }
+}
+
+extension NotificationService: MessagingDelegate {
+    /// Fires on initial token issuance and again whenever FCM rotates the
+    /// token — the only correct place to capture it (do not derive it from
+    /// the raw APNs token).
+    func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
+        updateFCMToken(fcmToken)
     }
 }
