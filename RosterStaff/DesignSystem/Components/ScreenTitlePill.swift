@@ -38,7 +38,7 @@ struct ScreenTitlePill: View {
         }
         .padding(.horizontal, hPad)
         .padding(.vertical, vPad)
-        .background(Capsule(style: .continuous).fill(Theme.card.opacity(1 - 0.15 * f)))
+        .background(Capsule(style: .continuous).fill(Theme.card.opacity(1 - 0.15 * Double(f))))
     }
 }
 
