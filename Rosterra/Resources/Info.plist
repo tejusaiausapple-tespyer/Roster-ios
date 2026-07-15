@@ -24,14 +24,14 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>NSCameraUsageDescription</key>
-	<string>Rosterra uses the camera to capture task verification and reference photos. Photos stay inside the app and are never saved to your photo library.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>Rosterra adds your rostered shifts to your calendar when you choose to.</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Rosterra records your location when you start or end a shift to verify attendance at your workplace.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Rosterra uses the camera to capture task verification and reference photos. Photos stay inside the app and are never saved to your photo library.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Rosterra uses Face ID to securely unlock the app on this device.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Rosterra records your location when you start or end a shift to verify attendance at your workplace.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -40,6 +40,8 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
+		<string>fetch</string>
+		<string>processing</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict>

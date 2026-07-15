@@ -34,7 +34,10 @@ struct PayrollGapsSheet: View {
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
             .background(Theme.background.ignoresSafeArea())
-            .safeAreaInset(edge: .bottom) { generateAnywayBar }
+            .safeAreaInset(edge: .bottom) {
+                Color.clear.frame(height: 76)
+            }
+            .overlay(alignment: .bottom) { generateAnywayButton }
             .navigationTitle("Incomplete Timesheets")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -45,24 +48,21 @@ struct PayrollGapsSheet: View {
         }
     }
 
-    private var generateAnywayBar: some View {
-        VStack(spacing: 0) {
-            Divider()
-            Button {
-                dismiss()
-                onGenerateAnyway()
-            } label: {
-                Text("Generate for the rest anyway")
-                    .font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(Theme.brand)
-            .padding(.horizontal, Theme.screenPadding)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
+    private var generateAnywayButton: some View {
+        Button {
+            dismiss()
+            onGenerateAnyway()
+        } label: {
+            Text("Generate for the rest anyway")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 16)
         }
-        .background(.bar)
+        .buttonStyle(.plain)
+        .glassProminentSurface(in: Capsule(style: .continuous), tint: Theme.brand)
+        .shadow(color: Theme.brand.opacity(0.35), radius: 14, x: 0, y: 6)
+        .padding(.bottom, 20)
     }
 
     private func gapRow(_ gap: PayrollGapItem) -> some View {

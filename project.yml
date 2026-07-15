@@ -72,7 +72,8 @@ targets:
       - name: Crashlytics Upload Symbols
         script: |
           if [ "${CONFIGURATION}" = "Release" ]; then
-            "${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run"
+            "${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run" \
+              -gsp "${SRCROOT}/Rosterra/Resources/GoogleService-Info.plist"
           fi
         inputFiles:
           - ${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${TARGET_NAME}
