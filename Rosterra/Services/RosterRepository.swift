@@ -930,6 +930,7 @@ final class RosterRepository {
             completionData["note"] = note
         }
         try await db.collection("task_completions").document(docId).setData(completionData)
+        Task { await WorkerAPIClient.shared.sendNotification(event: "task-completed") }
     }
 
     /// Download all verification photos once and save them in the app
@@ -992,6 +993,7 @@ final class RosterRepository {
         for assignment in existing where !templateIds.contains(assignment.templateId) {
             batch.deleteDocument(db.collection("daily_job_assignments").document(assignment.id))
         }
+        var addedAny = false
         for templateId in templateIds {
             guard !existing.contains(where: { $0.templateId == templateId }),
                   let template = dailyJobTemplates.first(where: { $0.id == templateId }) else { continue }
@@ -1007,8 +1009,13 @@ final class RosterRepository {
                 "assignedBy": uid,
                 "completed": false
             ], forDocument: db.collection("daily_job_assignments").document(docId))
+            addedAny = true
         }
         try await batch.commit()
+        if addedAny {
+            let staffId = shift.staffId
+            Task { await WorkerAPIClient.shared.sendNotification(event: "job-assigned", recipientIds: [staffId]) }
+        }
     }
 
     /// Staff toggle: complete or undo. Live listeners propagate the change to
@@ -1445,6 +1452,11 @@ final class RosterRepository {
         try await db.collection("payslips").document(slip.id).setData(updated.asDictionary)
         await writePayrollAuditLog(action: "payslip-\(status.rawValue)",
                                    detail: "\(slip.staffName) · week \(slip.periodStart)")
+        if status == .submitted {
+            // The moment staff visibility flips on — see the doc comment above.
+            let staffId = slip.staffId
+            Task { await WorkerAPIClient.shared.sendNotification(event: "payslip-generated", recipientIds: [staffId]) }
+        }
     }
 
     /// Delete a DRAFT payslip (managers only; other statuses are kept for the
@@ -1850,7 +1862,6 @@ final class RosterRepository {
         ]
 
         try await db.collection("timesheets").document(id).updateData(data)
-        await WorkerAPIClient.shared.sendNotification(event: "timesheet-absence-confirmed", timesheetId: id)
     }
 
     /// Reject a timesheet — sets status = .rejected, managerNotes, and rejectedReason.

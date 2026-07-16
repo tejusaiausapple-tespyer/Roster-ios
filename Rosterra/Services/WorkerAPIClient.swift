@@ -96,10 +96,15 @@ struct WorkerAPIClient {
     // MARK: - Notification triggers (best-effort, fire-and-forget)
 
     /// Mirrors triggerTimesheetSubmittedNotification / triggerAbsenceReportedNotification.
-    func sendNotification(event: String, shiftIds: [String]? = nil, timesheetId: String? = nil) async {
+    /// `recipientIds` mirrors the web app's explicit-recipient events
+    /// (job-assigned, payslip-generated, message-task) — the Worker requires
+    /// the caller to be a manager for these and resolves recipients directly
+    /// from the list rather than looking anything up server-side.
+    func sendNotification(event: String, shiftIds: [String]? = nil, timesheetId: String? = nil, recipientIds: [String]? = nil) async {
         var body: [String: Any] = ["event": event]
         if let shiftIds { body["shiftIds"] = shiftIds }
         if let timesheetId { body["timesheetId"] = timesheetId }
+        if let recipientIds { body["recipientIds"] = recipientIds }
         _ = try? await post(path: "api/send-notification", body: body)
     }
 }
