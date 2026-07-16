@@ -253,6 +253,9 @@
     `gs://` Storage references under `task_photos/{uid}/...` so manager review
     uses Storage rules instead of public download-token URLs. See
     docs/tasks-feature.md.
+  - **Task assign push** (branch `fix/task-assign-push-notification`, 2026-07-16):
+    `saveTask` fires Worker `message-task` on create / assignee change so
+    assigned staff get a lock-screen "New task" banner. ⏳ device verify.
   - Multi-photo proof (2026-07-06): up to 4 photos per completion,
     staffPhotoUrls array + legacy staffPhotoUrl mirror for PWA parity.
   - **Daily Jobs** (2026-07-06, owner plan; docs/daily-jobs-feature.md):
