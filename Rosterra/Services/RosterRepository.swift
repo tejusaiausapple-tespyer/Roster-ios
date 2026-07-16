@@ -1027,6 +1027,20 @@ final class RosterRepository {
             "completedAt": completed ? FieldValue.serverTimestamp() : NSNull(),
             "completedBy": completed ? uid : NSNull()
         ])
+
+        // "All assigned jobs completed": checked here rather than via a
+        // server-side aggregate, since the client already holds the sibling
+        // list in memory. The live Firestore listener that refreshes
+        // dailyJobAssignments hasn't necessarily delivered this write back
+        // yet, so check siblings EXCLUDING this one (which we know just
+        // became complete) rather than re-reading this assignment's stale
+        // cached state.
+        if completed {
+            let siblings = dailyJobs(forShift: assignment.shiftId).filter { $0.id != assignment.id }
+            if !siblings.isEmpty, siblings.allSatisfy({ $0.completed }) {
+                Task { await WorkerAPIClient.shared.sendNotification(event: "jobs-all-completed") }
+            }
+        }
     }
 
     /// Assignments for a shift. Sorted by title only — completing a job must
