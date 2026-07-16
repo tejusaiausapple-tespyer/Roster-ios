@@ -1,26 +1,76 @@
-# Branding & Naming — Decision Log
+# Branding & Product Positioning — Rosterra
 
-## Product name (decided 2026-07-05, apply later)
+## What this project is (current)
+
+**Rosterra is a self-use workforce roster app** — built and operated by **SURA INVESTMENTS PTY LTD** for the owner’s own business / personal project.
+
+It is **not** a commercial SaaS product yet:
+
+| | Current (this build) | Later (planned) |
+|---|---|---|
+| Model | Single-tenant, self-use | Multi-tenant SaaS |
+| Who uses it | The business owner (manager) + their staff | Many customer organisations |
+| Who “owns” the tenant | The builder / business owner | Each customer; Super Admin operates platform |
+| Manager account | Business-owner account — **not self-deletable** (safety) | Owner/tenant closure via Super Admin |
+| Staff accounts | Created and deleted in-app by the manager | Same pattern per tenant |
+| Billing / plans | None | Subscriptions / plans (future) |
+| Public marketing | Minimal site (privacy, terms, contact) | Full product marketing when SaaS ships |
+
+Use this framing in App Store copy, Review Notes, Privacy/Terms, and internal docs so reviewers and future you don’t treat the app as a marketplace or multi-business platform.
+
+## Product name
 
 **Rosterra** — replaces the working name "Sura Roster".
 
-- Rationale: Sling-style short brand name, but with "roster" audibly in the root so the category is self-evident. Came up clean in scheduling-industry searches (no existing rostering/scheduling product found under this name as of July 2026).
-- App Store listing pattern: **Rosterra — Staff Scheduling & Shift Rosters** (name carries the brand, subtitle carries the category, same model Sling uses).
+- Rationale: short brand name with “roster” audible in the root; category is self-evident.
+- App Store listing pattern: **Rosterra — Staff Scheduling & Shift Rosters** (name = brand, subtitle = category).
+- Legal operator: **SURA INVESTMENTS PTY LTD** (Adelaide / Mount Barker, SA).
+- Support: `support@sura-roster.com`
+- Site: `https://sura-roster.com`
 
-## Pre-launch checks (do BEFORE first TestFlight/App Store upload)
+## How to describe it (copy guidance)
 
-- [ ] USPTO trademark search (tmsearch.uspto.gov), classes 9 & 42; plus home-country registry.
-- [ ] Domain: rosterra.com, or getrosterra.com / rosterra.app fallbacks.
-- [ ] App Store + Google Play search for exact-name conflicts (App Store names must be unique).
-- [ ] Companies-register search in country of incorporation.
+**Do say**
+- Invite-only staff scheduling for a workplace
+- Manager creates staff accounts; employees sign in with credentials their employer provides
+- Self-use / single-organisation deployment for the operator’s business
 
-## Rename touchpoints (when applying)
+**Don’t say (yet)**
+- “For teams everywhere” / “join thousands of businesses”
+- Free trial, pricing tiers, or multi-company signup
+- Self-serve business registration or marketplace positioning
 
-- `CFBundleDisplayName` in `Rosterra/Resources/Info.plist` — ✅ applied 2026-07-07 (now "Rosterra"). User-facing strings (Face ID / permission prompts, calendar PRODID, `AppSettings.companyName` fallback) also updated.
-- `bundleIdPrefix` in `project.yml` (currently `com.sura.roster`).
-- `PRODUCT_BUNDLE_IDENTIFIER` in `project.yml` for app + tests targets (currently `com.surainvestments.roster`). **Lock this before the first upload — bundle IDs cannot change after shipping.**
-- App Store Connect app name + subtitle when the listing is created.
+Suggested short description for ASC:
+
+> Rosterra is invite-only workforce scheduling for one workplace: rosters, timesheets, leave, and payslips. Staff accounts are created by the manager. There is no public sign-up.
+
+## Pre-launch checks (before first TestFlight / App Store upload)
+
+Even as a self-use app, the App Store listing is public — keep these clean:
+
+- [ ] USPTO / AU trademark search for “Rosterra” (classes 9 & 42) and home-country registry.
+- [ ] Domain: sura-roster.com is live; optional brand domains (rosterra.com / .app) if you want them later.
+- [ ] App Store search for exact-name conflicts (names must be unique).
+- [ ] Companies-register search for the trading/product name if you expand beyond the company name.
+
+## Rename touchpoints (already largely applied)
+
+- `CFBundleDisplayName` → **Rosterra** (`Rosterra/Resources/Info.plist`).
+- Bundle ID (locked for shipping): `com.surainvestments.roster` — do not change after first upload.
+- App Store Connect: app name **Rosterra**, subtitle **Staff Scheduling & Shift Rosters**.
 
 ## App icon
 
-Redesigned July 2026: three staggered shift bars with staff-avatar badges + clock badge, indigo gradient. Generator: `scripts/generate-app-icon.swift` (run `swift scripts/generate-app-icon.swift <out-dir>`; renders iOS 1024 + all macOS sizes).
+Redesigned July 2026: three staggered shift bars with staff-avatar badges + clock badge, indigo gradient. Generator: `scripts/generate-app-icon.swift`.
+
+iOS 1024 marketing icon must be **opaque** (no alpha) or App Store validation rejects the upload. Verify with `sips -g hasAlpha AppIcon-1024.png` → `hasAlpha: no`.
+
+## Future SaaS (do not implement in this build)
+
+When the project becomes multi-tenant SaaS:
+
+1. Introduce **Super Admin** for tenant/owner lifecycle (including manager/business-owner deletion and org closure).
+2. Revisit branding as a commercial product (pricing, signup, marketing site).
+3. Update Privacy, Terms, App Review notes, and this file to match the new model.
+
+Until then, keep every user-facing surface honest: **self-use roster app, not a business platform.**

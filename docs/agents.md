@@ -70,6 +70,7 @@ RosterraApp (entry point)
         ├── ManagerStaffView
         ├── ManagerAvailabilityView
         ├── ManagerReportsView
+        ├── ManagerTenureView
         ├── ManagerWageView
         ├── ManagerPayrollView
         ├── ManagerTasksView
@@ -102,6 +103,7 @@ Rosterra/
 │       ├── Staff/
 │       ├── Availability/
 │       ├── Reports/
+│       ├── Tenure/         # Tenure & Hours MVP (TenureMetrics + ManagerTenureView)
 │       ├── Tasks/          # manager task management (list/editor/review)
 │       ├── Wage/           # wages module (awards, earnings lines, profiles)
 │       ├── Payroll/        # payroll module (weekly payslips, PDF, workflow)
@@ -321,7 +323,7 @@ Defined in `project.yml` under `packages:` using the Firebase GitHub URL.
 - ✅ Manager Tasks management (create/edit/assign tasks, live completion review, request-redo flow, photo lifecycle)
 - ✅ Manager Wage module (Xero-AU-style awards + classifications, earnings lines, per-staff wage/super profiles; manager-only `wages` collection)
 - ✅ Payroll module (2026-07-10): weekly draft payslips auto-generated (client-side, idempotent, first manager session on/after Monday) from approved timesheets + wage assignments; manager-only review→edit→approve→submit workflow (staff see payslips ONLY after Submit); live A4 AU-style PDF (`PayslipPDFService`, same renderer for preview + export); corrected-copy flow for submitted payslips; audit trail on-doc + `auditLogs`; staff Account → Payslips page. Firestore `payslips` rules deployed 2026-07-10 — ⏳ device verification pending
-- ✅ Daily Jobs (manager per-shift job assignments from the roster; staff Complete/Undo via the Home bell panel)
+- ✅ Daily Jobs (manager per-shift job assignments from the roster; library add/delete; staff Complete/Undo via the Home bell panel)
 - ✅ Verified shift attendance (server-timestamped clock-in/out + GPS/geofence capture; manager Verified Attendance card)
 - ✅ Device auth gate (biometric lock)
 - ✅ Forced password change flow
@@ -330,7 +332,8 @@ Defined in `project.yml` under `packages:` using the Firebase GitHub URL.
 ### Not Yet Implemented / Disabled
 - ❌ Push **delivery** (FCM token registration/sync is live, but end-to-end delivery waits on
   a paid Apple Developer account / APNs — see `docs/WHEN_DEVELOPER_ACCOUNT_READY.md`)
-- ❌ Manager **Tenure / hours** view (still a placeholder — the Wage module beside it is built)
+- ✅ Manager **Tenure & Hours** (`ManagerTenureView` + `TenureMetrics`) — service tenure from first approved shift, approved hours, KPIs, detail sheet (exports deferred)
+- ✅ **ATO-safe account deletion** — request/approve/cancel + 30-day Auth purge; retains identity/TFN/timesheets/payslips (`docs/APP_STORE_SUBMISSION.md`)
 - ❌ Passkey-based auth (code exists but not wired into main flow)
 
 > Previously listed here but now BUILT (2026-07-06/07): **Manager Tasks management UI**

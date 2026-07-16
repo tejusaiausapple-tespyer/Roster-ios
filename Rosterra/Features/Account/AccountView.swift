@@ -7,6 +7,7 @@ struct AccountView: View {
     @Environment(RosterRepository.self) private var repo
     @Environment(AuthViewModel.self) private var auth
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.openURL) private var openURL
     @AppStorage("preferredColorScheme") private var preferredColorSchemeSetting: String = "system"
 
     @State private var activeSheet: AccountSheet?
@@ -15,8 +16,12 @@ struct AccountView: View {
     @State private var deviceAuthOn = false
     @State private var deviceAuthWorking = false
     @State private var pushEnabled = false
+    @State private var pendingReminderCount = 0
+    @State private var nextReminderSummary: String?
     @State private var toastMessage: ToastMessage?
     @State private var profileImage: UIImage? = nil
+    @State private var showDeleteRequestConfirm = false
+    @State private var showNotificationExplainer = false
 
     private enum AccountSheet: Identifiable {
         case changePassword, changeEmail, verifyPassword, imagePicker
@@ -48,6 +53,7 @@ struct AccountView: View {
                 appearanceSection
                 securitySection
                 infoSection
+                deleteAccountSection
                 signOutSection
             }
             .listStyle(.insetGrouped)
@@ -104,6 +110,14 @@ struct AccountView: View {
                 Button("Cancel", role: .cancel) { }
             } message: {
                 Text("You'll need to sign in again to access your roster.")
+            }
+            .alert("Request account deletion?", isPresented: $showDeleteRequestConfirm) {
+                Button("Cancel", role: .cancel) {}
+                Button("Send request to manager", role: .destructive) {
+                    Task { await submitDeletionRequest() }
+                }
+            } message: {
+                Text("Your manager will review the request. If approved, your account is locked immediately and sign-in is permanently removed after 30 days. Name, DOB, address, TFN, timesheets and payslips are kept for Australian tax records.")
             }
             .toast($toastMessage)
             .task {
@@ -324,19 +338,55 @@ struct AccountView: View {
     // MARK: Notifications
 
     private var notificationsSection: some View {
-        Section("Notifications") {
+        Section {
             HStack {
-                Label("Push notifications", systemImage: "bell.badge")
+                Label("Alerts allowed", systemImage: "bell.badge")
                 Spacer()
                 Text(pushEnabled ? "On" : "Off")
                     .font(.subheadline)
                     .foregroundStyle(pushEnabled ? Theme.accent : Theme.textTertiary)
             }
+            if pushEnabled {
+                HStack {
+                    Label("Shift reminders armed", systemImage: "clock.badge")
+                    Spacer()
+                    Text(pendingReminderCount > 0 ? "\(pendingReminderCount) pending" : "None yet")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                if let nextReminderSummary {
+                    Text(nextReminderSummary)
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            } else {
+                Button {
+                    showNotificationExplainer = true
+                } label: {
+                    Label("Enable shift & hours reminders", systemImage: "bell")
+                }
+            }
             Button {
                 openSystemSettings()
             } label: {
-                Label("Notification settings", systemImage: "gear")
+                Label("System notification settings", systemImage: "gear")
             }
+        } header: {
+            Text("Notifications")
+        } footer: {
+            Text("Shift start and hours reminders are scheduled on this device from your last roster sync. They can still alert you after you close the app — Rosterra does not keep running in the background. Server push covers roster changes when your phone is online.")
+        }
+        .alert("Enable shift reminders?", isPresented: $showNotificationExplainer) {
+            Button("Not now", role: .cancel) {}
+            Button("Continue") {
+                NotificationService.shared.requestAuthorizationAndRegister()
+                Task {
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    await refreshStatuses()
+                }
+            }
+        } message: {
+            Text("Rosterra can alert you before a shift starts and when hours need submitting. Alerts use on-device reminders and optional push — the app does not stay open in the background.")
         }
     }
 
@@ -403,6 +453,83 @@ struct AccountView: View {
                 Text(ReleaseHistory.current.versionString)
                     .foregroundStyle(Theme.textSecondary)
             }
+            NavigationLink {
+                PrivacyPolicyView()
+            } label: {
+                Label("Privacy Policy", systemImage: "hand.raised")
+            }
+            NavigationLink {
+                TermsOfServiceView()
+            } label: {
+                Label("Terms of Service", systemImage: "doc.text")
+            }
+            Button {
+                openSupportEmail()
+            } label: {
+                Label("Contact Support", systemImage: "envelope")
+            }
+        }
+    }
+
+    private func openSupportEmail() {
+        var components = URLComponents()
+        components.scheme = "mailto"
+        components.path = AppConfig.supportEmail
+        components.queryItems = [URLQueryItem(name: "subject", value: "Rosterra support")]
+        if let url = components.url { openURL(url) }
+    }
+
+    private var deleteAccountSection: some View {
+        Section {
+            if let deletion = user?.deletion {
+                deletionStatusRows(deletion)
+            } else {
+                Button(role: .destructive) {
+                    showDeleteRequestConfirm = true
+                } label: {
+                    Label("Request account deletion", systemImage: "trash")
+                }
+            }
+        } header: {
+            Text("Delete account")
+        } footer: {
+            Text("Employer-managed accounts. After approval you are locked for 30 days (cancellable by your manager), then login is removed. Payroll/ATO records are retained.")
+        }
+    }
+
+    @ViewBuilder
+    private func deletionStatusRows(_ deletion: AccountDeletionState) -> some View {
+        switch deletion.status {
+        case .requested:
+            Label("Deletion requested — waiting for manager", systemImage: "clock.badge")
+                .foregroundStyle(Theme.warning)
+        case .approved:
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Account locked — deletion scheduled", systemImage: "lock.fill")
+                    .foregroundStyle(Theme.error)
+                if let deadline = deletion.cancelDeadlineAt,
+                   let date = FS.isoDate(from: deadline) {
+                    Text("Sign-in removed after \(RosterFormat.dateFull(date)). Ask your manager to cancel if this was a mistake.")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+        case .authPurged:
+            Label("Account closed — records retained for tax/payroll", systemImage: "checkmark.shield")
+                .foregroundStyle(Theme.textSecondary)
+        case .cancelled:
+            EmptyView()
+        }
+    }
+
+    private func submitDeletionRequest() async {
+        do {
+            try await repo.requestOwnAccountDeletion()
+            Haptics.success()
+            toastMessage = ToastMessage(kind: .success, text: "Deletion request sent to your manager.")
+        } catch {
+            toastMessage = ToastMessage(kind: .error, text: error.localizedDescription)
+            Haptics.error()
         }
     }
 
@@ -428,6 +555,13 @@ struct AccountView: View {
         }
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         pushEnabled = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
+        let pending = await ShiftReminderScheduler.pendingStatus()
+        pendingReminderCount = pending.count
+        if let date = pending.nextFireDate, let title = pending.nextTitle {
+            nextReminderSummary = "Next: \(title) · \(RosterFormat.dateTime(date))"
+        } else {
+            nextReminderSummary = nil
+        }
     }
 
     private func toggleDeviceAuth(_ enable: Bool) {

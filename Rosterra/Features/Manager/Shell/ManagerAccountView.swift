@@ -7,6 +7,7 @@ struct ManagerAccountView: View {
     @Environment(RosterRepository.self) private var repo
     @Environment(AuthViewModel.self) private var auth
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.openURL) private var openURL
     @AppStorage("preferredColorScheme") private var preferredColorSchemeSetting: String = "system"
 
     @State private var activeSheet: AccountSheet?
@@ -260,6 +261,11 @@ struct ManagerAccountView: View {
                 Label("Reports", systemImage: "chart.bar")
             }
             NavigationLink {
+                ManagerTenureView(embedInNavigationStack: false)
+            } label: {
+                Label("Tenure & Hours", systemImage: "rosette")
+            }
+            NavigationLink {
                 ManagerWageView(embedInNavigationStack: false)
             } label: {
                 Label("Wage", systemImage: "dollarsign.circle")
@@ -343,7 +349,30 @@ struct ManagerAccountView: View {
                         .foregroundStyle(Theme.textSecondary)
                 }
             }
+            NavigationLink {
+                PrivacyPolicyView()
+            } label: {
+                Label("Privacy Policy", systemImage: "hand.raised")
+            }
+            NavigationLink {
+                TermsOfServiceView()
+            } label: {
+                Label("Terms of Service", systemImage: "doc.text")
+            }
+            Button {
+                openSupportEmail()
+            } label: {
+                Label("Contact Support", systemImage: "envelope")
+            }
         }
+    }
+
+    private func openSupportEmail() {
+        var components = URLComponents()
+        components.scheme = "mailto"
+        components.path = AppConfig.supportEmail
+        components.queryItems = [URLQueryItem(name: "subject", value: "Rosterra support")]
+        if let url = components.url { openURL(url) }
     }
 
     private var signOutSection: some View {

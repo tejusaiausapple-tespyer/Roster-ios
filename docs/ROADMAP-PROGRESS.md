@@ -244,8 +244,9 @@
 - [ ] **M10 — CI** (NOT STARTED)
   - GitHub Actions: xcodegen → build → test on PRs (web repo has a CI to copy
     patterns from). pbxproj is gitignored so no drift check needed.
-- [ ] **M11 — Manager Tasks / Tenure / Wage tabs** (Tasks portion BUILT
-      2026-07-06, awaiting owner verification; Tenure still placeholder)
+- [ ] **M11 — Manager Tasks / Tenure / Wage tabs** (Tasks + Tenure built;
+      Tasks awaiting owner verification; Tenure MVP shipped 2026-07-16 —
+      exports / charts still deferred)
   - Tasks: manager tab (list/editor/review + redo flow), staff upgrades
     (assignment, priority, due time, tick-only tasks, notes), photo lifecycle
     (<=2 MB uploads, sandbox-only storage, staff week-end sweep, manager
@@ -265,6 +266,8 @@
     bell panel until shift end. Rules + (staffId,date) index in
     docs/reference/ — Sura deployed 2026-07-06 (firestore + storage; storage
     needed the cross-service IAM grant, see docs/reference/README.md).
+    2026-07-16: Job library trailing delete (confirm → remove template;
+    existing shift assignments keep snapshotted history).
   - DEPLOYED 2026-07-06: Firebase Storage rules for task proof/reference photo
     paths (`docs/reference/storage.rules`) are live in project `roster-8a270`.
   - VERIFY after Storage rules deploy: staff completes a photo-required task;
@@ -282,9 +285,17 @@
   - [x] Push wired end-to-end: APNs → FCM (`MessagingDelegate`) → Firestore `fcmToken`
   - [x] Associated Domains entitlement live; `apple-app-site-association` TEAMID
         placeholder bug found + fixed (was still live in production)
+  - [x] App Store packaging blockers cleared 2026-07-16 (build 2): opaque
+        AppIcon-1024, NSPhotoLibraryUsageDescription,
+        NSCalendarsWriteOnlyAccessUsageDescription, PrivacyInfo collected-data
+        types, employer-managed account deletion UX, About legal links.
+        See docs/APP_STORE_SUBMISSION.md for ASC notes + device QA checklist.
   - [ ] Passkey keep-or-remove decision still open — entitlement/domain
         association work is done, but `PasskeyManager.register()` has no UI
         entry point anywhere in the app, so registration can't be triggered yet
+  - [ ] Trademark / domain / App Store name conflict checks still open
+        (docs/BRANDING.md). Deploy PWA `/terms` + confirm support@ mailbox
+        before first upload.
 
 ---
 

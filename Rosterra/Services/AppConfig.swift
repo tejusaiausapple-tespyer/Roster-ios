@@ -10,6 +10,13 @@ enum AppConfig {
     /// URL of the web app, surfaced to managers who mistakenly sign in here.
     static let webAppURL = URL(string: "https://sura-roster.com")!
 
+    /// Support contact address for help, privacy, and account-deletion requests.
+    static let supportEmail = "support@sura-roster.com"
+
+    /// Public legal pages hosted on the marketing site.
+    static let privacyPolicyURL = URL(string: "https://sura-roster.com/privacy")!
+    static let termsOfServiceURL = URL(string: "https://sura-roster.com/terms")!
+
     /// Remote push master switch. Local shift reminders work regardless of
     /// this flag.
     static let pushEnabled = true

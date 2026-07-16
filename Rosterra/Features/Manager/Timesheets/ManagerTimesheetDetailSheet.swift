@@ -122,9 +122,9 @@ struct ManagerTimesheetDetailSheet: View {
                     }
                     .padding(Theme.screenPadding)
                 }
-                .safeAreaInset(edge: .bottom) {
+                .safeAreaInset(edge: .bottom, spacing: 0) {
                     if isActionable {
-                        pinnedActionBar
+                        floatingActionButtons
                     }
                 }
             }
@@ -462,25 +462,9 @@ struct ManagerTimesheetDetailSheet: View {
         }
     }
     
-    // Pinned glass action bar so Approve / Reject are always visible without
-    // scrolling. Content scrolls beneath the frosted material (a glass toolbar).
-    private var pinnedActionBar: some View {
-        VStack(spacing: 0) {
-            Divider().overlay(Theme.separator)
-            actionButtons
-                .padding(.horizontal, Theme.screenPadding)
-                .padding(.top, 12)
-                .padding(.bottom, 12)
-        }
-        .background(
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .ignoresSafeArea(edges: .bottom)
-        )
-    }
-
-    private var actionButtons: some View {
-        HStack(spacing: 16) {
+    /// Floating Approve / Reject — no footer bar; each button is its own glass surface.
+    private var floatingActionButtons: some View {
+        HStack(spacing: 12) {
             Button {
                 showRejectionDialog = true
             } label: {
@@ -489,13 +473,12 @@ struct ManagerTimesheetDetailSheet: View {
                     Text("Reject")
                 }
                 .font(.subheadline.weight(.bold))
-                .foregroundStyle(Theme.warning)
+                .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
-                .glassSurface(
-                    in: RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous),
-                    tint: Theme.warning.opacity(0.14),
-                    interactive: true
+                .glassProminentSurface(
+                    in: Capsule(style: .continuous),
+                    tint: Theme.error
                 )
             }
             .buttonStyle(.plain)
@@ -517,13 +500,16 @@ struct ManagerTimesheetDetailSheet: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
                 .glassProminentSurface(
-                    in: RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous),
+                    in: Capsule(style: .continuous),
                     tint: Theme.accent
                 )
             }
             .buttonStyle(.plain)
             .disabled(isSubmitting)
         }
+        .padding(.horizontal, Theme.screenPadding)
+        .padding(.top, 8)
+        .padding(.bottom, 12)
     }
     
     private var rejectionDialogSheet: some View {

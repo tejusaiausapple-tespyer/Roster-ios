@@ -86,6 +86,14 @@ final class RosterRepository {
     private var pendingFirstSnapshot: Set<String> = []
     private var currentRole: UserRole? = nil
     private var roleListenersInitialized = false
+    /// After the first timesheet snapshot, status transitions can fire local
+    /// approve/reject alerts (backup while the process is alive).
+    private var timesheetStatusesPrimed = false
+    private var knownTimesheetStatuses: [String: TimesheetStatus] = [:]
+    /// After the first staff shifts snapshot, newly published shift ids can
+    /// fire a local "Roster published" alert (backup while process is alive).
+    private var publishedShiftsPrimed = false
+    private var knownPublishedShiftIds: Set<String> = []
 
     private var db: Firestore { Firestore.firestore() }
     private var storage: Storage { Storage.storage() }
@@ -362,8 +370,8 @@ final class RosterRepository {
                             self.clearClockSession()
                         }
                         // Keep local shift reminders in step with the roster.
-                        ShiftReminderScheduler.sync(shifts: self.shifts,
-                                                    clockedInShiftId: self.clockSession?.shiftId)
+                        self.resyncLocalShiftReminders()
+                        self.handleRosterPublishedAlerts(previousPrimed: self.publishedShiftsPrimed)
                     }
             )
 
@@ -380,6 +388,9 @@ final class RosterRepository {
                             return submitted >= timesheetCutoff
                         }
                         self.markArrived("timesheets")
+                        // Drop submit-hours locals once hours are filed.
+                        self.resyncLocalShiftReminders()
+                        self.handleTimesheetDecisionAlerts(previousPrimed: self.timesheetStatusesPrimed)
                     }
             )
             
@@ -441,6 +452,10 @@ final class RosterRepository {
         lockedAvailabilityWeeks = []
         shifts = []
         timesheets = []
+        timesheetStatusesPrimed = false
+        knownTimesheetStatuses = [:]
+        publishedShiftsPrimed = false
+        knownPublishedShiftIds = []
         messages = []
         tasks = []
         taskCompletions = []
@@ -527,7 +542,7 @@ final class RosterRepository {
         // Clock-in recorded: stop the "forgot to start" nag and arm the
         // end-of-shift reminder.
         ShiftReminderScheduler.cancelForgotStart(shiftId: shift.id)
-        ShiftReminderScheduler.sync(shifts: shifts, clockedInShiftId: shift.id)
+        resyncLocalShiftReminders(clockedInShiftId: shift.id)
         try await db.collection("shift_attendance").document(shift.id).setData(fields, merge: true)
         Task { await WorkerAPIClient.shared.sendNotification(event: "shift-started", shiftIds: [shift.id]) }
     }
@@ -548,6 +563,8 @@ final class RosterRepository {
         }
         fields.merge(ShiftAttendance.fixFields(prefix: "clockOut", fix: fix)) { _, new in new }
         ShiftReminderScheduler.cancelForgotEnd(shiftId: shift.id)
+        // Arm submit-hours local reminder (no longer clocked in).
+        resyncLocalShiftReminders(clockedInShiftId: nil)
         try await db.collection("shift_attendance").document(shift.id).setData(fields, merge: true)
         Task { await WorkerAPIClient.shared.sendNotification(event: "shift-ended", shiftIds: [shift.id]) }
     }
@@ -623,6 +640,66 @@ final class RosterRepository {
 
     // MARK: - Derived lookups
 
+    /// Shift ids whose hours/absence are already filed — used to suppress
+    /// local submit-hours reminders.
+    var filedTimesheetShiftIds: Set<String> {
+        Set(timesheets.compactMap { ts in
+            ShiftReminderScheduler.isHoursFiled(ts.status) ? ts.shiftId : nil
+        })
+    }
+
+    /// Rebuild device-local shift reminders from the live roster + timesheets.
+    func resyncLocalShiftReminders(clockedInShiftId: String? = nil) {
+        let clocked = clockedInShiftId ?? clockSession?.shiftId
+        ShiftReminderScheduler.sync(
+            shifts: shifts,
+            clockedInShiftId: clocked,
+            filedShiftIds: filedTimesheetShiftIds
+        )
+    }
+
+    /// Fire a local "Roster published" alert when new published shifts appear
+    /// (backup while the app process is alive). First snapshot only primes.
+    private func handleRosterPublishedAlerts(previousPrimed: Bool) {
+        let currentIds = Set(shifts.map(\.id))
+        defer {
+            publishedShiftsPrimed = true
+            knownPublishedShiftIds = currentIds
+        }
+        guard previousPrimed else { return }
+        let added = currentIds.subtracting(knownPublishedShiftIds)
+        guard !added.isEmpty else { return }
+        NotificationService.shared.postRosterPublishedLocally(newShiftCount: added.count)
+    }
+
+    /// Fire local approve/reject alerts on status transitions (backup while
+    /// the app process is alive). First snapshot only primes — no spam on login.
+    private func handleTimesheetDecisionAlerts(previousPrimed: Bool) {
+        defer {
+            timesheetStatusesPrimed = true
+            knownTimesheetStatuses = Dictionary(uniqueKeysWithValues: timesheets.map { ($0.id, $0.status) })
+        }
+        guard previousPrimed else { return }
+
+        for ts in timesheets {
+            let previous = knownTimesheetStatuses[ts.id]
+            guard let previous, previous != ts.status else { continue }
+            if ts.status == .approved, previous != .approved {
+                NotificationService.shared.postTimesheetDecisionLocally(
+                    timesheetId: ts.id,
+                    approved: true,
+                    body: "Your submitted hours were approved."
+                )
+            } else if ts.status == .rejected, previous != .rejected {
+                NotificationService.shared.postTimesheetDecisionLocally(
+                    timesheetId: ts.id,
+                    approved: false,
+                    body: "Your submitted hours were rejected. Tap to review."
+                )
+            }
+        }
+    }
+
     func timesheet(forShift shiftId: String) -> Timesheet? {
         // Fast path via the maintained index; fall back to the legacy
         // id-match only if no shiftId hit (deep-link edge case).
@@ -688,6 +765,7 @@ final class RosterRepository {
             "updatedAt": nowISO(),
         ]
         try await db.collection("timesheets").document(shiftId).setData(data)
+        ShiftReminderScheduler.cancelSubmitHours(shiftId: shiftId)
         await WorkerAPIClient.shared.sendNotification(event: "timesheet-submitted",
                                                       shiftIds: [shiftId], timesheetId: shiftId)
     }
@@ -707,6 +785,7 @@ final class RosterRepository {
             "updatedAt": nowISO(),
         ]
         try await db.collection("timesheets").document(id).updateData(data)
+        ShiftReminderScheduler.cancelSubmitHours(shiftId: id)
         await WorkerAPIClient.shared.sendNotification(event: "timesheet-submitted",
                                                       shiftIds: [id], timesheetId: id)
     }
@@ -733,6 +812,7 @@ final class RosterRepository {
             absenceFields["staffId"] = staffId
             try await db.collection("timesheets").document(shiftId).setData(absenceFields)
         }
+        ShiftReminderScheduler.cancelSubmitHours(shiftId: shiftId)
         await WorkerAPIClient.shared.sendNotification(event: "timesheet-absent",
                                                       shiftIds: [shiftId], timesheetId: shiftId)
     }
@@ -809,6 +889,28 @@ final class RosterRepository {
         var data = fields
         data["updatedAt"] = nowISO()
         try await db.collection("users").document(staffId).updateData(data)
+    }
+
+    /// Schedule ATO-safe account deletion (lock + 30-day Auth purge). Keeps
+    /// timesheets, shifts, payslips, and identity fields.
+    func approveStaffAccountDeletion(staffId: String) async throws {
+        try await WorkerAPIClient.shared.approveAccountDeletion(staffUserId: staffId)
+        await refreshFromServer()
+    }
+
+    func declineStaffAccountDeletion(staffId: String) async throws {
+        try await WorkerAPIClient.shared.declineAccountDeletion(staffUserId: staffId)
+        await refreshFromServer()
+    }
+
+    func cancelStaffAccountDeletion(staffId: String) async throws {
+        try await WorkerAPIClient.shared.cancelAccountDeletion(staffUserId: staffId)
+        await refreshFromServer()
+    }
+
+    func requestOwnAccountDeletion() async throws {
+        try await WorkerAPIClient.shared.requestAccountDeletion(via: "ios")
+        await refreshFromServer()
     }
 
     /// Prompt a staff member to change their own sign-in email. Sets a flag on
@@ -980,6 +1082,12 @@ final class RosterRepository {
             "createdAt": FieldValue.serverTimestamp(),
             "createdBy": uid
         ])
+    }
+
+    /// Remove a job from the template library. Existing shift assignments keep
+    /// their snapshotted title/history — only the reusable library entry goes.
+    func deleteDailyJobTemplate(id: String) async throws {
+        try await db.collection("daily_job_templates").document(id).delete()
     }
 
     /// Replace a shift's job assignments with the given template selection.
@@ -1424,6 +1532,7 @@ final class RosterRepository {
             staffId: user.id,
             staffName: user.fullName,
             employeeId: user.employeeId ?? "",
+            tfnLast4: TFN.last4(user.tfn),
             position: position,
             employmentType: profile?.employmentType ?? user.employmentType?.rawValue ?? "",
             awardName: award?.name ?? "",
@@ -1646,7 +1755,7 @@ final class RosterRepository {
         let newId = "\(base)_c\(existingCorrections + 2)"
 
         let corrected = Payslip(id: newId, staffId: slip.staffId, staffName: slip.staffName,
-                            employeeId: slip.employeeId,
+                            employeeId: slip.employeeId, tfnLast4: slip.tfnLast4,
                             position: slip.position, employmentType: slip.employmentType,
                             awardName: slip.awardName, awardCode: slip.awardCode,
                             classification: slip.classification,

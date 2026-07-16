@@ -164,6 +164,8 @@ struct Payslip: Identifiable, Equatable {
     var staffId: String
     var staffName: String        // snapshot
     var employeeId: String       // snapshot (manager-assigned ID, may be "")
+    /// Last 4 digits of TFN at generation time (full TFN stays on users/{uid}).
+    var tfnLast4: String
     var position: String         // snapshot (role label)
     var employmentType: String   // snapshot (EmploymentType raw or "")
     var awardName: String        // snapshot
@@ -214,7 +216,8 @@ struct Payslip: Identifiable, Equatable {
         "\(periodStart)_\(staffId)"
     }
 
-    init(id: String, staffId: String, staffName: String, employeeId: String = "", position: String = "",
+    init(id: String, staffId: String, staffName: String, employeeId: String = "", tfnLast4: String = "",
+         position: String = "",
          employmentType: String = "", awardName: String = "", awardCode: String = "",
          classification: String = "", periodStart: String, periodEnd: String,
          payDate: String = "", status: PayslipStatus = .draft,
@@ -233,6 +236,7 @@ struct Payslip: Identifiable, Equatable {
         self.staffId = staffId
         self.staffName = staffName
         self.employeeId = employeeId
+        self.tfnLast4 = tfnLast4
         self.position = position
         self.employmentType = employmentType
         self.awardName = awardName
@@ -272,6 +276,7 @@ struct Payslip: Identifiable, Equatable {
         self.staffId = FS.stringValue(data, "staffId")
         self.staffName = FS.stringValue(data, "staffName")
         self.employeeId = FS.stringValue(data, "employeeId")
+        self.tfnLast4 = FS.stringValue(data, "tfnLast4")
         self.position = FS.stringValue(data, "position")
         self.employmentType = FS.stringValue(data, "employmentType")
         self.awardName = FS.stringValue(data, "awardName")
@@ -310,6 +315,7 @@ struct Payslip: Identifiable, Equatable {
             "staffId": staffId,
             "staffName": staffName,
             "employeeId": employeeId,
+            "tfnLast4": tfnLast4,
             "position": position,
             "employmentType": employmentType,
             "awardName": awardName,

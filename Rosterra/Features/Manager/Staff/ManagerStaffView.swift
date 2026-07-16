@@ -41,12 +41,21 @@ struct ManagerStaffView: View {
         }
     }
 
+    private var pendingDeletionCount: Int {
+        staff.filter { $0.deletion?.status == .requested }.count
+    }
+
     private var filtered: [AppUser] {
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return staff
             .filter { statusMatches($0) }
             .filter { q.isEmpty || $0.fullName.lowercased().contains(q) || $0.email.lowercased().contains(q) }
-            .sorted { $0.fullName < $1.fullName }
+            .sorted { a, b in
+                let aPending = a.deletion?.status == .requested
+                let bPending = b.deletion?.status == .requested
+                if aPending != bPending { return aPending && !bPending }
+                return a.fullName < b.fullName
+            }
     }
 
     var body: some View {
@@ -193,6 +202,14 @@ struct ManagerStaffView: View {
 
                 Spacer()
 
+                if user.deletion?.status == .requested {
+                    Text("Deletion request")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Theme.warning)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Capsule().fill(Theme.warning.opacity(0.14)))
+                }
+
                 Text(user.status.rawValue.capitalized)
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(style.tint)
@@ -234,6 +251,9 @@ struct ManagerStaffView: View {
         let content = HStack(spacing: 16) {
             summaryChip(icon: "person.2", text: "\(staff.count) staff")
             summaryChip(icon: "checkmark.circle", text: "\(count(.active)) active")
+            if pendingDeletionCount > 0 {
+                summaryChip(icon: "trash.circle", text: "\(pendingDeletionCount) deletion request\(pendingDeletionCount == 1 ? "" : "s")", tint: Theme.warning)
+            }
             if count(.locked) > 0 {
                 summaryChip(icon: "lock", text: "\(count(.locked)) locked", tint: Theme.error)
             }
@@ -282,6 +302,7 @@ struct ManagerStaffDetailSheet: View {
     @State private var startDate: Date?
     @State private var dob: Date?
     @State private var employeeId: String
+    @State private var tfn: String
     @State private var emergencyName: String
     @State private var emergencyPhone: String
     @State private var emergencyAddress: String
@@ -292,6 +313,10 @@ struct ManagerStaffDetailSheet: View {
     @State private var emailRequested: Bool
     @State private var showAddressConfirm = false
     @State private var showWageAssignment = false
+    @State private var showApproveDeletionConfirm = false
+    @State private var showCancelDeletionConfirm = false
+    @State private var showDeclineDeletionConfirm = false
+    @State private var isDeletionWorking = false
     @State private var toast: ToastMessage?
 
     @State private var savedBaseline: Baseline
@@ -300,6 +325,7 @@ struct ManagerStaffDetailSheet: View {
         let fullName: String
         let phone: String
         let employeeId: String
+        let tfn: String
         let employmentType: EmploymentType
         let status: UserStatus
         let startDateKey: String?
@@ -314,9 +340,11 @@ struct ManagerStaffDetailSheet: View {
         self.user = user
         let phoneValue = user.phone ?? ""
         let emergencyNameValue = user.emergencyContactName ?? user.emergencyContact ?? ""
+        let tfnValue = user.tfn.map { TFN.format($0) } ?? ""
         _fullName = State(initialValue: user.fullName)
         _phone = State(initialValue: phoneValue)
         _employeeId = State(initialValue: user.employeeId ?? "")
+        _tfn = State(initialValue: tfnValue)
         _employmentType = State(initialValue: user.employmentType ?? .casual)
         _status = State(initialValue: user.status)
         _startDate = State(initialValue: user.startDate.flatMap { RosterFormat.parseISODate($0) })
@@ -330,6 +358,7 @@ struct ManagerStaffDetailSheet: View {
             fullName: user.fullName,
             phone: phoneValue,
             employeeId: user.employeeId ?? "",
+            tfn: TFN.normalize(user.tfn ?? ""),
             employmentType: user.employmentType ?? .casual,
             status: user.status,
             startDateKey: user.startDate,
@@ -350,6 +379,7 @@ struct ManagerStaffDetailSheet: View {
             fullName: fullName,
             phone: phone,
             employeeId: employeeId,
+            tfn: TFN.normalize(tfn),
             employmentType: employmentType,
             status: status,
             startDateKey: dateKey(startDate),
@@ -381,6 +411,32 @@ struct ManagerStaffDetailSheet: View {
                     Text("Details")
                 } footer: {
                     Text("Employee ID (letters and numbers, e.g. EMP001) appears on the staff member's profile and payslips.")
+                }
+
+                Section {
+                    if isEditMode {
+                        HStack {
+                            Text("TFN")
+                                .font(.subheadline)
+                                .foregroundStyle(Theme.textSecondary)
+                            Spacer()
+                            TextField("XXX XXX XXX", text: Binding(
+                                get: { tfn },
+                                set: { tfn = TFN.format($0) }
+                            ))
+                            .multilineTextAlignment(.trailing)
+                            .keyboardType(.numberPad)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .foregroundStyle(Theme.textPrimary)
+                        }
+                    } else {
+                        readOnlyRow("TFN", TFN.mask(user.tfn))
+                    }
+                } header: {
+                    Text("Tax")
+                } footer: {
+                    Text("Manager-only. Full TFN is retained for ATO / payroll after account closure. Payslips store the last 4 digits only.")
                 }
 
                 emailSection
@@ -429,6 +485,8 @@ struct ManagerStaffDetailSheet: View {
                     editableTextRow(label: "Address", text: $emergencyAddress, capitalization: .words)
                     editableTextRow(label: "Email", text: $emergencyEmail, keyboard: .emailAddress, capitalization: .never)
                 }
+
+                dangerZoneSection
             }
             .scrollContentBackground(.hidden)
             .background(Theme.background.ignoresSafeArea())
@@ -461,6 +519,77 @@ struct ManagerStaffDetailSheet: View {
             } message: {
                 Text("\(user.firstName) will be asked to enter a new address next time they open the app, and won't reach their dashboard until they do. They can sign out from that screen instead.")
             }
+            .alert(
+                liveUser.deletion?.status == .requested
+                    ? "Approve deletion for \(user.fullName)?"
+                    : "Schedule account deletion?",
+                isPresented: $showApproveDeletionConfirm
+            ) {
+                Button("Cancel", role: .cancel) {}
+                Button("Lock & schedule (30 days)", role: .destructive) { approveDeletion() }
+            } message: {
+                Text("\(user.firstName) will be locked immediately. After 30 days their sign-in is removed. Name, DOB, address, TFN, timesheets and payslips are kept for ATO/payroll. You can cancel within 30 days.")
+            }
+            .alert("Decline deletion request?", isPresented: $showDeclineDeletionConfirm) {
+                Button("Cancel", role: .cancel) {}
+                Button("Decline request", role: .destructive) { declineDeletion() }
+            } message: {
+                Text("\(user.firstName) stays active and can use the app.")
+            }
+            .alert("Cancel scheduled deletion?", isPresented: $showCancelDeletionConfirm) {
+                Button("Keep deletion", role: .cancel) {}
+                Button("Reinstate account") { cancelDeletion() }
+            } message: {
+                Text("Unlocks \(user.firstName) and cancels the 30-day Auth purge. Payroll history is unchanged.")
+            }
+        }
+    }
+
+    // MARK: - Account deletion (ATO-safe)
+
+    private var liveUser: AppUser {
+        repo.allUsers.first(where: { $0.id == user.id }) ?? user
+    }
+
+    private var dangerZoneSection: some View {
+        Section {
+            let deletion = liveUser.deletion
+            if isDeletionWorking {
+                HStack { ProgressView(); Text("Working…").foregroundStyle(Theme.textSecondary) }
+            } else if deletion?.status == .authPurged {
+                Label("Former staff — login removed; records retained", systemImage: "checkmark.shield")
+                    .foregroundStyle(Theme.textSecondary)
+            } else if deletion?.status == .approved {
+                if let deadline = deletion?.cancelDeadlineAt, let date = FS.isoDate(from: deadline) {
+                    Text("Locked. Auth purge after \(RosterFormat.dateFull(date)).")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Button("Cancel deletion & reinstate") {
+                    showCancelDeletionConfirm = true
+                }
+            } else if deletion?.status == .requested {
+                Label("Staff requested deletion", systemImage: "exclamationmark.bubble")
+                    .foregroundStyle(Theme.warning)
+                Button(role: .destructive) {
+                    showApproveDeletionConfirm = true
+                } label: {
+                    Label("Approve — lock for 30 days", systemImage: "lock.fill")
+                }
+                Button("Decline request") {
+                    showDeclineDeletionConfirm = true
+                }
+            } else {
+                Button(role: .destructive) {
+                    showApproveDeletionConfirm = true
+                } label: {
+                    Label("Schedule account deletion", systemImage: "trash")
+                }
+            }
+        } header: {
+            Text("Account deletion")
+        } footer: {
+            Text("ATO-safe: locks the account, then removes sign-in after 30 days. Timesheets, payslips, name, DOB, address and TFN are retained. Staff can also request from Account → Delete account.")
         }
     }
 
@@ -671,6 +800,13 @@ struct ManagerStaffDetailSheet: View {
             return
         }
 
+        if let tfnError = TFN.validationError(tfn) {
+            toast = ToastMessage(kind: .error, text: tfnError)
+            Haptics.error()
+            return
+        }
+        let cleanedTfn = TFN.normalize(tfn)
+
         // Letters and numbers only (e.g. EMP001), stored uppercased.
         let cleanedEmployeeId = employeeId.uppercased().filter { $0.isLetter || $0.isNumber }
         if cleanedEmployeeId != employeeId.trimmingCharacters(in: .whitespaces).uppercased() {
@@ -682,6 +818,7 @@ struct ManagerStaffDetailSheet: View {
         let trimmedPhone = phone.trimmingCharacters(in: .whitespaces)
         if trimmedPhone != savedBaseline.phone { fields["phone"] = trimmedPhone }
         if cleanedEmployeeId != savedBaseline.employeeId { fields["employeeId"] = cleanedEmployeeId }
+        if cleanedTfn != savedBaseline.tfn { fields["tfn"] = cleanedTfn }
         if employmentType != savedBaseline.employmentType { fields["employmentType"] = employmentType.rawValue }
         if status != savedBaseline.status, user.status != .locked { fields["status"] = status.rawValue }
 
@@ -714,6 +851,7 @@ struct ManagerStaffDetailSheet: View {
                 fullName = trimmedName
                 phone = trimmedPhone
                 employeeId = cleanedEmployeeId
+                tfn = cleanedTfn.isEmpty ? "" : TFN.format(cleanedTfn)
                 emergencyName = trimmedEmergencyName
                 emergencyPhone = trimmedEmergencyPhone
                 emergencyAddress = trimmedEmergencyAddress
@@ -763,6 +901,51 @@ struct ManagerStaffDetailSheet: View {
                 dismiss()
             } catch {
                 toast = ToastMessage(kind: .error, text: "Couldn't update. \(error.localizedDescription)")
+                Haptics.error()
+            }
+        }
+    }
+
+    private func approveDeletion() {
+        isDeletionWorking = true
+        Task {
+            defer { isDeletionWorking = false }
+            do {
+                try await repo.approveStaffAccountDeletion(staffId: user.id)
+                Haptics.success()
+                toast = ToastMessage(kind: .success, text: "Account locked — Auth purge in 30 days.")
+            } catch {
+                toast = ToastMessage(kind: .error, text: error.localizedDescription)
+                Haptics.error()
+            }
+        }
+    }
+
+    private func declineDeletion() {
+        isDeletionWorking = true
+        Task {
+            defer { isDeletionWorking = false }
+            do {
+                try await repo.declineStaffAccountDeletion(staffId: user.id)
+                Haptics.success()
+                toast = ToastMessage(kind: .success, text: "Deletion request declined.")
+            } catch {
+                toast = ToastMessage(kind: .error, text: error.localizedDescription)
+                Haptics.error()
+            }
+        }
+    }
+
+    private func cancelDeletion() {
+        isDeletionWorking = true
+        Task {
+            defer { isDeletionWorking = false }
+            do {
+                try await repo.cancelStaffAccountDeletion(staffId: user.id)
+                Haptics.success()
+                toast = ToastMessage(kind: .success, text: "Account reinstated.")
+            } catch {
+                toast = ToastMessage(kind: .error, text: error.localizedDescription)
                 Haptics.error()
             }
         }

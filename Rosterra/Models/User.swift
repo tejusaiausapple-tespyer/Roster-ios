@@ -16,6 +16,10 @@ struct AppUser: Identifiable, Equatable {
     var startDate: String?
     var dob: String?
     var address: String?
+    /// Australian Tax File Number (9 digits). Manager-only; retained after Auth purge.
+    var tfn: String?
+    /// Account deletion lifecycle (Worker-managed). See `AccountDeletionState`.
+    var deletion: AccountDeletionState?
     /// Legacy single-field emergency contact (kept in sync with name for PWA compat).
     var emergencyContact: String?
     var emergencyContactName: String?
@@ -63,6 +67,14 @@ struct AppUser: Identifiable, Equatable {
         self.startDate = FS.string(data, "startDate")
         self.dob = FS.string(data, "dob")
         self.address = FS.string(data, "address")
+        // TFN is manager-facing; staff clients still receive the field on their
+        // own doc (Firestore cannot redact fields) but we never surface it in staff UI.
+        self.tfn = FS.string(data, "tfn")
+        if let deletionMap = data["deletion"] as? [String: Any] {
+            self.deletion = AccountDeletionState(dict: deletionMap)
+        } else {
+            self.deletion = nil
+        }
         self.emergencyContact = FS.string(data, "emergencyContact")
         self.emergencyContactName = FS.string(data, "emergencyContactName")
         self.emergencyContactPhone = FS.string(data, "emergencyContactPhone")

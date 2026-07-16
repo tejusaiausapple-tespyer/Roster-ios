@@ -93,6 +93,51 @@ struct WorkerAPIClient {
         return localId
     }
 
+    /// Legacy Settings wipe entry — now ATO-safe schedules (lock + 30-day Auth purge).
+    func deleteStaffUsers(staffUserIds: [String]) async throws {
+        let json = try await post(path: "api/delete-staff-users",
+                                  body: ["staffUserIds": staffUserIds])
+        guard json["ok"] as? Bool == true else {
+            throw WorkerAPIError.server(
+                (json["error"] as? String) ?? "Could not schedule account deletion. Please try again.")
+        }
+    }
+
+    /// Staff self-request or manager-on-behalf of staff: POST /api/account-deletion/request.
+    /// Manager/business-owner self-deletion is intentionally unsupported until SaaS Super Admin.
+    func requestAccountDeletion(staffUserId: String? = nil, via: String = "ios") async throws {
+        var body: [String: Any] = ["via": via]
+        if let staffUserId { body["staffUserId"] = staffUserId }
+        let json = try await post(path: "api/account-deletion/request", body: body)
+        guard json["ok"] as? Bool == true else {
+            throw WorkerAPIError.server((json["error"] as? String) ?? "Could not request deletion.")
+        }
+    }
+
+    func approveAccountDeletion(staffUserId: String) async throws {
+        let json = try await post(path: "api/account-deletion/approve",
+                                  body: ["staffUserId": staffUserId])
+        guard json["ok"] as? Bool == true else {
+            throw WorkerAPIError.server((json["error"] as? String) ?? "Could not approve deletion.")
+        }
+    }
+
+    func declineAccountDeletion(staffUserId: String) async throws {
+        let json = try await post(path: "api/account-deletion/decline",
+                                  body: ["staffUserId": staffUserId])
+        guard json["ok"] as? Bool == true else {
+            throw WorkerAPIError.server((json["error"] as? String) ?? "Could not decline deletion.")
+        }
+    }
+
+    func cancelAccountDeletion(staffUserId: String) async throws {
+        let json = try await post(path: "api/account-deletion/cancel",
+                                  body: ["staffUserId": staffUserId])
+        guard json["ok"] as? Bool == true else {
+            throw WorkerAPIError.server((json["error"] as? String) ?? "Could not cancel deletion.")
+        }
+    }
+
     // MARK: - Notification triggers (best-effort, fire-and-forget)
 
     /// Mirrors web notificationTriggers. `recipientIds` is required for

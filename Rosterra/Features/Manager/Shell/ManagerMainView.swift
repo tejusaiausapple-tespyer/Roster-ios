@@ -68,14 +68,12 @@ struct ManagerMainView: View {
                     ManagerAvailabilityView()
                 case .reports:
                     ManagerReportsView()
+                case .tenure:
+                    ManagerTenureView()
                 case .wage:
                     NavigationStack { ManagerWageView(embedInNavigationStack: false) }
                 case .payroll:
                     NavigationStack { ManagerPayrollView(embedInNavigationStack: false) }
-                default:
-                    NavigationStack {
-                        ManagerPlaceholderView(tab: selectedTab)
-                    }
                 }
             }
         }

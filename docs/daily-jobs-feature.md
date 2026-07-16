@@ -23,7 +23,10 @@ templates never expire.
 
 - Dashboard → Today's Roster → tap a staff shift row →
   `DailyJobAssignSheet`: job library with multi-select checkboxes, search,
-  inline **+ Add Job** (creates a permanent template), Save.
+  inline **+ Add Job** (creates a permanent template), trailing trash to
+  delete a library entry, Save.
+- Deleting a template removes it from the library only — existing shift
+  assignments keep their snapshotted title/history.
 - Saving syncs the shift's assignments: newly ticked jobs are created,
   unticked ones removed, already-assigned ones keep their completion state.
 - The same sheet shows live progress (pending/completed + completion time),
@@ -42,7 +45,8 @@ templates never expire.
 ## Key files
 
 - `Models/DailyJob.swift`, `Services/RosterRepository.swift` (listeners +
-  addDailyJobTemplate / setDailyJobs / setDailyJobCompleted / dailyJobs(forShift:))
+  addDailyJobTemplate / deleteDailyJobTemplate / setDailyJobs /
+  setDailyJobCompleted / dailyJobs(forShift:))
 - Manager: `Features/Manager/Dashboard/DailyJobAssignSheet.swift` (+ roster
   row wiring in `ManagerDashboardView.swift`)
 - Staff: `Features/Home/NotificationsSheet.swift`, bell badge in `HomeView.swift`
@@ -50,5 +54,4 @@ templates never expire.
 
 ## Future (per plan, not built yet)
 
-- Edit/delete templates, push notifications on assignment (needs Worker
-  event), assignment history view per staff member.
+- Edit templates, assignment history view per staff member.

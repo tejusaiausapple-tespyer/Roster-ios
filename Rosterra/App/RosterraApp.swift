@@ -28,6 +28,7 @@ struct RosterraApp: App {
                 .preferredColorScheme(preferredColorScheme)
                 .tint(Theme.brand)
                 .onOpenURL { url in router.handle(url: url) }
+                .onAppear { AppRouter.shared = router }
         }
     }
 }

@@ -52,6 +52,24 @@ enum ReleaseHistory {
     static let all: [AppRelease] = [
         AppRelease(
             version: "1.0.0",
+            build: "2",
+            releaseDate: releaseDate(2026, 7, 16),
+            updateType: .patch,
+            summary: "App Store readiness — opaque icon, account deletion, Tenure & Hours, legal links.",
+            features: [
+                "Manager Tenure & Hours: service tenure from first approved shift, approved hours, KPIs",
+                "Account deletion in-app for staff (request + manager approve); owner account not self-deletable",
+                "Account → About links to Privacy Policy, Terms of Service, and Contact Support",
+            ],
+            bugFixes: [
+                "App Store 1024 icon is fully opaque (no alpha channel)",
+                "NSPhotoLibraryUsageDescription and NSCalendarsWriteOnlyAccessUsageDescription added",
+                "PrivacyInfo.xcprivacy declares collected data types for App Privacy answers",
+            ],
+            commitHash: "8696eff"
+        ),
+        AppRelease(
+            version: "1.0.0",
             build: "1",
             releaseDate: releaseDate(2026, 7, 10),
             updateType: .major,

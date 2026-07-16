@@ -14,6 +14,7 @@ struct DailyJobAssignSheet: View {
     @State private var showingNewJob = false
     @State private var isSaving = false
     @State private var errorMessage: String? = nil
+    @State private var templatePendingDelete: DailyJobTemplate? = nil
 
     private var staffName: String {
         repo.user(id: shift.staffId)?.fullName ?? "Staff Member"
@@ -64,20 +65,35 @@ struct DailyJobAssignSheet: View {
                     }
                     ForEach(filteredTemplates) { template in
                         let templateId = template.id ?? ""
-                        Button {
-                            if selectedIds.contains(templateId) {
-                                selectedIds.remove(templateId)
-                            } else {
-                                selectedIds.insert(templateId)
+                        HStack(spacing: 12) {
+                            Button {
+                                if selectedIds.contains(templateId) {
+                                    selectedIds.remove(templateId)
+                                } else {
+                                    selectedIds.insert(templateId)
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: selectedIds.contains(templateId) ? "checkmark.square.fill" : "square")
+                                        .foregroundStyle(selectedIds.contains(templateId) ? Theme.brand : Theme.textTertiary)
+                                    Text(template.title)
+                                        .foregroundStyle(Theme.textPrimary)
+                                    Spacer()
+                                }
                             }
-                        } label: {
-                            HStack {
-                                Image(systemName: selectedIds.contains(templateId) ? "checkmark.square.fill" : "square")
-                                    .foregroundStyle(selectedIds.contains(templateId) ? Theme.brand : Theme.textTertiary)
-                                Text(template.title)
-                                    .foregroundStyle(Theme.textPrimary)
-                                Spacer()
+                            .buttonStyle(.plain)
+
+                            Button {
+                                templatePendingDelete = template
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.body.weight(.medium))
+                                    .foregroundStyle(Theme.error)
+                                    .padding(6)
+                                    .contentShape(Rectangle())
                             }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Delete \(template.title)")
                         }
                     }
 
@@ -125,6 +141,28 @@ struct DailyJobAssignSheet: View {
             .onAppear {
                 selectedIds = Set(assignments.map(\.templateId))
             }
+            .alert(
+                "Delete job?",
+                isPresented: Binding(
+                    get: { templatePendingDelete != nil },
+                    set: { if !$0 { templatePendingDelete = nil } }
+                )
+            ) {
+                Button("Cancel", role: .cancel) {
+                    templatePendingDelete = nil
+                }
+                Button("Delete", role: .destructive) {
+                    if let template = templatePendingDelete {
+                        deleteTemplate(template)
+                    }
+                }
+            } message: {
+                if let title = templatePendingDelete?.title {
+                    Text("Remove “\(title)” from the job library? Existing shift assignments keep their history.")
+                } else {
+                    Text("Remove this job from the library? Existing shift assignments keep their history.")
+                }
+            }
         }
     }
 
@@ -136,6 +174,19 @@ struct DailyJobAssignSheet: View {
             do {
                 try await repo.addDailyJobTemplate(title: title)
                 showingNewJob = false
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func deleteTemplate(_ template: DailyJobTemplate) {
+        guard let id = template.id else { return }
+        templatePendingDelete = nil
+        selectedIds.remove(id)
+        Task {
+            do {
+                try await repo.deleteDailyJobTemplate(id: id)
             } catch {
                 errorMessage = error.localizedDescription
             }

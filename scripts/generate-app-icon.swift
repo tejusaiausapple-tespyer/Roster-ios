@@ -105,9 +105,12 @@ func drawArt(_ ctx: CGContext) {
 }
 
 func render(size: Int, macStyle: Bool, to url: URL) {
+    // The iOS marketing icon must be fully opaque (no alpha channel) or the App
+    // Store rejects the upload. macOS icons keep alpha for the squircle margin.
+    let alphaInfo: CGImageAlphaInfo = macStyle ? .premultipliedLast : .noneSkipLast
     let ctx = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8,
                         bytesPerRow: 0, space: space,
-                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                        bitmapInfo: alphaInfo.rawValue)!
     let s = CGFloat(size)
     if macStyle {
         // Apple macOS style: squircle-ish rounded rect with ~10% margin, drop shadow
