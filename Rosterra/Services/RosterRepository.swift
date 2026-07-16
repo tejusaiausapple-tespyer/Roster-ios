@@ -1682,20 +1682,27 @@ final class RosterRepository {
         notes: String?,
         status: ShiftStatus
     ) async throws {
+        let isUpdate = id != nil && !(id?.isEmpty ?? true)
+        let existing = isUpdate ? shiftsById[id!] : nil
         let docRef: DocumentReference
         if let id = id, !id.isEmpty {
             docRef = db.collection("shifts").document(id)
         } else {
             docRef = db.collection("shifts").document()
         }
-        
+
         let startDateTime = BusinessRules.shiftStartDateTime(date: date, time: start)
         let endDateTime = BusinessRules.shiftEndDateTime(date: date, start: start, end: end)
         let diffSecs = endDateTime.timeIntervalSince(startDateTime)
         let diffHours = diffSecs / 3600.0
         let scheduledHours = max(0.0, diffHours - (Double(breakMinutes) / 60.0))
+        // Mirrors the PWA's dataStore.ts updateShift: true when either the
+        // date or start time actually differs from what's currently saved.
+        // Resets the shift-start reminder flags (matching the PWA) and is
+        // the same condition that gates the shift-changed notification below.
+        let startChanged = existing != nil && (existing!.date != date || existing!.rosteredStart != start)
 
-        let data: [String: Any] = [
+        var data: [String: Any] = [
             "staffId": staffId,
             "date": date,
             "rosteredStart": start,
@@ -1716,8 +1723,19 @@ final class RosterRepository {
             "submittableAfter": Timestamp(date: endDateTime),
             "updatedAt": FieldValue.serverTimestamp()
         ]
-        
+        if startChanged {
+            data["startReminder6hSent"] = false
+            data["startReminder30mSent"] = false
+        }
+
         try await docRef.setData(data, merge: true)
+
+        // Only notify for a published shift's start-time change — a draft
+        // edit is invisible to staff.
+        if startChanged, existing?.status == .published {
+            let shiftId = docRef.documentID
+            Task { await WorkerAPIClient.shared.sendNotification(event: "shift-changed", shiftIds: [shiftId]) }
+        }
     }
 
     /// Delete a shift and any timesheets attached to it (one atomic batch),
@@ -1725,6 +1743,10 @@ final class RosterRepository {
     /// Dashboard pending count while being invisible in week views.
     /// (Manager timesheet deletes are permitted by the deployed rules.)
     func deleteShift(id: String) async throws {
+        // Captured before the delete — staffId can no longer be looked up
+        // server-side once the doc is gone, and only notify if the shift was
+        // published (staff never saw a draft).
+        let existing = shiftsById[id]
         let attached = try await db.collection("timesheets")
             .whereField("shiftId", isEqualTo: id)
             .getDocuments()
@@ -1734,6 +1756,11 @@ final class RosterRepository {
             batch.deleteDocument(doc.reference)
         }
         try await batch.commit()
+
+        if let existing, existing.status == .published {
+            let staffId = existing.staffId
+            Task { await WorkerAPIClient.shared.sendNotification(event: "shift-cancelled", recipientIds: [staffId]) }
+        }
     }
 
     /// Fields written when a shift is published. Mirrors the PWA's
@@ -1866,11 +1893,16 @@ final class RosterRepository {
 
     /// Reject a timesheet — sets status = .rejected, managerNotes, and rejectedReason.
     func rejectTimesheet(id: String, reason: String, managerNotes: String?) async throws {
+        // rejectedAt/rejectionReminderCount reset here (the only place a
+        // timesheet transitions TO .rejected) so the escalating-reminder
+        // cron always starts a fresh cycle, matching the PWA's dataStore.ts.
         let data: [String: Any] = [
             "status": TimesheetStatus.rejected.rawValue,
             "rejectedReason": reason,
             "managerNotes": managerNotes ?? "",
-            "updatedAt": nowISO()
+            "updatedAt": nowISO(),
+            "rejectedAt": FieldValue.serverTimestamp(),
+            "rejectionReminderCount": 0
         ]
 
         try await db.collection("timesheets").document(id).updateData(data)
