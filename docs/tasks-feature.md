@@ -35,12 +35,15 @@ HTTPS download-token URLs are still supported when reviewing older completions.
 ## Workflow
 
 1. Manager creates/edits tasks (Tasks tab **+**, or Dashboard → New Task).
-2. Task appears for assigned staff on its active days; completed via photo
+2. On **create** (and on edit when the assignee list changes), the app fires
+   Worker `message-task` to assigned staff (or all active staff when
+   "All staff" is selected). Title-only edits do not re-notify.
+3. Task appears for assigned staff on its active days; completed via photo
    (in-app camera only, never the gallery) or tick, with an optional note.
-3. Manager reviews the completion report; can **Request redo** (reopens the
+4. Manager reviews the completion report; can **Request redo** (reopens the
    day, deletes the cloud photo, shows the reason to staff) or approve
    implicitly by deleting the cloud photo after review.
-4. Recurring tasks reset each day; pause/resume via `active`, stop via
+5. Recurring tasks reset each day; pause/resume via `active`, stop via
    `endDate`; delete keeps completion history.
 
 ## Photo lifecycle (Firebase free tier)

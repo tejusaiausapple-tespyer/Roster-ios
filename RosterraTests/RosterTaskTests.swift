@@ -68,6 +68,37 @@ final class RosterTaskTests: XCTestCase {
         XCTAssertFalse(task.isAssigned(to: nil))
     }
 
+    // MARK: - Assignment push recipients
+
+    func testNotificationRecipientsExplicitAssignees() {
+        let ids = RosterTask.notificationRecipientIds(
+            assignedTo: ["alice", "bob", "alice", ""],
+            allActiveStaffIds: ["alice", "bob", "carol"]
+        )
+        XCTAssertEqual(Set(ids), Set(["alice", "bob"]))
+    }
+
+    func testNotificationRecipientsAllStaffWhenUnassigned() {
+        let ids = RosterTask.notificationRecipientIds(
+            assignedTo: nil,
+            allActiveStaffIds: ["alice", "bob"]
+        )
+        XCTAssertEqual(Set(ids), Set(["alice", "bob"]))
+        let emptyMeansAll = RosterTask.notificationRecipientIds(
+            assignedTo: [],
+            allActiveStaffIds: ["carol"]
+        )
+        XCTAssertEqual(emptyMeansAll, ["carol"])
+    }
+
+    func testAssigneesChangedDetectsAllVsSpecific() {
+        XCTAssertTrue(RosterTask.assigneesChanged(from: nil, to: ["alice"]))
+        XCTAssertTrue(RosterTask.assigneesChanged(from: ["alice"], to: nil))
+        XCTAssertTrue(RosterTask.assigneesChanged(from: ["alice"], to: ["bob"]))
+        XCTAssertFalse(RosterTask.assigneesChanged(from: nil, to: []))
+        XCTAssertFalse(RosterTask.assigneesChanged(from: ["alice", "bob"], to: ["bob", "alice"]))
+    }
+
     // MARK: - Defaults on legacy documents
 
     func testLegacyDocDefaults() {

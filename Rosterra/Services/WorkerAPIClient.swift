@@ -95,10 +95,10 @@ struct WorkerAPIClient {
 
     // MARK: - Notification triggers (best-effort, fire-and-forget)
 
-    /// Mirrors triggerTimesheetSubmittedNotification / triggerAbsenceReportedNotification.
-    /// `recipientIds` mirrors the web app's explicit-recipient events
-    /// (job-assigned, payslip-generated, message-task) — the Worker requires
-    /// the caller to be a manager for these and resolves recipients directly
+    /// Mirrors web notificationTriggers. `recipientIds` is required for
+    /// explicit-recipient events (`job-assigned`, `payslip-generated`,
+    /// `message-task` — including Tasks-tab assigns via `saveTask`). The Worker
+    /// requires the caller to be a manager for these and resolves recipients
     /// from the list rather than looking anything up server-side.
     func sendNotification(event: String, shiftIds: [String]? = nil, timesheetId: String? = nil, recipientIds: [String]? = nil) async {
         var body: [String: Any] = ["event": event]

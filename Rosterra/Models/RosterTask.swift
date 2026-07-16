@@ -29,6 +29,29 @@ struct RosterTask: Identifiable, Codable {
         return assignedTo.contains(userId)
     }
 
+    /// UIDs that should receive a "task assigned" push for this assignment.
+    /// `nil` / empty `assignedTo` means every active staff member.
+    static func notificationRecipientIds(
+        assignedTo: [String]?,
+        allActiveStaffIds: [String]
+    ) -> [String] {
+        if let assignedTo, !assignedTo.isEmpty {
+            return Array(Set(assignedTo.filter { !$0.isEmpty }))
+        }
+        return Array(Set(allActiveStaffIds.filter { !$0.isEmpty }))
+    }
+
+    /// `true` when the assignee list changed (including all-staff ↔ specific).
+    /// Used so title-only edits do not re-notify staff.
+    static func assigneesChanged(from previous: [String]?, to next: [String]?) -> Bool {
+        normalizedAssigneeSet(previous) != normalizedAssigneeSet(next)
+    }
+
+    private static func normalizedAssigneeSet(_ ids: [String]?) -> Set<String>? {
+        guard let ids, !ids.isEmpty else { return nil } // nil = all staff
+        return Set(ids.filter { !$0.isEmpty })
+    }
+
     /// Whether the task is scheduled on the given day.
     /// `weekday` uses 1=Monday...7=Sunday (RosterCalendar convention).
     func isActive(onDayKey dayKey: String, weekday: Int) -> Bool {

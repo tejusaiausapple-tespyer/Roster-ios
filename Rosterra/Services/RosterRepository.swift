@@ -1118,7 +1118,32 @@ final class RosterRepository {
             fields["managerPhotoUrl"] = try await storageRef.downloadURL().absoluteString
         }
 
+        let previousAssignedTo = id.flatMap { tid in tasks.first(where: { $0.id == tid })?.assignedTo }
+        let isCreate = id == nil
+        let shouldNotify = isCreate || RosterTask.assigneesChanged(from: previousAssignedTo, to: assignedTo)
+
         try await docRef.setData(fields, merge: true)
+
+        // Staff Tasks tab shows the task via the live listener; this push is
+        // what surfaces "New task" on the lock screen. Reuses the Worker's
+        // existing `message-task` event (manager-only, recipientIds list).
+        if shouldNotify {
+            let activeStaffIds = allUsers
+                .filter { $0.role == .staff && $0.status == .active }
+                .map(\.id)
+            let recipientIds = RosterTask.notificationRecipientIds(
+                assignedTo: assignedTo,
+                allActiveStaffIds: activeStaffIds
+            )
+            if !recipientIds.isEmpty {
+                Task {
+                    await WorkerAPIClient.shared.sendNotification(
+                        event: "message-task",
+                        recipientIds: recipientIds
+                    )
+                }
+            }
+        }
     }
 
     /// Pause/resume a task. The active-only listener drops paused tasks, so
