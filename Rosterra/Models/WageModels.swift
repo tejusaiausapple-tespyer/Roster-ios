@@ -470,4 +470,36 @@ struct StaffWageProfile: Identifiable, Equatable {
         }
         return ""
     }
+
+    /// Resolves the dollar-per-hour rate a shift should be costed at for LIVE
+    /// displays (Roster's cost chip, Reports, Timesheet detail) — not payroll
+    /// generation, which snapshots its own rate at `buildDraftPayslip` time.
+    /// Reuses the exact same `resolvedHourlyRate`/`resolvedWeekendRate`
+    /// precedence so these live displays finally agree with the payslip
+    /// engine, plus a day-of-week check payroll doesn't need (it buckets
+    /// approved hours by day itself via `PayrollCalculator.hoursBuckets`).
+    ///
+    /// No automatic casual-loading multiplier anywhere — a casual rate must
+    /// already be baked into whichever classification/override resolves.
+    /// Returns nil when this profile resolves no rate at all — callers keep
+    /// their own fallback chain (`user.hourlyRate ?? BusinessRules.
+    /// defaultHourlyRate`), same as before this existed.
+    static func loadedRate(
+        profile: StaffWageProfile?,
+        award: WageAward?,
+        earningsLines: [EarningsLine],
+        shiftDateKey: String? = nil
+    ) -> Double? {
+        guard let profile else { return nil }
+        guard let ordinary = profile.resolvedHourlyRate(award: award, earningsLines: earningsLines) else {
+            return nil
+        }
+        guard let dateKey = shiftDateKey, RosterCalendar.isWeekend(dateKey: dateKey) else {
+            return ordinary
+        }
+        if let weekend = profile.resolvedWeekendRate(award: award, earningsLines: earningsLines), weekend > 0 {
+            return weekend
+        }
+        return PayrollCalculator.round2(ordinary * 1.5)
+    }
 }

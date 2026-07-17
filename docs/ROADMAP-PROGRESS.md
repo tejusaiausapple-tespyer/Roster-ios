@@ -414,6 +414,47 @@ Then: `git checkout main && git merge --no-ff milestone-4-data-integrity && git 
   jumps. Selecting a month closes it, updates query, and loads payslips. Tapping
   outside closes the picker. Check dark/light mode and safe areas.
 
+## Live cost/wage-profile parity fix (2026-07-17) — branch `fix/live-cost-wage-profile-resolution`
+
+- **Root cause**: Roster's live "Gross $" cost chip, the Reports screen, and
+  the Timesheet detail sheet each independently did `user.hourlyRate ?? 25.0`
+  — completely bypassing the `StaffWageProfile`/`WageAward`/`EarningsLine`
+  model that payroll generation (`buildDraftPayslip`) already used. Found
+  while cross-checking parity against the PWA, which had just been migrated
+  to the same wage model (see `docs/PWA-IOS-PARITY-AND-DISCREPANCY-REPORT.md`
+  §2.2 in the sibling `Roster` repo root).
+- **Fix**: new `StaffWageProfile.loadedRate(profile:award:earningsLines:
+  shiftDateKey:)` (`WageModels.swift`) reuses the exact same
+  `resolvedHourlyRate`/`resolvedWeekendRate` precedence as payroll, plus a new
+  `RosterCalendar.isWeekend(dateKey:)` day-of-week check payroll doesn't need
+  (it buckets hours by day itself). New `RosterRepository.liveHourlyRate(
+  forStaffId:shiftDateKey:)` wraps it with the existing `hourlyRate ?? 25.0`
+  fallback chain, unchanged as a last resort. Wired into all four call sites:
+  `ManagerRosterView.grossWages`/`.superannuation`, `ManagerReportsView.rate`
+  (and fixed `perStaff`'s cost calc, which previously multiplied total
+  scheduled hours by a single flat rate instead of costing each shift at its
+  own rate — a separate latent bug in the same area), and
+  `ManagerTimesheetDetailSheet.rate`. No auto casual-loading multiplier
+  anywhere, matching the existing payroll model exactly.
+- +7 unit tests in `PayrollTests.swift` (`testIsWeekendDetectsSaturdayAndSunday`,
+  `testLoadedRate*`). All 183 tests pass.
+- **Also fixed while in the area**: `docs/agents.md` had it backwards on which
+  Firestore rules file is authoritative — corrected, and re-synced
+  `docs/reference/firestore.rules.deployed` from the actual live file (see the
+  new note in `docs/agents.md` "Behaviors To Know").
+- **DEVICE VERIFICATION**: (1) Assign a staff member a wage profile with a
+  classification level that has both a Mon–Fri and a weekend rate (Wage →
+  Classification Levels, or Staff → wage assignment sheet). (2) Roster tab:
+  confirm the "Gross $" chip changes when you add a weekend shift for that
+  staff member vs a weekday one, using the classification's rates (not their
+  bare `hourlyRate`, if different). (3) Reports tab: same staff member's
+  per-staff "Cost" column should reflect the correct weekday/weekend split if
+  they have shifts on both. (4) Timesheets tab → open that staff member's
+  timesheet detail: rostered/actual cost should use the same resolved rate,
+  not a flat guess. (5) For a staff member with NO wage profile assigned at
+  all, confirm all three screens still show a sane number (falls back to
+  `hourlyRate`, then $25 default) — this path must not regress.
+
 ## Owner (Sura) actions pending — Firebase console
 
 0. ~~REQUIRED for Payroll: deploy the `payslips` rules block~~ ✅ 2026-07-10

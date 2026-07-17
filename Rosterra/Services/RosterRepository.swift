@@ -1408,6 +1408,22 @@ final class RosterRepository {
         staffWageProfiles.first { $0.staffId == staffId }
     }
 
+    /// The dollar-per-hour rate to display/cost a staff member's hours at,
+    /// live (not at payroll-generation time) — wage-profile classification
+    /// first, then the bare `hourlyRate` on their user doc, then the app-wide
+    /// default. Used by Roster's live cost chip, Reports, and Timesheet
+    /// detail so they finally agree with the payslip engine instead of each
+    /// silently falling back to a flat `hourlyRate ?? $25` guess that never
+    /// looked at an assigned wage profile at all.
+    func liveHourlyRate(forStaffId staffId: String, shiftDateKey: String? = nil) -> Double {
+        let profile = staffWageProfile(for: staffId)
+        let award = profile?.awardId.flatMap { id in wageAwards.first { $0.id == id } }
+        if let resolved = StaffWageProfile.loadedRate(profile: profile, award: award, earningsLines: earningsLines, shiftDateKey: shiftDateKey) {
+            return resolved
+        }
+        return user(id: staffId)?.hourlyRate ?? BusinessRules.defaultHourlyRate
+    }
+
     // MARK: - Payroll (payslips collection; manager-controlled)
     //
     // The ONLY automated step is draft creation. Approve → Submit is always a

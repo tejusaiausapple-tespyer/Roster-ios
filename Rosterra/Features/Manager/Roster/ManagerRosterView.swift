@@ -172,7 +172,7 @@ struct ManagerRosterView: View {
 
     private var grossWages: Double {
         weekShifts.reduce(0.0) { sum, shift in
-            let rate = repo.user(id: shift.staffId)?.hourlyRate ?? BusinessRules.defaultHourlyRate
+            let rate = repo.liveHourlyRate(forStaffId: shift.staffId, shiftDateKey: shift.date)
             return sum + (shift.scheduledHours * rate)
         }
     }
@@ -181,7 +181,7 @@ struct ManagerRosterView: View {
         // Per-staff super where set, otherwise the SG default (12%).
         weekShifts.reduce(0.0) { sum, shift in
             let user = repo.user(id: shift.staffId)
-            let rate = user?.hourlyRate ?? BusinessRules.defaultHourlyRate
+            let rate = repo.liveHourlyRate(forStaffId: shift.staffId, shiftDateKey: shift.date)
             let superPercent = user?.superRate ?? BusinessRules.defaultSuperRatePercent
             return sum + (shift.scheduledHours * rate * superPercent / 100)
         }
