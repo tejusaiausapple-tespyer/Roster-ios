@@ -481,9 +481,9 @@ struct StaffWageProfile: Identifiable, Equatable {
     ///
     /// No automatic casual-loading multiplier anywhere — a casual rate must
     /// already be baked into whichever classification/override resolves.
-    /// Returns nil when this profile resolves no rate at all — callers keep
-    /// their own fallback chain (`user.hourlyRate ?? BusinessRules.
-    /// defaultHourlyRate`), same as before this existed.
+    /// Returns nil when this profile resolves no rate at all — the caller
+    /// (`RosterRepository.liveHourlyRate`) falls back to `user.hourlyRate ?? 0`,
+    /// never a guessed number.
     static func loadedRate(
         profile: StaffWageProfile?,
         award: WageAward?,

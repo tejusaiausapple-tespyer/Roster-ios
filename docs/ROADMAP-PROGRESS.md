@@ -428,8 +428,8 @@ Then: `git checkout main && git merge --no-ff milestone-4-data-integrity && git 
   `resolvedHourlyRate`/`resolvedWeekendRate` precedence as payroll, plus a new
   `RosterCalendar.isWeekend(dateKey:)` day-of-week check payroll doesn't need
   (it buckets hours by day itself). New `RosterRepository.liveHourlyRate(
-  forStaffId:shiftDateKey:)` wraps it with the existing `hourlyRate ?? 25.0`
-  fallback chain, unchanged as a last resort. Wired into all four call sites:
+  forStaffId:shiftDateKey:)` wraps it, falling back to `user.hourlyRate ?? 0`
+  when no profile resolves a rate. Wired into all four call sites:
   `ManagerRosterView.grossWages`/`.superannuation`, `ManagerReportsView.rate`
   (and fixed `perStaff`'s cost calc, which previously multiplied total
   scheduled hours by a single flat rate instead of costing each shift at its
@@ -442,6 +442,16 @@ Then: `git checkout main && git merge --no-ff milestone-4-data-integrity && git 
   Firestore rules file is authoritative — corrected, and re-synced
   `docs/reference/firestore.rules.deployed` from the actual live file (see the
   new note in `docs/agents.md` "Behaviors To Know").
+- **Follow-up (2026-07-17, same day, owner request)**: removed
+  `BusinessRules.defaultHourlyRate` (the hardcoded $25/hr guess) entirely —
+  `liveHourlyRate` now falls back to `user.hourlyRate ?? 0`, never a guessed
+  number, matching the PWA's `resolveShiftLoadedRate` exactly. Also verified
+  (no code change needed): `defaultSuperRatePercent` is already `12.0`
+  everywhere it's read — no stale 11.25%/11.5% super literal exists anywhere
+  in this codebase or the PWA's — and no award/classification seed data exists
+  on either platform (the Console age-rate seed template was already removed
+  2026-07-10; `WageModels.swift`'s own doc comment says "No awards/lines are
+  seeded — managers create and maintain them manually," confirmed still true).
 - **DEVICE VERIFICATION**: (1) Assign a staff member a wage profile with a
   classification level that has both a Mon–Fri and a weekend rate (Wage →
   Classification Levels, or Staff → wage assignment sheet). (2) Roster tab:
@@ -451,9 +461,10 @@ Then: `git checkout main && git merge --no-ff milestone-4-data-integrity && git 
   per-staff "Cost" column should reflect the correct weekday/weekend split if
   they have shifts on both. (4) Timesheets tab → open that staff member's
   timesheet detail: rostered/actual cost should use the same resolved rate,
-  not a flat guess. (5) For a staff member with NO wage profile assigned at
-  all, confirm all three screens still show a sane number (falls back to
-  `hourlyRate`, then $25 default) — this path must not regress.
+  not a flat guess. (5) For a staff member with NO wage profile AND no bare
+  `hourlyRate` set, confirm all three screens now show **$0**, not a $25
+  guess — a manager should read that as "this person needs a rate assigned,"
+  not as a real number.
 
 ## Owner (Sura) actions pending — Firebase console
 
