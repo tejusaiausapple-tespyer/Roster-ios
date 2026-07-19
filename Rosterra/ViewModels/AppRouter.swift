@@ -16,6 +16,12 @@ final class AppRouter {
 
     var selectedTab: Int = Tab.home.rawValue
 
+    /// Mirrors `selectedTab` for the manager shell, which has its own tab set
+    /// (`ManagerMainView`/`ManagerTab`) rather than the staff `Tab` enum.
+    /// Only one of the two shells is ever on screen at a time (`RootView`
+    /// picks by role), so both can be updated unconditionally on every tap.
+    var selectedManagerTab: ManagerTab = .dashboard
+
     /// A shift the user should be taken to in order to submit hours.
     var pendingSubmitShiftId: String?
     /// A shift the user should be taken to in order to report an absence.
@@ -23,6 +29,10 @@ final class AppRouter {
 
     func select(_ tab: Tab) {
         selectedTab = tab.rawValue
+    }
+
+    func selectManager(_ tab: ManagerTab) {
+        selectedManagerTab = tab
     }
 
     /// Parse deep links like `surafoster://staff/roster?submit=<id>` or `?absent=<id>`.
@@ -49,6 +59,15 @@ final class AppRouter {
         let event = (userInfo["event"] as? String) ?? (userInfo["kind"] as? String)
         let urlPath = userInfo["url"] as? String
 
+        // Manager-facing events (all resolved server-side via listActiveManagerIds,
+        // plus the two synthetic late/overtime sweep events). ManagerMainView is
+        // the only shell listening to selectedManagerTab, so this is a no-op
+        // when a staff member's device somehow receives one.
+        if let managerTab = Self.managerTab(forEvent: event) {
+            selectManager(managerTab)
+            return
+        }
+
         // Manager decision / roster pushes (and local backups) — work when app was closed.
         if event == "timesheet-rejected" {
             if let shiftId, !shiftId.isEmpty {
@@ -64,6 +83,13 @@ final class AppRouter {
         }
         if event == "shift-cancelled" {
             select(.roster)
+            return
+        }
+        // The registry's url ('/staff/history') would otherwise fall through
+        // to routeStaffPath's "history" -> Roster mapping, but PayslipsView
+        // lives under Account on iOS, not Roster/History.
+        if event == "payslip-generated" {
+            select(.account)
             return
         }
 
@@ -108,6 +134,26 @@ final class AppRouter {
             selectedTab = Tab.account.rawValue
         } else if p.contains("home") {
             selectedTab = Tab.home.rawValue
+        }
+    }
+
+    /// Maps a manager-facing notification event to the manager tab it should
+    /// open. Mirrors the Worker's `NOTIFICATION_EVENTS` registry urls
+    /// (`worker/handlers/notifications.ts`) and `lateOrOvertimeSweep.ts`'s
+    /// two synthetic events.
+    private static func managerTab(forEvent event: String?) -> ManagerTab? {
+        guard let event else { return nil }
+        switch event {
+        case "timesheet-submitted", "timesheet-absent":
+            return .timesheets
+        case "shift-started", "shift-ended", "shift-running-late", "shift-overtime-started":
+            return .dashboard
+        case "task-completed", "jobs-all-completed":
+            return .tasks
+        case "availability-updated":
+            return .availability
+        default:
+            return nil
         }
     }
 

@@ -191,54 +191,6 @@ final class NotificationService: NSObject {
         .newData
     }
 
-    /// Local backup when a timesheet decision arrives via Firestore while the
-    /// process is alive (foreground / brief background). When the app is fully
-    /// closed, server FCM/APNs is the path that still delivers.
-    func postTimesheetDecisionLocally(
-        timesheetId: String,
-        approved: Bool,
-        body: String
-    ) {
-        let id = "timesheet-decision.\(approved ? "approved" : "rejected").\(timesheetId)"
-        let content = UNMutableNotificationContent()
-        content.title = approved ? "Timesheet approved" : "Timesheet needs changes"
-        content.body = body
-        content.sound = .default
-        content.userInfo = [
-            "event": approved ? "timesheet-approved" : "timesheet-rejected",
-            "kind": approved ? "timesheet-approved" : "timesheet-rejected",
-            "timesheetId": timesheetId,
-            "shiftId": timesheetId,
-            "url": "/staff/roster",
-        ]
-        // Near-immediate delivery so it still shows if the process is suspended.
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
-        UNUserNotificationCenter.current().add(
-            UNNotificationRequest(identifier: id, content: content, trigger: trigger)
-        )
-    }
-
-    /// Local backup when newly published shifts appear on the staff listener
-    /// while the process is alive. Closed-app delivery still relies on FCM.
-    func postRosterPublishedLocally(newShiftCount: Int) {
-        let id = "roster-published.\(Int(Date().timeIntervalSince1970))"
-        let content = UNMutableNotificationContent()
-        content.title = "Roster published"
-        content.body = newShiftCount == 1
-            ? "Your manager published a new shift. Tap to view."
-            : "Your manager published \(newShiftCount) new shifts. Tap to view."
-        content.sound = .default
-        content.userInfo = [
-            "event": "roster-published",
-            "kind": "roster-published",
-            "url": "/staff/roster",
-        ]
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
-        UNUserNotificationCenter.current().add(
-            UNNotificationRequest(identifier: id, content: content, trigger: trigger)
-        )
-    }
-
     private func isUrgent(_ userInfo: [AnyHashable: Any]) -> Bool {
         if let flag = userInfo[Self.urgentPayloadKey] as? Bool { return flag }
         if let flag = userInfo[Self.urgentPayloadKey] as? String { return flag == "true" || flag == "1" }

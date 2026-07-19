@@ -38,4 +38,11 @@ rules deployed. Granted for roster-8a270 on 2026-07-06.
 | `storage.rules` | `storage.rules` | Security rules for task proof/reference photos in Firebase Storage |
 | `firestore.indexes.json` | same name | Composite indexes the app's queries rely on |
 | `firebase.json` | same name (rules path adapted to this folder's filenames) | Firebase deploy targets, including Firestore + Storage rules |
-| `worker-notifications.ts` | `worker/handlers/notifications.ts` | Notification event names/payloads the app sends to `/api/send-notification` (`shift-started` / `shift-ended` pending Worker support) |
+
+**Notification event registry**: previously mirrored here as
+`worker-notifications.ts`, retired 2026-07-19 (see
+`docs/NOTIFICATION-SYSTEM-AUDIT-REPORT.md` §5.14) — it had drifted to cover
+9 of 19 live events and an outdated recipient-resolution model, nearly
+misleading a full notification audit before the live source was cross-checked.
+Read `worker/handlers/notifications.ts` directly in the PWA repo instead;
+don't re-add a local copy.

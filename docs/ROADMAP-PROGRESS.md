@@ -9,7 +9,7 @@
 **Repo:** https://github.com/tejusaiausapple-tespyer/Roster-ios.git
 **Web/PWA repo (reference):** https://github.com/tejusaiausapple-tespyer/Roster.git
 **Deployed Firestore rules (authoritative):** `docs/reference/firestore.rules.deployed`
-**Test suite status:** 149 passed / 0 failed (last run 2026-07-10, iPhone 17 Pro sim)
+**Test suite status:** 187 passed / 0 failed (last run 2026-07-19, iPhone 17 sim)
 
 ---
 
@@ -313,6 +313,52 @@
 Then: `git checkout main && git merge --no-ff milestone-4-data-integrity && git push`
 
 ---
+
+## Notification system audit remediation (2026-07-19) — ✅ on `fix/notification-audit-remediation`
+
+Fixes every iOS-side finding from the cross-app `docs/NOTIFICATION-SYSTEM-AUDIT-REPORT.md`
+(shared `docs/` folder outside the app repos; PWA-side findings fixed separately
+on the PWA repo, not part of this branch).
+
+- **5.1/5.3 — Duplicate notifications removed.** Deleted the local "backup"
+  timesheet-decision/roster-published alerts (`RosterRepository.swift`'s
+  `handleTimesheetDecisionAlerts`/`handleRosterPublishedAlerts` and their
+  priming state, `NotificationService.swift`'s `postTimesheetDecisionLocally`/
+  `postRosterPublishedLocally`) now that server push is confirmed enabled.
+  Removed the 6h/30m slots from `ShiftReminderScheduler`'s local reminder set
+  — the Worker cron (`shiftStart.ts`) already covers those exact offsets.
+- **5.2 — Manager notification tap routing wired.** `AppRouter` gained
+  `selectedManagerTab`/`selectManager(_:)` and a `managerTab(forEvent:)`
+  mapping for all 7 manager-facing events (`timesheet-submitted`,
+  `timesheet-absent` → Timesheets; `shift-started`, `shift-ended`,
+  `shift-running-late`, `shift-overtime-started` → Dashboard;
+  `task-completed`, `jobs-all-completed` → Tasks; `availability-updated` →
+  Availability). `ManagerMainView` now observes `AppRouter` instead of its own
+  disconnected `@State` tab.
+- **5.4 — `publishShift()` now notifies.** Single-shift publish (context
+  menu/swipe) sends the same `roster-published` event as the bulk
+  `publishAllDrafts()` path.
+- **5.7 — Payslip-ready opens Account, not Roster.** Explicit
+  `event == "payslip-generated"` case in `AppRouter`, checked before the
+  generic url-substring fallback that was mapping it to Roster.
+- **5.13 — `ShiftReminderScheduler.sync()` is now reentrancy-safe.** Added a
+  generation counter; the scheduler and its completion closure are
+  `@MainActor`-isolated, so a stale in-flight call's reschedule step can no
+  longer clobber a newer call's result.
+- **5.14 — Retired `docs/reference/worker-notifications.ts`.** It had drifted
+  to 9 of 19 live events with an outdated recipient model. Deleted; the
+  reference `README.md` and `shift-attendance.md` now point at the live
+  `worker/handlers/notifications.ts` instead of a local copy.
+- Tests: `ShiftReminderSchedulerTests.swift` +11 (9 manager-routing cases +
+  payslip-routing + unrecognized-event no-op). Full suite: 187/187 passing.
+- **DEVICE VERIFICATION**: (1) As a manager, tap a push for a staff timesheet
+  submission/absence report → lands on Timesheets; a shift-started/ended or
+  late/overtime alert → Dashboard; a completed task/all-jobs → Tasks; an
+  availability update → Availability. (2) As staff, approve/reject a
+  timesheet or publish a shift while the staff app is foregrounded — confirm
+  only ONE banner appears (not two). (3) Publish a single draft shift via the
+  roster context menu (not the bulk publish flow) — assigned staff gets a
+  push. (4) Tap a "Payslip ready" push — lands on Account, not Roster.
 
 ## Payroll module (owner request 2026-07-09) — ✅ CODE COMPLETE on branch
 `audit-remediation`, ⏳ awaiting Sura's device verification (rules deployed 2026-07-10)

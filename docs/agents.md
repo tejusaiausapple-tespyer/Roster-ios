@@ -171,7 +171,7 @@ Rosterra/
 | `AppConfig.swift` | Static config (API URL, relying party, timeouts) |
 | `TaskPhotoCache.swift` | Local file system cache for task completion photos |
 | `Haptics.swift` | Haptic feedback convenience methods |
-| `NotificationService.swift` | Registers/syncs FCM push tokens (`fcmToken` + `notificationTokens` subcollection on the user doc). Token plumbing is live; end-to-end push **delivery** is still gated on the paid Apple Developer account (APNs) |
+| `NotificationService.swift` | Registers/syncs FCM push tokens (`fcmToken` + `notificationTokens` subcollection on the user doc). Push delivery enabled 2026-07-15; no longer gated on the Apple Developer account. Local "backup" alerts (timesheet decision/roster-published) were removed 2026-07-19 — server push is the only path now (see `docs/ROADMAP-PROGRESS.md`'s notification audit remediation entry) |
 | `AddressSearchCompleter.swift` | MapKit address autocomplete for profile |
 
 ### ViewModels
@@ -253,7 +253,7 @@ Rosterra/
 - **Timesheet doc id == shift id** for staff-created timesheets (1:1); manager operations reference `timesheet.id` directly.
 - **Timesheet writes set `submittedAt` (server timestamp)** — the manager's 90-day windowed listener depends on this field existing on every timesheet.
 - **`saveShift` MUST write `shiftStartAt` + `submittableAfter` (Timestamps)** — the deployed Firestore rules refuse staff timesheet create/update unless the shift doc has `submittableAfter is timestamp`, and the Worker's shift-start/hours-reminder crons key off both fields. Recomputed on every save.
-- **Notification event names use hyphens** (from the Worker registry): `roster-published`, `timesheet-submitted/-approved/-rejected/-absent`, `timesheet-reminder`, `message-task`, `shift-start-6h/-30m`. The repo sends: submit/absence (staff), approve/reject/publish-week (manager), and `message-task` on Tasks-tab create / assignee change (`saveTask` → assigned staff or all active staff).
+- **Notification event names use hyphens** (from the Worker's `NOTIFICATION_EVENTS` registry in `worker/handlers/notifications.ts` — treat that live file as the source of truth, not a list here; a stale local mirror of it, `docs/reference/worker-notifications.ts`, was retired 2026-07-19 for exactly this reason). This repo sends: `roster-published` (single + bulk publish, `RosterRepository.swift`'s `publishShift`/`publishAllDrafts`), submit/absence + `shift-started`/`shift-ended` (staff, on attendance actions), `message-task` on Tasks-tab create/assignee change. `AppRouter.swift`'s `handleNotificationUserInfo`/`managerTab(forEvent:)` is the authoritative list of every event this app *routes* on tap, staff and manager.
 - **Deployed Firestore rules reference copy**: `docs/reference/firestore.rules.deployed` (the web repo's `firestore.rules` is stale — trust the reference copy).
 - **Firebase Storage rules reference copy**: `docs/reference/storage.rules`. Staff proof photos upload to `task_photos/{uid}/...` and store `gs://...` references in `staffPhotoUrl`; manager review downloads through the Firebase Storage SDK. Manager reference photos remain HTTPS download URLs so staff can load task instructions with `AsyncImage`.
 

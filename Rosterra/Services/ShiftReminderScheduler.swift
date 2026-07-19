@@ -1,24 +1,30 @@
 import Foundation
-import UserNotifications
+@preconcurrency import UserNotifications
 
 /// Schedules local shift reminders from the staff roster. Fully device-local —
 /// no push entitlement needed; alerts still fire after the app is closed.
 ///
 /// Reminder set per shift (all relative to the *rostered* start/end):
 ///   • 24 h before  — "You have a shift tomorrow at 9:00 AM."
-///   • 6 h  before  — "Your shift starts in 6 hours."
 ///   • 1 h  before  — "Your shift starts in 1 hour."
-///   • 30 m before  — "Your shift starts in 30 minutes."
 ///   • 5 m  before  — "Start Shift is now available." (early check-in window)
 ///   • 10 m after start — "Don't forget to start your shift." (cancelled on clock-in)
 ///   • 10 m after end   — "Don't forget to end your shift."  (only while clocked in)
 ///   • 15 m after end   — "Submit your hours" (when timesheet not yet submitted)
 ///
+/// The 6h/30m pre-shift moments are deliberately NOT scheduled here — the
+/// server (Worker cron `shiftStart.ts`) already sends push reminders at
+/// those exact offsets, so a local slot at the same time would double-fire.
+///
 /// `sync` is idempotent: it clears every previously scheduled shift reminder
 /// and rebuilds from the current roster, so shift edits/cancellations are
-/// reflected automatically whenever the Firestore listener fires.
+/// reflected automatically whenever the Firestore listener fires. It is also
+/// reentrant-safe: overlapping calls (the shifts/timesheets listeners and
+/// startShift/endShift can all trigger one in quick succession) are resolved
+/// by a generation counter so only the most recent call's result is applied.
+@MainActor
 enum ShiftReminderScheduler {
-    static let idPrefix = "shift-reminder."
+    nonisolated static let idPrefix = "shift-reminder."
     /// iOS caps pending local notifications at 64; 8 shifts × ≤8 reminders
     /// stays safely under it.
     private static let maxShifts = 8
@@ -36,14 +42,8 @@ enum ShiftReminderScheduler {
         Slot(tag: "24h", minutesBeforeStart: 24 * 60, title: "Shift tomorrow") { shift in
             "You have a shift tomorrow at \(RosterFormat.time(shift.rosteredStart))."
         },
-        Slot(tag: "6h", minutesBeforeStart: 6 * 60, title: "Shift today") { shift in
-            "Your shift starts in 6 hours, at \(RosterFormat.time(shift.rosteredStart))."
-        },
         Slot(tag: "1h", minutesBeforeStart: 60, title: "Shift soon") { shift in
             "Your shift starts in 1 hour, at \(RosterFormat.time(shift.rosteredStart))."
-        },
-        Slot(tag: "30m", minutesBeforeStart: 30, title: "Shift in 30 minutes") { shift in
-            "Your shift starts in 30 minutes\(shift.location.map { " at \($0)" } ?? "")."
         },
         Slot(tag: "5m", minutesBeforeStart: 5, title: "Ready to start?") { _ in
             "Your shift starts in 5 minutes — Start Shift is now available."
@@ -67,14 +67,23 @@ enum ShiftReminderScheduler {
     /// end-of-shift one. `filedShiftIds` are shifts whose timesheet is already
     /// submitted/approved/absent — those skip submit-hours nags and, once
     /// ended, skip start reminders.
+    /// Bumped on every `sync()` call; a later Task only applies its results
+    /// if it's still the most recent call by the time the async
+    /// `pendingNotificationRequests` round-trip returns.
+    private static var generation = 0
+
     static func sync(
         shifts: [Shift],
         clockedInShiftId: String?,
         filedShiftIds: Set<String> = [],
         now: Date = Date()
     ) {
-        let center = UNUserNotificationCenter.current()
-        center.getPendingNotificationRequests { pending in
+        generation += 1
+        let myGeneration = generation
+        Task { @MainActor in
+            let center = UNUserNotificationCenter.current()
+            let pending = await center.pendingNotificationRequests()
+            guard myGeneration == generation else { return }
             let stale = pending.map(\.identifier).filter { $0.hasPrefix(idPrefix) }
             center.removePendingNotificationRequests(withIdentifiers: stale)
 
@@ -157,8 +166,9 @@ enum ShiftReminderScheduler {
 
     /// Remove everything (sign-out on a shared device).
     static func cancelAll() {
-        let center = UNUserNotificationCenter.current()
-        center.getPendingNotificationRequests { pending in
+        Task { @MainActor in
+            let center = UNUserNotificationCenter.current()
+            let pending = await center.pendingNotificationRequests()
             let ours = pending.map(\.identifier).filter { $0.hasPrefix(idPrefix) }
             center.removePendingNotificationRequests(withIdentifiers: ours)
         }

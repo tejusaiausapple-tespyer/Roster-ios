@@ -86,14 +86,6 @@ final class RosterRepository {
     private var pendingFirstSnapshot: Set<String> = []
     private var currentRole: UserRole? = nil
     private var roleListenersInitialized = false
-    /// After the first timesheet snapshot, status transitions can fire local
-    /// approve/reject alerts (backup while the process is alive).
-    private var timesheetStatusesPrimed = false
-    private var knownTimesheetStatuses: [String: TimesheetStatus] = [:]
-    /// After the first staff shifts snapshot, newly published shift ids can
-    /// fire a local "Roster published" alert (backup while process is alive).
-    private var publishedShiftsPrimed = false
-    private var knownPublishedShiftIds: Set<String> = []
 
     private var db: Firestore { Firestore.firestore() }
     private var storage: Storage { Storage.storage() }
@@ -371,7 +363,6 @@ final class RosterRepository {
                         }
                         // Keep local shift reminders in step with the roster.
                         self.resyncLocalShiftReminders()
-                        self.handleRosterPublishedAlerts(previousPrimed: self.publishedShiftsPrimed)
                     }
             )
 
@@ -390,7 +381,6 @@ final class RosterRepository {
                         self.markArrived("timesheets")
                         // Drop submit-hours locals once hours are filed.
                         self.resyncLocalShiftReminders()
-                        self.handleTimesheetDecisionAlerts(previousPrimed: self.timesheetStatusesPrimed)
                     }
             )
             
@@ -452,10 +442,6 @@ final class RosterRepository {
         lockedAvailabilityWeeks = []
         shifts = []
         timesheets = []
-        timesheetStatusesPrimed = false
-        knownTimesheetStatuses = [:]
-        publishedShiftsPrimed = false
-        knownPublishedShiftIds = []
         messages = []
         tasks = []
         taskCompletions = []
@@ -656,48 +642,6 @@ final class RosterRepository {
             clockedInShiftId: clocked,
             filedShiftIds: filedTimesheetShiftIds
         )
-    }
-
-    /// Fire a local "Roster published" alert when new published shifts appear
-    /// (backup while the app process is alive). First snapshot only primes.
-    private func handleRosterPublishedAlerts(previousPrimed: Bool) {
-        let currentIds = Set(shifts.map(\.id))
-        defer {
-            publishedShiftsPrimed = true
-            knownPublishedShiftIds = currentIds
-        }
-        guard previousPrimed else { return }
-        let added = currentIds.subtracting(knownPublishedShiftIds)
-        guard !added.isEmpty else { return }
-        NotificationService.shared.postRosterPublishedLocally(newShiftCount: added.count)
-    }
-
-    /// Fire local approve/reject alerts on status transitions (backup while
-    /// the app process is alive). First snapshot only primes — no spam on login.
-    private func handleTimesheetDecisionAlerts(previousPrimed: Bool) {
-        defer {
-            timesheetStatusesPrimed = true
-            knownTimesheetStatuses = Dictionary(uniqueKeysWithValues: timesheets.map { ($0.id, $0.status) })
-        }
-        guard previousPrimed else { return }
-
-        for ts in timesheets {
-            let previous = knownTimesheetStatuses[ts.id]
-            guard let previous, previous != ts.status else { continue }
-            if ts.status == .approved, previous != .approved {
-                NotificationService.shared.postTimesheetDecisionLocally(
-                    timesheetId: ts.id,
-                    approved: true,
-                    body: "Your submitted hours were approved."
-                )
-            } else if ts.status == .rejected, previous != .rejected {
-                NotificationService.shared.postTimesheetDecisionLocally(
-                    timesheetId: ts.id,
-                    approved: false,
-                    body: "Your submitted hours were rejected. Tap to review."
-                )
-            }
-        }
     }
 
     func timesheet(forShift shiftId: String) -> Timesheet? {
@@ -1930,6 +1874,10 @@ final class RosterRepository {
         try await db.collection("shifts").document(shift.id).updateData(
             publishFields(date: shift.date, start: shift.rosteredStart, end: shift.rosteredEnd)
         )
+        // Same event as the bulk path (publishAllDrafts) — the assigned staff
+        // member otherwise never learns their shift went live until they
+        // happen to reopen the app.
+        await WorkerAPIClient.shared.sendNotification(event: "roster-published", shiftIds: [shift.id])
     }
 
     /// Publish all draft shifts for a given date range (firstKey to lastKey).
