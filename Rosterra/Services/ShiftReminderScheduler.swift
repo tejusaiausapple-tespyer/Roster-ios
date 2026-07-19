@@ -1,5 +1,5 @@
 import Foundation
-import UserNotifications
+@preconcurrency import UserNotifications
 
 /// Schedules local shift reminders from the staff roster. Fully device-local —
 /// no push entitlement needed; alerts still fire after the app is closed.
@@ -24,7 +24,7 @@ import UserNotifications
 /// by a generation counter so only the most recent call's result is applied.
 @MainActor
 enum ShiftReminderScheduler {
-    static let idPrefix = "shift-reminder."
+    nonisolated static let idPrefix = "shift-reminder."
     /// iOS caps pending local notifications at 64; 8 shifts × ≤8 reminders
     /// stays safely under it.
     private static let maxShifts = 8
@@ -67,9 +67,9 @@ enum ShiftReminderScheduler {
     /// end-of-shift one. `filedShiftIds` are shifts whose timesheet is already
     /// submitted/approved/absent — those skip submit-hours nags and, once
     /// ended, skip start reminders.
-    /// Bumped on every `sync()` call; a completion closure only applies its
-    /// results if it's still the most recent call by the time the async
-    /// `getPendingNotificationRequests` round-trip returns.
+    /// Bumped on every `sync()` call; a later Task only applies its results
+    /// if it's still the most recent call by the time the async
+    /// `pendingNotificationRequests` round-trip returns.
     private static var generation = 0
 
     static func sync(
@@ -80,71 +80,70 @@ enum ShiftReminderScheduler {
     ) {
         generation += 1
         let myGeneration = generation
-        let center = UNUserNotificationCenter.current()
-        center.getPendingNotificationRequests { pending in
-            Task { @MainActor in
-                guard myGeneration == generation else { return }
-                let stale = pending.map(\.identifier).filter { $0.hasPrefix(idPrefix) }
-                center.removePendingNotificationRequests(withIdentifiers: stale)
+        Task { @MainActor in
+            let center = UNUserNotificationCenter.current()
+            let pending = await center.pendingNotificationRequests()
+            guard myGeneration == generation else { return }
+            let stale = pending.map(\.identifier).filter { $0.hasPrefix(idPrefix) }
+            center.removePendingNotificationRequests(withIdentifiers: stale)
 
-                let published = shifts.filter { $0.status == .published }
+            let published = shifts.filter { $0.status == .published }
 
-                // Upcoming / in-progress: start reminders (max 8).
-                let upcoming = published
-                    .sorted { ($0.date, $0.rosteredStart) < ($1.date, $1.rosteredStart) }
-                    .filter { $0.endDateTime > now }
-                    .prefix(maxShifts)
+            // Upcoming / in-progress: start reminders (max 8).
+            let upcoming = published
+                .sorted { ($0.date, $0.rosteredStart) < ($1.date, $1.rosteredStart) }
+                .filter { $0.endDateTime > now }
+                .prefix(maxShifts)
 
-                for shift in upcoming {
-                    // Already filed hours for an in-progress/ended window — no start nags.
-                    if filedShiftIds.contains(shift.id), shift.startDateTime <= now { continue }
+            for shift in upcoming {
+                // Already filed hours for an in-progress/ended window — no start nags.
+                if filedShiftIds.contains(shift.id), shift.startDateTime <= now { continue }
 
-                    for slot in slots {
-                        if slot.tag == "forgot-start" && shift.id == clockedInShiftId { continue }
-                        let fireDate = shift.startDateTime.addingTimeInterval(TimeInterval(-slot.minutesBeforeStart * 60))
-                        schedule(
-                            id: idPrefix + shift.id + "." + slot.tag,
-                            title: slot.title,
-                            body: slot.body(shift),
-                            fireDate: fireDate,
-                            shiftId: shift.id,
-                            slot: slot.tag,
-                            now: now
-                        )
-                    }
-                    // End-of-shift reminder: only while clocked in.
-                    if shift.id == clockedInShiftId {
-                        schedule(
-                            id: idPrefix + shift.id + ".forgot-end",
-                            title: "Your shift has ended",
-                            body: "Don't forget to end your shift and submit your hours.",
-                            fireDate: shift.endDateTime.addingTimeInterval(10 * 60),
-                            shiftId: shift.id,
-                            slot: "forgot-end",
-                            now: now
-                        )
-                    }
-                }
-
-                // Submit-hours: any published shift that ended (or ends soon) without a filed timesheet.
-                let submitCandidates = published
-                    .filter { !filedShiftIds.contains($0.id) }
-                    .filter { $0.endDateTime > now.addingTimeInterval(-submitLookback) }
-                    .sorted { $0.endDateTime < $1.endDateTime }
-                    .prefix(maxShifts)
-
-                for shift in submitCandidates {
-                    let fireDate = shift.endDateTime.addingTimeInterval(15 * 60)
+                for slot in slots {
+                    if slot.tag == "forgot-start" && shift.id == clockedInShiftId { continue }
+                    let fireDate = shift.startDateTime.addingTimeInterval(TimeInterval(-slot.minutesBeforeStart * 60))
                     schedule(
-                        id: idPrefix + shift.id + ".submit-hours",
-                        title: "Submit your hours",
-                        body: "Please submit hours for your \(RosterFormat.time(shift.rosteredStart))–\(RosterFormat.time(shift.rosteredEnd)) shift.",
+                        id: idPrefix + shift.id + "." + slot.tag,
+                        title: slot.title,
+                        body: slot.body(shift),
                         fireDate: fireDate,
                         shiftId: shift.id,
-                        slot: "submit-hours",
+                        slot: slot.tag,
                         now: now
                     )
                 }
+                // End-of-shift reminder: only while clocked in.
+                if shift.id == clockedInShiftId {
+                    schedule(
+                        id: idPrefix + shift.id + ".forgot-end",
+                        title: "Your shift has ended",
+                        body: "Don't forget to end your shift and submit your hours.",
+                        fireDate: shift.endDateTime.addingTimeInterval(10 * 60),
+                        shiftId: shift.id,
+                        slot: "forgot-end",
+                        now: now
+                    )
+                }
+            }
+
+            // Submit-hours: any published shift that ended (or ends soon) without a filed timesheet.
+            let submitCandidates = published
+                .filter { !filedShiftIds.contains($0.id) }
+                .filter { $0.endDateTime > now.addingTimeInterval(-submitLookback) }
+                .sorted { $0.endDateTime < $1.endDateTime }
+                .prefix(maxShifts)
+
+            for shift in submitCandidates {
+                let fireDate = shift.endDateTime.addingTimeInterval(15 * 60)
+                schedule(
+                    id: idPrefix + shift.id + ".submit-hours",
+                    title: "Submit your hours",
+                    body: "Please submit hours for your \(RosterFormat.time(shift.rosteredStart))–\(RosterFormat.time(shift.rosteredEnd)) shift.",
+                    fireDate: fireDate,
+                    shiftId: shift.id,
+                    slot: "submit-hours",
+                    now: now
+                )
             }
         }
     }
@@ -167,8 +166,9 @@ enum ShiftReminderScheduler {
 
     /// Remove everything (sign-out on a shared device).
     static func cancelAll() {
-        let center = UNUserNotificationCenter.current()
-        center.getPendingNotificationRequests { pending in
+        Task { @MainActor in
+            let center = UNUserNotificationCenter.current()
+            let pending = await center.pendingNotificationRequests()
             let ours = pending.map(\.identifier).filter { $0.hasPrefix(idPrefix) }
             center.removePendingNotificationRequests(withIdentifiers: ours)
         }
