@@ -6,17 +6,23 @@ import UserNotifications
 ///
 /// Reminder set per shift (all relative to the *rostered* start/end):
 ///   • 24 h before  — "You have a shift tomorrow at 9:00 AM."
-///   • 6 h  before  — "Your shift starts in 6 hours."
 ///   • 1 h  before  — "Your shift starts in 1 hour."
-///   • 30 m before  — "Your shift starts in 30 minutes."
 ///   • 5 m  before  — "Start Shift is now available." (early check-in window)
 ///   • 10 m after start — "Don't forget to start your shift." (cancelled on clock-in)
 ///   • 10 m after end   — "Don't forget to end your shift."  (only while clocked in)
 ///   • 15 m after end   — "Submit your hours" (when timesheet not yet submitted)
 ///
+/// The 6h/30m pre-shift moments are deliberately NOT scheduled here — the
+/// server (Worker cron `shiftStart.ts`) already sends push reminders at
+/// those exact offsets, so a local slot at the same time would double-fire.
+///
 /// `sync` is idempotent: it clears every previously scheduled shift reminder
 /// and rebuilds from the current roster, so shift edits/cancellations are
-/// reflected automatically whenever the Firestore listener fires.
+/// reflected automatically whenever the Firestore listener fires. It is also
+/// reentrant-safe: overlapping calls (the shifts/timesheets listeners and
+/// startShift/endShift can all trigger one in quick succession) are resolved
+/// by a generation counter so only the most recent call's result is applied.
+@MainActor
 enum ShiftReminderScheduler {
     static let idPrefix = "shift-reminder."
     /// iOS caps pending local notifications at 64; 8 shifts × ≤8 reminders
@@ -36,14 +42,8 @@ enum ShiftReminderScheduler {
         Slot(tag: "24h", minutesBeforeStart: 24 * 60, title: "Shift tomorrow") { shift in
             "You have a shift tomorrow at \(RosterFormat.time(shift.rosteredStart))."
         },
-        Slot(tag: "6h", minutesBeforeStart: 6 * 60, title: "Shift today") { shift in
-            "Your shift starts in 6 hours, at \(RosterFormat.time(shift.rosteredStart))."
-        },
         Slot(tag: "1h", minutesBeforeStart: 60, title: "Shift soon") { shift in
             "Your shift starts in 1 hour, at \(RosterFormat.time(shift.rosteredStart))."
-        },
-        Slot(tag: "30m", minutesBeforeStart: 30, title: "Shift in 30 minutes") { shift in
-            "Your shift starts in 30 minutes\(shift.location.map { " at \($0)" } ?? "")."
         },
         Slot(tag: "5m", minutesBeforeStart: 5, title: "Ready to start?") { _ in
             "Your shift starts in 5 minutes — Start Shift is now available."
@@ -67,74 +67,84 @@ enum ShiftReminderScheduler {
     /// end-of-shift one. `filedShiftIds` are shifts whose timesheet is already
     /// submitted/approved/absent — those skip submit-hours nags and, once
     /// ended, skip start reminders.
+    /// Bumped on every `sync()` call; a completion closure only applies its
+    /// results if it's still the most recent call by the time the async
+    /// `getPendingNotificationRequests` round-trip returns.
+    private static var generation = 0
+
     static func sync(
         shifts: [Shift],
         clockedInShiftId: String?,
         filedShiftIds: Set<String> = [],
         now: Date = Date()
     ) {
+        generation += 1
+        let myGeneration = generation
         let center = UNUserNotificationCenter.current()
         center.getPendingNotificationRequests { pending in
-            let stale = pending.map(\.identifier).filter { $0.hasPrefix(idPrefix) }
-            center.removePendingNotificationRequests(withIdentifiers: stale)
+            Task { @MainActor in
+                guard myGeneration == generation else { return }
+                let stale = pending.map(\.identifier).filter { $0.hasPrefix(idPrefix) }
+                center.removePendingNotificationRequests(withIdentifiers: stale)
 
-            let published = shifts.filter { $0.status == .published }
+                let published = shifts.filter { $0.status == .published }
 
-            // Upcoming / in-progress: start reminders (max 8).
-            let upcoming = published
-                .sorted { ($0.date, $0.rosteredStart) < ($1.date, $1.rosteredStart) }
-                .filter { $0.endDateTime > now }
-                .prefix(maxShifts)
+                // Upcoming / in-progress: start reminders (max 8).
+                let upcoming = published
+                    .sorted { ($0.date, $0.rosteredStart) < ($1.date, $1.rosteredStart) }
+                    .filter { $0.endDateTime > now }
+                    .prefix(maxShifts)
 
-            for shift in upcoming {
-                // Already filed hours for an in-progress/ended window — no start nags.
-                if filedShiftIds.contains(shift.id), shift.startDateTime <= now { continue }
+                for shift in upcoming {
+                    // Already filed hours for an in-progress/ended window — no start nags.
+                    if filedShiftIds.contains(shift.id), shift.startDateTime <= now { continue }
 
-                for slot in slots {
-                    if slot.tag == "forgot-start" && shift.id == clockedInShiftId { continue }
-                    let fireDate = shift.startDateTime.addingTimeInterval(TimeInterval(-slot.minutesBeforeStart * 60))
+                    for slot in slots {
+                        if slot.tag == "forgot-start" && shift.id == clockedInShiftId { continue }
+                        let fireDate = shift.startDateTime.addingTimeInterval(TimeInterval(-slot.minutesBeforeStart * 60))
+                        schedule(
+                            id: idPrefix + shift.id + "." + slot.tag,
+                            title: slot.title,
+                            body: slot.body(shift),
+                            fireDate: fireDate,
+                            shiftId: shift.id,
+                            slot: slot.tag,
+                            now: now
+                        )
+                    }
+                    // End-of-shift reminder: only while clocked in.
+                    if shift.id == clockedInShiftId {
+                        schedule(
+                            id: idPrefix + shift.id + ".forgot-end",
+                            title: "Your shift has ended",
+                            body: "Don't forget to end your shift and submit your hours.",
+                            fireDate: shift.endDateTime.addingTimeInterval(10 * 60),
+                            shiftId: shift.id,
+                            slot: "forgot-end",
+                            now: now
+                        )
+                    }
+                }
+
+                // Submit-hours: any published shift that ended (or ends soon) without a filed timesheet.
+                let submitCandidates = published
+                    .filter { !filedShiftIds.contains($0.id) }
+                    .filter { $0.endDateTime > now.addingTimeInterval(-submitLookback) }
+                    .sorted { $0.endDateTime < $1.endDateTime }
+                    .prefix(maxShifts)
+
+                for shift in submitCandidates {
+                    let fireDate = shift.endDateTime.addingTimeInterval(15 * 60)
                     schedule(
-                        id: idPrefix + shift.id + "." + slot.tag,
-                        title: slot.title,
-                        body: slot.body(shift),
+                        id: idPrefix + shift.id + ".submit-hours",
+                        title: "Submit your hours",
+                        body: "Please submit hours for your \(RosterFormat.time(shift.rosteredStart))–\(RosterFormat.time(shift.rosteredEnd)) shift.",
                         fireDate: fireDate,
                         shiftId: shift.id,
-                        slot: slot.tag,
+                        slot: "submit-hours",
                         now: now
                     )
                 }
-                // End-of-shift reminder: only while clocked in.
-                if shift.id == clockedInShiftId {
-                    schedule(
-                        id: idPrefix + shift.id + ".forgot-end",
-                        title: "Your shift has ended",
-                        body: "Don't forget to end your shift and submit your hours.",
-                        fireDate: shift.endDateTime.addingTimeInterval(10 * 60),
-                        shiftId: shift.id,
-                        slot: "forgot-end",
-                        now: now
-                    )
-                }
-            }
-
-            // Submit-hours: any published shift that ended (or ends soon) without a filed timesheet.
-            let submitCandidates = published
-                .filter { !filedShiftIds.contains($0.id) }
-                .filter { $0.endDateTime > now.addingTimeInterval(-submitLookback) }
-                .sorted { $0.endDateTime < $1.endDateTime }
-                .prefix(maxShifts)
-
-            for shift in submitCandidates {
-                let fireDate = shift.endDateTime.addingTimeInterval(15 * 60)
-                schedule(
-                    id: idPrefix + shift.id + ".submit-hours",
-                    title: "Submit your hours",
-                    body: "Please submit hours for your \(RosterFormat.time(shift.rosteredStart))–\(RosterFormat.time(shift.rosteredEnd)) shift.",
-                    fireDate: fireDate,
-                    shiftId: shift.id,
-                    slot: "submit-hours",
-                    now: now
-                )
             }
         }
     }

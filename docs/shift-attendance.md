@@ -41,11 +41,13 @@ The app fires best-effort `POST /api/send-notification` with new events after ea
 - `{"event": "shift-started", "shiftIds": ["<shiftId>"]}` → notify managers "**[Staff Name] has started their shift.**"
 - `{"event": "shift-ended", "shiftIds": ["<shiftId>"]}` → "**[Staff Name] has ended their shift.**"
 
-Event names follow the Worker's existing hyphenated convention (see
-`docs/reference/worker-notifications.ts`, which handles `roster-published`,
-`timesheet-submitted`, etc.). The two shift events above are **not yet
-implemented** in `worker/handlers/notifications.ts` — add branches there
-mirroring the `timesheet-submitted` manager-notification path.
+Event names follow the Worker's existing hyphenated convention (see the live
+`worker/handlers/notifications.ts` in the PWA repo — no local copy is kept
+here; it went stale in practice and nearly misled a full notification audit,
+see `docs/NOTIFICATION-SYSTEM-AUDIT-REPORT.md` §5.14 in the shared `docs/`
+folder). Both shift events above are implemented on both sides: client calls
+at `RosterRepository.swift:533,555`, Worker registry entries `shift-started`/
+`shift-ended` in `worker/handlers/notifications.ts`.
 
 The Worker should resolve the staff name from the shift, then deliver via the `messages` collection (visible now) and push (once the Apple Developer account is approved — haptics for delivery/tap are already wired, see `NotificationService`).
 

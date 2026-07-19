@@ -2,19 +2,24 @@ import SwiftUI
 
 struct ManagerMainView: View {
     @Environment(RosterRepository.self) private var repo
-    @State private var selectedTab: ManagerTab = .dashboard
+    @Environment(AppRouter.self) private var router
     @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
+
+    private var selectedTab: ManagerTab {
+        get { router.selectedManagerTab }
+        nonmutating set { router.selectedManagerTab = newValue }
+    }
 
     var body: some View {
         content
-            .onChange(of: selectedTab) { Haptics.tabChange() }
+            .onChange(of: router.selectedManagerTab) { Haptics.tabChange() }
     }
 
     @ViewBuilder
     private var content: some View {
         if UIDevice.current.userInterfaceIdiom == .phone {
             // iOS Compact Layout: 5 visible bottom tabs
-            TabView(selection: $selectedTab) {
+            TabView(selection: Binding(get: { selectedTab }, set: { selectedTab = $0 })) {
                 ManagerDashboardView()
                 .tabItem {
                     Label(ManagerTab.dashboard.title, systemImage: ManagerTab.dashboard.icon)
