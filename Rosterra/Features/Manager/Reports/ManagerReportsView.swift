@@ -40,8 +40,10 @@ struct ManagerReportsView: View {
     private var weekShiftIds: Set<String> { Set(weekShifts.map { $0.id }) }
     private var weekTimesheets: [Timesheet] { repo.timesheets.filter { weekShiftIds.contains($0.shiftId) } }
 
-    private func rate(_ staffId: String) -> Double {
-        repo.user(id: staffId)?.hourlyRate ?? BusinessRules.defaultHourlyRate
+    /// Live wage-profile-aware rate for a shift (weekday/weekend-correct),
+    /// falling back to the bare `hourlyRate` then the app-wide default.
+    private func rate(_ staffId: String, shiftDate: String) -> Double {
+        repo.liveHourlyRate(forStaffId: staffId, shiftDateKey: shiftDate)
     }
 
     /// Per-staff super where set, otherwise the SG default (12%).
@@ -53,9 +55,9 @@ struct ManagerReportsView: View {
 
     private var scheduledHours: Double { weekShifts.reduce(0) { $0 + $1.scheduledHours } }
     private var workedHours: Double { weekTimesheets.filter { $0.status == .approved }.reduce(0) { $0 + $1.workedHours } }
-    private var grossCost: Double { weekShifts.reduce(0) { $0 + $1.scheduledHours * rate($1.staffId) } }
+    private var grossCost: Double { weekShifts.reduce(0) { $0 + $1.scheduledHours * rate($1.staffId, shiftDate: $1.date) } }
     private var totalCost: Double {
-        weekShifts.reduce(0) { $0 + $1.scheduledHours * rate($1.staffId) * superMultiplier($1.staffId) }
+        weekShifts.reduce(0) { $0 + $1.scheduledHours * rate($1.staffId, shiftDate: $1.date) * superMultiplier($1.staffId) }
     }
     private var staffCount: Int { Set(weekShifts.map { $0.staffId }).count }
     private var pendingCount: Int { weekTimesheets.filter { $0.status == .pending }.count }
@@ -77,7 +79,10 @@ struct ManagerReportsView: View {
             let sched = shifts.reduce(0) { $0 + $1.scheduledHours }
             let ids = Set(shifts.map { $0.id })
             let worked = weekTimesheets.filter { ids.contains($0.shiftId) && $0.status == .approved }.reduce(0) { $0 + $1.workedHours }
-            return StaffRow(id: staffId, name: name, scheduled: sched, worked: worked, cost: sched * rate(staffId))
+            // Per-shift, not `sched * a single rate` — a weekday/weekend split
+            // (or a mid-week rate change) must cost each shift at its own rate.
+            let cost = shifts.reduce(0.0) { $0 + $1.scheduledHours * rate(staffId, shiftDate: $1.date) }
+            return StaffRow(id: staffId, name: name, scheduled: sched, worked: worked, cost: cost)
         }
         .sorted { $0.scheduled > $1.scheduled }
     }

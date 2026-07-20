@@ -31,8 +31,13 @@ enum BusinessRules {
     /// AU Superannuation Guarantee: 12% since 1 July 2025. Per-staff overrides
     /// live on `AppUser.superRate` (percent); use this only as the fallback.
     static let defaultSuperRatePercent = 12.0
-    /// Fallback hourly rate when `AppUser.hourlyRate` is unset.
-    static let defaultHourlyRate = 25.0
+
+    // Deliberately NO default/assumed hourly rate constant. A staff member
+    // with no wage profile AND no `AppUser.hourlyRate` set costs $0, not a
+    // guessed number — matches the PWA's `resolveShiftLoadedRate` exactly.
+    // Guessing a plausible-looking rate (this used to be a hardcoded $25)
+    // hides a real configuration gap from the manager instead of surfacing
+    // it. See `RosterRepository.liveHourlyRate`.
 
     // MARK: - Shift instants (timezone-aware, mirrors getShiftStartDateTime)
 

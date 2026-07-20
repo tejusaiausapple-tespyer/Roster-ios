@@ -47,7 +47,7 @@ struct ManagerTimesheetDetailSheet: View {
     }
     
     private var rate: Double {
-        staffMember?.hourlyRate ?? BusinessRules.defaultHourlyRate
+        repo.liveHourlyRate(forStaffId: timesheet.staffId, shiftDateKey: shift?.date)
     }
     
     private var rosteredCost: Double {

@@ -326,4 +326,68 @@ final class PayrollTests: XCTestCase {
         XCTAssertEqual(parsed?.superEnabled, true)
         XCTAssertNil(parsed?.superRate)
     }
+
+    // MARK: - Live rate resolution (Roster cost chip, Reports, Timesheet detail)
+    //
+    // Before this, those three screens all did `user.hourlyRate ?? 25.0`,
+    // completely bypassing the wage-profile model that payroll generation
+    // already used — the same schema/behavior gap that was found on the PWA
+    // side (see docs/PWA-IOS-PARITY-AND-DISCREPANCY-REPORT.md §2.1/§2.2).
+
+    // 2026-06-01 is a Monday (weekday); 2026-06-06 is a Saturday (weekend).
+    private let weekday = "2026-06-01"
+    private let weekend = "2026-06-06"
+
+    func testIsWeekendDetectsSaturdayAndSunday() {
+        XCTAssertFalse(RosterCalendar.isWeekend(dateKey: weekday))
+        XCTAssertTrue(RosterCalendar.isWeekend(dateKey: weekend))
+        XCTAssertTrue(RosterCalendar.isWeekend(dateKey: "2026-06-07")) // Sunday
+        XCTAssertFalse(RosterCalendar.isWeekend(dateKey: "not-a-date"))
+    }
+
+    func testLoadedRateReturnsNilWithNoProfile() {
+        XCTAssertNil(StaffWageProfile.loadedRate(profile: nil, award: nil, earningsLines: [], shiftDateKey: weekday))
+    }
+
+    func testLoadedRateUsesOrdinaryRateOnAWeekday() {
+        let line = EarningsLine(id: "l1", name: "L2", category: .ordinaryHours,
+                                rateType: .fixedAmount, level: "2", baseHourlyRate: 24.85)
+        let profile = StaffWageProfile(staffId: "s", classificationLevel: "2")
+        let rate = StaffWageProfile.loadedRate(profile: profile, award: nil, earningsLines: [line], shiftDateKey: weekday)
+        XCTAssertEqual(rate, 24.85)
+    }
+
+    func testLoadedRateUsesExplicitWeekendRateWhenSet() {
+        let line = EarningsLine(id: "l1", name: "L2", category: .ordinaryHours,
+                                rateType: .fixedAmount, level: "2", baseHourlyRate: 24, weekendHourlyRate: 31.06)
+        let profile = StaffWageProfile(staffId: "s", classificationLevel: "2")
+        let rate = StaffWageProfile.loadedRate(profile: profile, award: nil, earningsLines: [line], shiftDateKey: weekend)
+        XCTAssertEqual(rate, 31.06)
+    }
+
+    func testLoadedRateFallsBackTo1point5xOnWeekendWithNoExplicitRate() {
+        let line = EarningsLine(id: "l1", name: "L2", category: .ordinaryHours,
+                                rateType: .fixedAmount, level: "2", baseHourlyRate: 20)
+        let profile = StaffWageProfile(staffId: "s", classificationLevel: "2")
+        let rate = StaffWageProfile.loadedRate(profile: profile, award: nil, earningsLines: [line], shiftDateKey: weekend)
+        XCTAssertEqual(rate, 30) // 20 * 1.5, same default the payslip generator applies
+    }
+
+    func testLoadedRateWithNoDateKeyIgnoresWeekendCheck() {
+        // Callers that can't supply a shift date (e.g. no linked shift) still
+        // get the resolved ordinary rate rather than nil.
+        let line = EarningsLine(id: "l1", name: "L2", category: .ordinaryHours,
+                                rateType: .fixedAmount, level: "2", baseHourlyRate: 24)
+        let profile = StaffWageProfile(staffId: "s", classificationLevel: "2")
+        let rate = StaffWageProfile.loadedRate(profile: profile, award: nil, earningsLines: [line], shiftDateKey: nil)
+        XCTAssertEqual(rate, 24)
+    }
+
+    func testLoadedRateReturnsNilWhenProfileResolvesNoRate() {
+        // Caller (RosterRepository.liveHourlyRate) is responsible for the
+        // hourlyRate/default fallback chain — this function must not guess.
+        let profile = StaffWageProfile(staffId: "s", classificationLevel: "does-not-exist")
+        let rate = StaffWageProfile.loadedRate(profile: profile, award: nil, earningsLines: [], shiftDateKey: weekday)
+        XCTAssertNil(rate)
+    }
 }

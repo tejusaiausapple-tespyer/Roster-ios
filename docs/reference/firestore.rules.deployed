@@ -25,6 +25,7 @@ service cloud.firestore {
     // Staff may update personal profile fields. Password-flow flags are server-managed.
     // weeklyAvailability is intentionally NOT allowed here: it is written only by the
     // trusted Cloudflare Worker (server-time lock) via the Admin service account.
+    // tfn + deletion are never staff-writable (TFN = manager; deletion = Worker only).
     function isValidSelfUserUpdate() {
       let changedKeys = request.resource.data.diff(resource.data).affectedKeys();
       let allowedKeys = [
@@ -33,17 +34,18 @@ service cloud.firestore {
         'dob',
         'address',
         'emergencyContact',
-        'emergencyContactName',
-        'emergencyContactPhone',
-        'emergencyContactAddress',
-        'emergencyContactEmail',
         'theme',
         'profileUpdateRequired',
-        'emailChangeRequired',
         'updatedAt',
         'lastLoginAt'
       ];
       return changedKeys.hasOnly(allowedKeys);
+    }
+
+    // Account-deletion lifecycle is Worker-only (Admin SDK). Clients — including
+    // managers — must not create/alter/clear users/{uid}.deletion.
+    function doesNotModifyDeletion() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['deletion']);
     }
 
     // A shift is over (and hours submittable) when the rostered end has
@@ -93,7 +95,7 @@ service cloud.firestore {
         'enabled'
       ]) &&
         request.resource.data.token is string &&
-        request.resource.data.platform in ['ios-pwa', 'android-pwa', 'macos-pwa', 'macos-browser', 'desktop'] &&
+        request.resource.data.platform in ['ios-pwa', 'android-pwa', 'macos-pwa', 'macos-browser', 'desktop', 'ios-native', 'android-native'] &&
         request.resource.data.userAgent is string &&
         request.resource.data.enabled is bool;
     }
@@ -116,10 +118,15 @@ service cloud.firestore {
     // Users collection
     match /users/{userId} {
       allow read: if isManager() || (isAuthenticated() && request.auth.uid == userId);
-      // Only managers can create users
-      allow create: if isManager();
-      // Users can update their own personal details, but only managers can change roles, status, etc.
-      allow update: if isManager() || (
+      // Only managers can create users; deletion lifecycle must start empty (Worker sets it).
+      allow create: if isManager() &&
+        !request.resource.data.keys().hasAny(['deletion']);
+      // Managers may update profiles (incl. TFN) but cannot touch deletion.
+      // Staff may only patch the allow-listed personal fields (no tfn / deletion).
+      allow update: if (
+        isManager() &&
+        doesNotModifyDeletion()
+      ) || (
         isAuthenticated() &&
         request.auth.uid == userId &&
         isValidSelfUserUpdate()
@@ -222,10 +229,21 @@ service cloud.firestore {
       allow read, write: if isManager();
     }
     
-    // Wages collection
+    // Wages collection — Award / Classification / Earnings-Line / Staff-Profile
+    // model, shared with the native iOS app. Every doc MUST carry a `kind`
+    // discriminator on write so a wrong-shape document can never be silently
+    // accepted again (a prior gap here let an undiscriminated flat-rate doc
+    // collide with iOS's `kind`-tagged docs in the same collection and crash
+    // the PWA's Wage page). Pre-existing legacy docs with no `kind` are still
+    // readable (this only gates new writes) — see the "Legacy wage rates"
+    // read-only recovery view.
     match /wages/{wageId} {
       allow read: if isManager();
-      allow write: if isManager();
+      // `request.resource` is null on delete, so `kind` is validated only for
+      // create/update — deletes (including of pre-`kind` legacy docs) always allowed.
+      allow create, update: if isManager() &&
+        request.resource.data.kind in ['award', 'earningsLine', 'staffProfile'];
+      allow delete: if isManager();
     }
 
     // Payslips: manager-controlled payroll. Staff may ONLY read their own
@@ -241,7 +259,7 @@ service cloud.firestore {
       );
       allow write: if isManager();
     }
-    
+
     // Settings collection
     match /settings/{docId} {
       allow read: if isAuthenticated();

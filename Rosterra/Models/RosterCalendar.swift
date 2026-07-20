@@ -66,6 +66,17 @@ enum RosterCalendar {
         dayFormatter.date(from: key)
     }
 
+    /// Whether a `yyyy-MM-dd` key falls on a Saturday or Sunday (business
+    /// timezone). Matches `PayrollCalculator.hoursBuckets`'s own weekday
+    /// check (`weekday == 1 || weekday == 7`, Sun=1...Sat=7 in Foundation's
+    /// Gregorian numbering) so live cost displays and payroll generation
+    /// agree on which days count as weekend.
+    static func isWeekend(dateKey: String) -> Bool {
+        guard let date = dateFromKey(dateKey) else { return false }
+        let weekday = calendar.component(.weekday, from: date)
+        return weekday == 1 || weekday == 7
+    }
+
     // MARK: - Months (payslip month filter)
 
     /// "yyyy-MM" key of the month containing `date` (business timezone).
