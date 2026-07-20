@@ -1,11 +1,14 @@
 import SwiftUI
 
 // Manager view of every staff member's weekly availability, to spot coverage
-// gaps. Week selector + matrix (wide) / per-staff cards (narrow). Read-only.
+// gaps. Week selector + matrix (wide) / per-staff cards (narrow). Read-only
+// of staff rows; managers can lock/unlock the displayed week for staff edits.
 struct ManagerAvailabilityView: View {
     @Environment(RosterRepository.self) private var repo
 
     @State private var weekOffset = 0
+    @State private var isLockWorking = false
+    @State private var toastMessage: ToastMessage?
 
     private var now: Date { Date() }
     private var bounds: (min: Int, max: Int) {
@@ -13,6 +16,9 @@ struct ManagerAvailabilityView: View {
     }
     private var monday: Date { RosterCalendar.addWeeks(weekOffset, to: RosterCalendar.weekStart(now)) }
     private var weekKey: String { RosterCalendar.weekStartKey(monday) }
+    private var isWeekAvailabilityLocked: Bool {
+        repo.lockedAvailabilityWeeks.contains(weekKey)
+    }
 
     private var dateRangeString: String {
         let days = RosterCalendar.weekDays(for: monday)
@@ -78,7 +84,11 @@ struct ManagerAvailabilityView: View {
             ToolbarItem(placement: .principal) {
                 ScreenTitlePill(title: "Availability", icon: "calendar.badge.clock")
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                lockButton
+            }
         }
+        .toast($toastMessage)
         // GeometryReader evaluates its closure during layout, outside @Observable tracking.
         // This anchors repo.allUsers as a dependency so the view re-renders when staff save.
         .onChange(of: repo.allUsers) { _, _ in }
@@ -87,57 +97,107 @@ struct ManagerAvailabilityView: View {
     // MARK: - Control bar
 
     private var controlBar: some View {
-        HStack(spacing: 12) {
+        HStack {
             weekNavCluster
-            Text(dateRangeString)
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-            Spacer(minLength: 8)
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
     }
 
+    /// Three separate pills: left arrow | date + This/Next week | right arrow.
     private var weekNavCluster: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 10) {
             navArrow("chevron.left", enabled: weekOffset > bounds.min) {
                 if weekOffset > bounds.min { weekOffset -= 1 }
             }
             Button {
                 weekOffset = 0
             } label: {
-                HStack(spacing: 6) {
-                    Text(weekRelativeLabel)
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(weekOffset == 0 ? Theme.textPrimary : Theme.brand)
-                    if weekOffset != 0 {
-                        Image(systemName: "arrow.uturn.backward").font(.caption2.weight(.bold)).foregroundStyle(Theme.brand)
+                VStack(spacing: 2) {
+                    Text(dateRangeString)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    HStack(spacing: 4) {
+                        Text(weekRelativeLabel)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(weekOffset == 0 ? Theme.textSecondary : Theme.brand)
+                        if weekOffset != 0 {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(Theme.brand)
+                        }
                     }
                 }
-                .padding(.horizontal, 10).frame(height: 34).contentShape(Rectangle())
+                .padding(.horizontal, 16)
+                .frame(minHeight: 48)
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(weekOffset == 0)
+            .glassCapsule()
+            .accessibilityLabel(weekOffset == 0 ? "This week" : "Jump to this week")
             navArrow("chevron.right", enabled: weekOffset < bounds.max) {
                 if weekOffset < bounds.max { weekOffset += 1 }
             }
         }
-        .padding(.horizontal, 4)
-        .glassCapsule()
     }
 
     private func navArrow(_ system: String, enabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button {
+            Haptics.selection()
+            action()
+        } label: {
             Image(systemName: system)
-                .font(.footnote.weight(.bold))
+                .font(.subheadline.weight(.bold))
                 .foregroundStyle(enabled ? Theme.textPrimary : Theme.textTertiary)
-                .frame(width: 34, height: 34)
+                .frame(width: 48, height: 48)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
+        .glassCapsule(interactive: true)
+        .accessibilityLabel(system == "chevron.left" ? "Previous week" : "Next week")
+    }
+
+    private var lockButton: some View {
+        Button {
+            toggleWeekAvailabilityLock()
+        } label: {
+            Image(systemName: isWeekAvailabilityLocked ? "lock.fill" : "lock.open")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(isWeekAvailabilityLocked ? Theme.warning : Theme.brand)
+                .frame(width: 40, height: 40)
+                .contentShape(Rectangle())
+                .background(Capsule(style: .continuous).fill(Theme.card))
+        }
+        .buttonStyle(.plain)
+        .disabled(isLockWorking)
+        .accessibilityLabel(isWeekAvailabilityLocked ? "Unlock staff availability" : "Lock staff availability")
+        .accessibilityHint("Prevents staff from editing availability for \(weekRelativeLabel.lowercased())")
+    }
+
+    private func toggleWeekAvailabilityLock() {
+        let locking = !isWeekAvailabilityLocked
+        isLockWorking = true
+        Task {
+            defer { isLockWorking = false }
+            do {
+                try await repo.setAvailabilityWeekLock(weekKey: weekKey, locked: locking)
+                toastMessage = ToastMessage(
+                    kind: .success,
+                    text: locking ? "Staff availability locked for this week"
+                                  : "Staff availability unlocked"
+                )
+                Haptics.success()
+            } catch {
+                toastMessage = ToastMessage(kind: .error, text: "Lock update failed. \(error.localizedDescription)")
+                Haptics.error()
+            }
+        }
     }
 
     // MARK: - Content
@@ -204,46 +264,55 @@ struct ManagerAvailabilityView: View {
             }
             .padding(hPad)
             .tracksTitlePillCollapse()
+            .scrollFadeContentTracking(in: "manager-availability-matrix")
         }
+        // Same edge fade as Staff: content softens under the week nav (top)
+        // and summary bar (bottom) while scrolling.
+        .fadedScrollHints(coordinateSpace: "manager-availability-matrix", showsChevrons: false)
     }
 
     // Narrow: per-staff cards
     private var narrowList: some View {
         ScrollView {
-            TitlePillCollapseReporter()
-            LazyVStack(spacing: 12) {
-                ForEach(staff) { user in
-                    let avail = availability(for: user)
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(spacing: 10) {
-                            Text(user.initials)
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(Theme.brand)
-                                .frame(width: 30, height: 30)
-                                .background(Circle().fill(Theme.brand.opacity(0.12)))
-                            Text(user.fullName)
-                                .font(.subheadline.weight(.bold))
-                                .foregroundStyle(Theme.textPrimary)
-                            Spacer()
-                        }
-                        HStack(spacing: 4) {
-                            ForEach(Weekday.allCases) { day in
-                                VStack(spacing: 3) {
-                                    Text(String(day.shortLabel.prefix(1)))
-                                        .font(.caption2.weight(.bold))
-                                        .foregroundStyle(Theme.textTertiary)
-                                    dayCell(avail[day], compact: true)
+            // One container so fade tracking sees the full scroll content.
+            VStack(spacing: 0) {
+                TitlePillCollapseReporter()
+                LazyVStack(spacing: 12) {
+                    ForEach(staff) { user in
+                        let avail = availability(for: user)
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 10) {
+                                Text(user.initials)
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(Theme.brand)
+                                    .frame(width: 30, height: 30)
+                                    .background(Circle().fill(Theme.brand.opacity(0.12)))
+                                Text(user.fullName)
+                                    .font(.subheadline.weight(.bold))
+                                    .foregroundStyle(Theme.textPrimary)
+                                Spacer()
+                            }
+                            HStack(spacing: 4) {
+                                ForEach(Weekday.allCases) { day in
+                                    VStack(spacing: 3) {
+                                        Text(String(day.shortLabel.prefix(1)))
+                                            .font(.caption2.weight(.bold))
+                                            .foregroundStyle(Theme.textTertiary)
+                                        dayCell(avail[day], compact: true)
+                                    }
                                 }
                             }
                         }
+                        .padding(12)
+                        .background(RoundedRectangle(cornerRadius: Theme.cornerLarge, style: .continuous).fill(Theme.card))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.cornerLarge, style: .continuous).strokeBorder(Theme.separator, lineWidth: 1))
                     }
-                    .padding(12)
-                    .background(RoundedRectangle(cornerRadius: Theme.cornerLarge, style: .continuous).fill(Theme.card))
-                    .overlay(RoundedRectangle(cornerRadius: Theme.cornerLarge, style: .continuous).strokeBorder(Theme.separator, lineWidth: 1))
                 }
+                .padding(16)
             }
-            .padding(16)
+            .scrollFadeContentTracking(in: "manager-availability-list")
         }
+        .fadedScrollHints(coordinateSpace: "manager-availability-list", showsChevrons: false)
     }
 
     private func dayCell(_ day: DayAvailability, compact: Bool = false) -> some View {

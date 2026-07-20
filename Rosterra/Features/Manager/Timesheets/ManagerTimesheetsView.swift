@@ -359,36 +359,43 @@ struct ManagerTimesheetsView: View {
 
     private func timesheetScroll(containerWidth: CGFloat) -> some View {
         ScrollView {
-            TitlePillCollapseReporter()
-            if filteredTimesheets.isEmpty {
-                emptyState
-                    .padding(.top, 40)
-                    .padding(.horizontal, 16)
-            } else {
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 300, maximum: 480), spacing: 12)],
-                    spacing: 12
-                ) {
-                    ForEach(filteredTimesheets) { ts in
-                        let isSelected = selectedIds.contains(ts.id)
-                        let selectable = isBulkSelectable(ts)
-                        Button {
-                            if selectionMode && selectable {
-                                toggleSelection(ts.id)
-                            } else {
-                                selectedTimesheet = ts
-                                Haptics.selection()
+            // One container so fade tracking sees the full scroll content.
+            VStack(spacing: 0) {
+                TitlePillCollapseReporter()
+                if filteredTimesheets.isEmpty {
+                    emptyState
+                        .padding(.top, 40)
+                        .padding(.horizontal, 16)
+                } else {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 300, maximum: 480), spacing: 12)],
+                        spacing: 12
+                    ) {
+                        ForEach(filteredTimesheets) { ts in
+                            let isSelected = selectedIds.contains(ts.id)
+                            let selectable = isBulkSelectable(ts)
+                            Button {
+                                if selectionMode && selectable {
+                                    toggleSelection(ts.id)
+                                } else {
+                                    selectedTimesheet = ts
+                                    Haptics.selection()
+                                }
+                            } label: {
+                                timesheetCard(ts, isSelected: isSelected)
                             }
-                        } label: {
-                            timesheetCard(ts, isSelected: isSelected)
+                            .buttonStyle(.plain)
+                            .accessibilityHint(selectionMode && selectable ? (isSelected ? "Deselect" : "Select for bulk approval") : "Open timesheet detail")
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityHint(selectionMode && selectable ? (isSelected ? "Deselect" : "Select for bulk approval") : "Open timesheet detail")
                     }
+                    .padding(16)
                 }
-                .padding(16)
             }
+            .scrollFadeContentTracking(in: "manager-timesheets-grid")
         }
+        // Content fades under the week/filter bar (top) and summary/bulk bar
+        // (bottom) while scrolling — same treatment as Staff and Availability.
+        .fadedScrollHints(coordinateSpace: "manager-timesheets-grid", showsChevrons: false)
         .refreshable { await repo.refreshFromServer() }
     }
 

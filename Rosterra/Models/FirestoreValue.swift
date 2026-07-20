@@ -18,8 +18,13 @@ enum FS {
     }
 
     static func bool(_ dict: [String: Any], _ key: String, default def: Bool = false) -> Bool {
-        if let b = dict[key] as? Bool { return b }
-        if let n = dict[key] as? NSNumber { return n.boolValue }
+        bool(any: dict[key], default: def)
+    }
+
+    /// Firestore often surfaces booleans as `NSNumber` rather than Swift `Bool`.
+    static func bool(any value: Any?, default def: Bool = false) -> Bool {
+        if let b = value as? Bool { return b }
+        if let n = value as? NSNumber { return n.boolValue }
         return def
     }
 

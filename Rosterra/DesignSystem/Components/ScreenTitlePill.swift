@@ -39,6 +39,9 @@ struct ScreenTitlePill: View {
         .padding(.horizontal, hPad)
         .padding(.vertical, vPad)
         .background(Capsule(style: .continuous).fill(Theme.card.opacity(1 - 0.15 * Double(f))))
+        // iOS 26 toolbar slots crush flexible labels to 0pt — keep the capsule
+        // sized to its content so the pill silhouette always shows.
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 

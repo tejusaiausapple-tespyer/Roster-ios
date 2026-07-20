@@ -962,8 +962,9 @@ struct ManagerRosterView: View {
             )
             .padding(.horizontal, Theme.screenPadding)
         }
+        // Stay on Theme.background (no full-bleed card) so the nav-bar
+        // ScreenTitlePill keeps contrast — same as Staff / Timesheets / Availability.
         .padding(.vertical, 10)
-        .background(Theme.card)
     }
 
     private func miniStatCard(value: String, label: String, tint: Color = Theme.textPrimary) -> some View {
@@ -978,7 +979,7 @@ struct ManagerRosterView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
-        .background(RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous).fill(Theme.background))
+        .background(RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous).fill(Theme.card))
     }
 
     private func shiftCardRow(_ shift: Shift) -> some View {

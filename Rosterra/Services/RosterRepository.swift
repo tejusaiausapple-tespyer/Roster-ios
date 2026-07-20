@@ -177,8 +177,10 @@ final class RosterRepository {
             db.collection("settings").document("availabilityLocks").addSnapshotListener { [weak self] snap, _ in
                 guard let self else { return }
                 let weeks = snap?.data()?["weeks"] as? [String: Any] ?? [:]
+                // Firestore delivers booleans as NSNumber on iOS — plain
+                // `as? Bool` silently drops every locked week and breaks PWA sync.
                 self.lockedAvailabilityWeeks = Set(weeks.compactMap { key, value in
-                    (value as? Bool) == true ? key : nil
+                    FS.bool(any: value) ? key : nil
                 })
             }
         )
@@ -1925,13 +1927,17 @@ final class RosterRepository {
     /// server-side by the Worker's availability endpoint on both platforms.
     func setAvailabilityWeekLock(weekKey: String, locked: Bool) async throws {
         let ref = db.collection("settings").document("availabilityLocks")
+        // Ensure the doc exists — updateData on a missing doc throws NOT_FOUND.
+        try await ref.setData([:], merge: true)
+        // Dot-path updates merge into the nested `weeks` map. Do NOT use
+        // setData(["weeks": [weekKey: true]], merge: true) — on iOS that
+        // replaces the entire map and wipes sibling week locks (breaks PWA).
         if locked {
-            try await ref.setData(["weeks": [weekKey: true]], merge: true)
+            try await ref.updateData(["weeks.\(weekKey)": true])
+            lockedAvailabilityWeeks.insert(weekKey)
         } else {
-            // Ensure the doc exists before the field delete (updateData on a
-            // missing doc throws NOT_FOUND).
-            try await ref.setData([:], merge: true)
             try await ref.updateData(["weeks.\(weekKey)": FieldValue.delete()])
+            lockedAvailabilityWeeks.remove(weekKey)
         }
     }
 

@@ -20,7 +20,7 @@ struct AvailabilityView: View {
     private var boundsMin: Int { BusinessRules.availabilityMinWeekOffset }
     private var boundsMax: Int { BusinessRules.availabilityMaxWeekOffset }
     private var monday: Date { RosterCalendar.addWeeks(weekOffset, to: RosterCalendar.weekStart(now)) }
-    private var weekKey: String { RosterCalendar.dayFormatter.string(from: monday) }
+    private var weekKey: String { RosterCalendar.weekStartKey(monday) }
     private var isManagerLocked: Bool {
         repo.lockedAvailabilityWeeks.contains(weekKey)
             && !BusinessRules.isWeekLockedForStaff(weekStartKey: weekKey, at: now)
@@ -105,24 +105,55 @@ struct AvailabilityView: View {
 
     // MARK: Week navigation
 
+    private var weekRelativeLabel: String {
+        switch weekOffset {
+        case 0: return "This week"
+        case 1: return "Next week"
+        case -1: return "Last week"
+        case let n where n > 1: return "In \(n) weeks"
+        default: return "\(-weekOffset) weeks ago"
+        }
+    }
+
+    /// Three separate pills: left arrow | date + This/Next week | right arrow.
     private var weekNav: some View {
-        Card {
-            HStack {
-                navButton(system: "chevron.left", enabled: weekOffset > boundsMin) { requestWeekChange(weekOffset - 1) }
-                Spacer()
-                VStack(spacing: 4) {
+        HStack(spacing: 10) {
+            navButton(system: "chevron.left", enabled: weekOffset > boundsMin) {
+                requestWeekChange(weekOffset - 1)
+            }
+            Button {
+                requestWeekChange(0)
+            } label: {
+                VStack(spacing: 3) {
                     Text(RosterFormat.weekRange(monday: monday))
-                        .font(.subheadline.weight(.semibold))
+                        .font(.subheadline.weight(.bold))
                         .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                     HStack(spacing: 6) {
-                        weekBadge(isManagerLocked ? "Locked by manager" : (isLocked ? "Locked" : (weekOffset == 0 ? "Current" : "Upcoming")),
-                                  tint: isLocked ? Theme.textTertiary : Theme.brand)
+                        Text(weekRelativeLabel)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(weekOffset == 0 ? Theme.textSecondary : Theme.brand)
+                        if isManagerLocked || isLocked {
+                            Image(systemName: "lock.fill")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(Theme.warning)
+                        }
                         weekBadge(hasCustomWeek ? "Custom" : "Default",
                                   tint: hasCustomWeek ? Theme.accent : Theme.textTertiary)
                     }
                 }
-                Spacer()
-                navButton(system: "chevron.right", enabled: weekOffset < boundsMax) { requestWeekChange(weekOffset + 1) }
+                .padding(.horizontal, 14)
+                .frame(minHeight: 48)
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(weekOffset == 0)
+            .glassCapsule()
+            .accessibilityLabel(weekOffset == 0 ? "This week" : "Jump to this week")
+            navButton(system: "chevron.right", enabled: weekOffset < boundsMax) {
+                requestWeekChange(weekOffset + 1)
             }
         }
     }
@@ -143,10 +174,12 @@ struct AvailabilityView: View {
             Image(systemName: system)
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(enabled ? Theme.brand : Theme.textTertiary)
-                .frame(width: 42, height: 42)
-                .background(Circle().fill(Theme.brand.opacity(enabled ? 0.10 : 0.04)))
+                .frame(width: 48, height: 48)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .disabled(!enabled)
+        .glassCapsule(interactive: true)
         // Matches the shared WeekSelector's wording (Roster uses that component
         // directly; Availability can't — it navigates by week, not by day, so
         // WeekSelector's day-chip strip doesn't apply here) so VoiceOver users
