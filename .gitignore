@@ -25,3 +25,7 @@ Rosterra/Resources/GoogleService-Info.plist
 
 # Tool crash logs
 firepit-log.txt
+
+# Do not put the Native Android App inside this iOS repo.
+# Android code lives on Desktop: Roster/.../Native Android App
+/android/
