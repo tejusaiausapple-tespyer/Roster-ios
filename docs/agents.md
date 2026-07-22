@@ -6,8 +6,12 @@
 
 ## Last Updated
 
-2026-07-07 by AI agent (accuracy pass: Rosterra rename, manager Tasks + Wage now built,
-added shift_attendance / daily-jobs / wages collections, manager tabs, single-tenant note).
+2026-07-22 by AI agent — added `docs/android-staff/` Phase 1–2 planning pack for the
+Native Android Staff App (iOS Staff audit + implementation roadmap). No Android
+code in this repo; Manager remains out of scope until Staff is production-ready.
+
+Previously: 2026-07-07 accuracy pass (Rosterra rename, manager Tasks + Wage,
+shift_attendance / daily-jobs / wages, manager tabs, single-tenant note).
 
 ---
 
@@ -26,6 +30,15 @@ added shift_attendance / daily-jobs / wages collections, manager tabs, single-te
 | API Domain | `https://sura-roster.com` |
 | Timezone | Australia/Adelaide (hardcoded in `RosterCalendar`) |
 | Week Start | Monday (ISO 8601) |
+
+---
+
+## Android Staff planning (cross-repo)
+
+The Native Android Staff App is planned from this iOS codebase as the behavioural
+source of truth. Full audit + roadmap live in **`docs/android-staff/`** (start at
+`docs/android-staff/README.md`). Do not implement Manager on Android until the
+Staff production gate (roadmap phase **S0**) is signed off.
 
 ---
 
