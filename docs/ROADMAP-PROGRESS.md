@@ -15,6 +15,19 @@
 
 ## Milestone status
 
+- [x] **Android Staff — Phase 1 audit + Phase 2 roadmap** (docs only, 2026-07-22)
+  - Pack: `docs/android-staff/` (README + audit, structure, permissions,
+    notifications, cache/security, implementation roadmap A0→S0).
+  - iOS Staff shell audited as parity source; Manager explicitly deferred until
+    Staff production gate **S0**.
+  - **No Android application code in this milestone** — implementation starts
+    only after Sura accepts the pack and kicks off roadmap phase **A0** in the
+    Android repo.
+  - DEVICE VERIFICATION (docs review): (1) Read `docs/android-staff/README.md`
+    then `01-ios-staff-audit.md`. (2) Confirm bottom tabs match device Staff
+    app (Home, Roster, Tasks, Availability, Account). (3) Confirm deny list in
+    `03-staff-permissions.md` matches what Staff cannot do. (4) Approve or
+    amend roadmap phases before any Android coding.
 - [x] **Marketing site responsiveness fixes** (branch `marketing-site-responsive-fixes`, completed 2026-07-13)
   - Constrained mockup dimensions on desktop (`max-height: 540px`/`460px`), tablet (`38vh`), and mobile (`32vh`).
   - Stacked showcase and download grids, scaled typographic headings, section paddings, and card gutters.
