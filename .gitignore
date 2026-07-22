@@ -25,3 +25,9 @@ Rosterra/Resources/GoogleService-Info.plist
 
 # Tool crash logs
 firepit-log.txt
+
+# Android (local SDK path + build outputs)
+android/local.properties
+android/.gradle/
+android/**/build/
+android/.idea/
