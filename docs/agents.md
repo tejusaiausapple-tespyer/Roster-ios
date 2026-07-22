@@ -37,7 +37,7 @@ shift_attendance / daily-jobs / wages, manager tabs, single-tenant note).
 
 The Native Android Staff App is planned from this iOS codebase as the behavioural
 source of truth. Full audit + roadmap live in **`docs/android-staff/`** (start at
-`docs/android-staff/README.md`). Application code: **`android/`**. Do not implement Manager on Android until the
+`docs/android-staff/README.md`). Application code lives in the separate **Native Android App** Desktop project — not in this iOS repo. Do not implement Manager on Android until the
 Staff production gate (roadmap phase **S0**) is signed off.
 
 ---

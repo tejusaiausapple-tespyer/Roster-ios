@@ -1,6 +1,6 @@
 # Native Android Staff App — Planning Pack
 
-> **Status:** Phase 1 audit complete · Phase 2 roadmap ready · **A0/A1 scaffolding started in `android/`**  
+> **Status:** Phase 1 audit complete · Phase 2 roadmap ready · **A0/A1 code belongs in the separate Native Android App repo/folder — not in Roster-ios**  
 > **Source of truth for behaviour:** Native iOS app (`Rosterra/`)  
 > **Manager scope:** Explicitly out of scope until Staff reaches production quality  
 > **Last updated:** 2026-07-22
@@ -23,7 +23,7 @@ This pack answers the Native Android Staff App planning brief. Read in order:
 3. **Same backend:** Firebase Auth / Firestore / Storage / Messaging / Crashlytics + Cloudflare Worker at `https://sura-roster.com`.
 4. **Same calendar model:** `Australia/Adelaide`, Monday-start weeks (`RosterCalendar` semantics).
 5. **Never weaken security:** respect deployed Firestore/Storage rules; never add client-only “manager mode” shortcuts.
-6. Implementation lives in **`android/`** (Staff-only). Follow roadmap phases A0→S0; do not start Manager work before S0.
+6. Implementation lives in the **Native Android App** project on Desktop (`~/Desktop/Roster/Roster Android Native App` / “Native Android App”) — **never inside Roster-ios**. Follow roadmap phases A0→S0; no Manager work before S0.
 
 ## Related iOS docs (supporting, may be partially stale)
 

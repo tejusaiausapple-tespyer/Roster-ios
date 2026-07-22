@@ -15,17 +15,14 @@
 
 ## Milestone status
 
-- [ ] **Android Staff — A0/A1 scaffold** (branch `cursor/android-staff-a0-f75b`) — ✅ CODE STARTED 2026-07-22
-  - New `android/` Gradle project: Compose + M3 + Hilt + Firebase + Worker client.
-  - Ported `RosterCalendar` + staff `BusinessRules` with unit tests (green).
-  - Auth gates: login, forced password, profile completion, manager-blocked.
-  - Staff bottom nav (Home/Roster/Tasks/Availability/Account); Home/Roster show live
-    staff-scoped Firestore shifts/timesheets when real `google-services.json` is present.
-  - DEVICE VERIFICATION: (1) Open `android/` in Android Studio. (2) Replace
-    `app/google-services.json` with Firebase Android apps for
-    `com.surainvestments.rosterra` + `.debug`. (3) Run on device/emulator, sign in
-    as staff → 5 tabs. (4) Manager account shows blocked screen. (5)
-    `./gradlew :app:testDebugUnitTest :app:assembleDebug` green.
+- [ ] **Android Staff — A0/A1 scaffold** — code must live in **Native Android App**
+      Desktop project (not Roster-ios). Export artifact from cloud agent:
+      `/opt/cursor/artifacts/rosterra-android-staff-a0.tar.gz` (unpack into the
+      Android project folder). iOS repo keeps planning docs only under
+      `docs/android-staff/`.
+  - DEVICE VERIFICATION (on Mac Android project): (1) Unpack/sync scaffold into
+    `~/Desktop/Roster/...Native Android App`. (2) Add real `google-services.json`
+    for `com.surainvestments.rosterra` (+ `.debug`). (3) `./gradlew` tests + run.
 - [x] **Android Staff — Phase 1 audit + Phase 2 roadmap** (docs only, 2026-07-22)
   - Pack: `docs/android-staff/` (README + audit, structure, permissions,
     notifications, cache/security, implementation roadmap A0→S0).
