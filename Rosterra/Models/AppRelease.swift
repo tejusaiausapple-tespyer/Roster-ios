@@ -52,6 +52,18 @@ enum ReleaseHistory {
     static let all: [AppRelease] = [
         AppRelease(
             version: "1.0.0",
+            build: "27",
+            releaseDate: releaseDate(2026, 7, 22),
+            updateType: .patch,
+            summary: "App Store upload build bump past previously submitted builds.",
+            features: [],
+            bugFixes: [
+                "CFBundleVersion raised so a new binary can be uploaded to App Store Connect",
+            ],
+            commitHash: "e2b8740"
+        ),
+        AppRelease(
+            version: "1.0.0",
             build: "2",
             releaseDate: releaseDate(2026, 7, 16),
             updateType: .patch,
