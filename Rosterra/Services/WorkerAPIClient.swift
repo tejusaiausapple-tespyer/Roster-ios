@@ -152,4 +152,16 @@ struct WorkerAPIClient {
         if let recipientIds { body["recipientIds"] = recipientIds }
         _ = try? await post(path: "api/send-notification", body: body)
     }
+
+    /// POST /api/notifications/activate-device — best-effort, fire-and-forget,
+    /// same shape as sendNotification. `reason: "login"` claims this device as
+    /// the account's single active notification device (every other token doc
+    /// for this uid is deactivated server-side). `reason: "refresh"` carries
+    /// active status forward across a silent FCM token rotation, and only
+    /// does anything if `previousToken`'s doc was already active.
+    func activateDevice(token: String, previousToken: String?, reason: String) async {
+        var body: [String: Any] = ["token": token, "reason": reason]
+        if let previousToken { body["previousToken"] = previousToken }
+        _ = try? await post(path: "api/notifications/activate-device", body: body)
+    }
 }

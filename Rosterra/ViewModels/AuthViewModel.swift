@@ -101,6 +101,13 @@ final class AuthViewModel {
             temporaryPassword = password
             try? await Firestore.firestore().collection("users").document(uid)
                 .updateData(["lastLoginAt": FS.isoFormatter.string(from: Date())])
+            // Best-effort, deliberately not awaited — claims this device as
+            // the account's single active notification device without
+            // adding a network round trip to the login flow. Distinct from
+            // syncTokenAfterLogin() (called on every resolved auth state,
+            // including a restored session): only this genuine credential
+            // login should claim active status.
+            NotificationService.shared.claimActiveDeviceOnLogin()
             Haptics.signIn()
         } catch {
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription

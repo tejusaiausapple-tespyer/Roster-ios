@@ -98,6 +98,7 @@ final class NotificationService: NSObject {
         guard AppConfig.pushEnabled,
               let token = pendingToken,
               let uid = Auth.auth().currentUser?.uid else { return }
+        let previousToken = UserDefaults.standard.string(forKey: Self.lastTokenDefaultsKey)
         UserDefaults.standard.set(token, forKey: Self.lastTokenDefaultsKey)
         let ref = Self.tokenDocRef(uid: uid, token: token)
         Task {
@@ -121,9 +122,38 @@ final class NotificationService: NSObject {
                         "updatedAt": FieldValue.serverTimestamp(),
                     ])
                 }
+                // A silent FCM rotation on an already-registered device —
+                // never fires on first-ever registration on this device
+                // (nothing stored yet) or when the token is unchanged. This
+                // carries the device's single-active-notification-device
+                // status (if any) forward to the new token doc; a brand-new
+                // doc with no previous token to compare against is left
+                // alone deliberately — the Worker's fail-open read treats a
+                // missing `active` field as active, so a genuinely new
+                // device is reachable by default until something else
+                // explicitly deactivates it.
+                if let previousToken, previousToken != token {
+                    await WorkerAPIClient.shared.activateDevice(token: token, previousToken: previousToken, reason: "refresh")
+                }
             } catch {
                 // Best-effort, matching the web app's fire-and-forget token sync.
             }
+        }
+    }
+
+    /// Called right after a fresh sign-in succeeds (`AuthViewModel.login()`)
+    /// — distinct from `syncTokenAfterLogin()`, which also fires on every
+    /// resolved auth state (including a restored session) and must never
+    /// claim active status on its own: that could let an unrelated app
+    /// relaunch silently steal active status back from wherever the account
+    /// most recently logged in. Only a genuine credential login claims this
+    /// device as the account's single active notification device. No-ops if
+    /// no token is registered yet on this device — nothing to claim with.
+    func claimActiveDeviceOnLogin() {
+        guard AppConfig.pushEnabled,
+              let token = pendingToken ?? UserDefaults.standard.string(forKey: Self.lastTokenDefaultsKey) else { return }
+        Task {
+            await WorkerAPIClient.shared.activateDevice(token: token, previousToken: nil, reason: "login")
         }
     }
 
