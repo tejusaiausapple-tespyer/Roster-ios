@@ -24,6 +24,7 @@ struct ChangePasswordView: View {
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
                             Button("Cancel") { dismiss() }
+                                .keyboardShortcut(.cancelAction)
                         }
                     }
             }
@@ -92,6 +93,7 @@ struct ChangePasswordView: View {
                 if isForced {
                     Button("Sign out") { auth.logout() }
                         .buttonStyle(.plain)
+                        .pointerHover()
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Theme.textSecondary)
                         .frame(maxWidth: .infinity)
@@ -129,8 +131,8 @@ struct ChangePasswordView: View {
             if BiometricCredentialStore.hasCredential {
                 BiometricCredentialStore.save(email: email, password: newPassword)
             }
-            if PasskeyStore.isRegistered {
-                PasskeyStore.save(email: email, credentialID: PasskeyStore.credentialID ?? "", password: newPassword)
+            if PasskeyStore.isRegistered, let credentialID = PasskeyStore.credentialID, !credentialID.isEmpty {
+                PasskeyStore.save(email: email, credentialID: credentialID, password: newPassword)
             }
             
             Haptics.success()
@@ -167,6 +169,7 @@ struct SecureRow: View {
                         .foregroundStyle(Theme.textTertiary)
                 }
                 .buttonStyle(.plain)
+                .pointerHover()
             }
         }
     }

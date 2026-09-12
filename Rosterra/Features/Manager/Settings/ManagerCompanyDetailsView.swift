@@ -2,8 +2,7 @@ import SwiftUI
 
 /// Account → Company details. Stored on settings/app (merged, so the PWA's
 /// companyName stays in sync both ways). Shown on the Manager Dashboard
-/// header and the Staff Home; a future staff Payslip feature will render
-/// these details on generated payslips.
+/// header, Staff Home, and generated payslips (PayslipPDFService).
 ///
 /// Input conveniences: ABN/ACN self-format with spaces as you type (the
 /// number pad has no space bar), phone is fixed to +61 with local digits
@@ -55,10 +54,16 @@ struct ManagerCompanyDetailsView: View {
 
     var body: some View {
         Form {
-            TitlePillCollapseReporter()
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
+            // Zero-footprint scroll probe: own section with no spacing —
+            // a loose row would form an implicit section (44pt min row
+            // height + section spacing) and push the first card ~100pt down.
+            Section {
+                TitlePillCollapseReporter()
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
+            .listSectionSpacing(0)
             Section("Company") {
                 LabeledContent("Name") {
                     TextField("Company name", text: $companyName)
@@ -146,10 +151,8 @@ struct ManagerCompanyDetailsView: View {
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("Company Details")
         .navigationBarTitleDisplayMode(.inline)
+        .screenTitlePill("Company Details", icon: "building.2.fill", fraction: 0)
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                ScreenTitlePill(title: "Company Details", icon: "building.2.fill")
-            }
             ToolbarItem(placement: .topBarTrailing) {
                 ToolbarSaveButton(
                     isEnabled: isDirty && !companyName.trimmingCharacters(in: .whitespaces).isEmpty,

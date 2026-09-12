@@ -29,63 +29,65 @@ struct LoginView: View {
     private var showQuickLogin: Bool { showPasskey || showFaceID }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            Theme.background.ignoresSafeArea()
+        GeometryReader { geo in
+            ZStack(alignment: .top) {
+                Theme.background.ignoresSafeArea()
 
-            // The one decorative moment on this screen: a quiet brand wash
-            // fading out of the top edge.
-            LinearGradient(
-                colors: [Theme.brand.opacity(0.14), .clear],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: 300)
-            .ignoresSafeArea(edges: .top)
+                // The one decorative moment on this screen: a quiet brand wash
+                // fading out of the top edge.
+                LinearGradient(
+                    colors: [Theme.brand.opacity(0.14), .clear],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 300)
+                .ignoresSafeArea(edges: .top)
 
-            ScrollView {
-                VStack(spacing: 0) {
-                    header
-                        .padding(.top, 64)
+                ScrollView {
+                    VStack(spacing: 0) {
+                        header
+                            .padding(.top, 64)
 
-                    VStack(spacing: 14) {
-                        if let message = auth.forcedSignOutMessage ?? auth.errorMessage {
-                            Banner(kind: .error, title: message)
-                                .transition(.move(edge: .top).combined(with: .opacity))
+                        VStack(spacing: 14) {
+                            if let message = auth.forcedSignOutMessage ?? auth.errorMessage {
+                                Banner(kind: .error, title: message)
+                                    .transition(.move(edge: .top).combined(with: .opacity))
+                            }
+
+                            emailField
+                            passwordField
+
+                            rememberRow
+                                .padding(.top, 2)
+
+                            continueButton
+                                .padding(.top, 10)
+
+                            if showQuickLogin {
+                                orDivider
+                                    .padding(.top, 6)
+                                quickLoginButton
+                            }
                         }
+                        .padding(.top, 40)
+                        .modifier(Shake(animatableData: CGFloat(shakeAttempts)))
 
-                        emailField
-                        passwordField
+                        Spacer(minLength: 32)
 
-                        rememberRow
-                            .padding(.top, 2)
-
-                        continueButton
-                            .padding(.top, 10)
-
-                        if showQuickLogin {
-                            orDivider
-                                .padding(.top, 6)
-                            quickLoginButton
-                        }
+                        Text("Version \(appVersion)")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textTertiary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.bottom, 16)
                     }
-                    .padding(.top, 40)
-                    .modifier(Shake(animatableData: CGFloat(shakeAttempts)))
-
-                    Spacer(minLength: 32)
-
-                    Text("Version \(appVersion)")
-                        .font(.caption)
-                        .foregroundStyle(Theme.textTertiary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.bottom, 16)
+                    .padding(.horizontal, 24)
+                    .frame(maxWidth: 440)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: max(0, geo.size.height))
                 }
-                .padding(.horizontal, 24)
-                .frame(maxWidth: 440)
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: UIScreen.main.bounds.height - 100)
+                .platformScrollIndicators()
+                .scrollDismissesKeyboard(.interactively)
             }
-            .scrollIndicators(.hidden)
-            .scrollDismissesKeyboard(.interactively)
         }
         .onAppear {
             if let saved = BiometricCredentialStore.savedEmail, email.isEmpty {
@@ -160,6 +162,7 @@ struct LoginView: View {
                         .foregroundStyle(Theme.textTertiary)
                 }
                 .buttonStyle(.plain)
+                .pointerHover()
                 .transition(.opacity)
                 .accessibilityLabel(showPassword ? "Hide password" : "Show password")
             }
@@ -187,6 +190,7 @@ struct LoginView: View {
                 }
             }
             .buttonStyle(.plain)
+            .pointerHover()
 
             Spacer()
 
@@ -441,7 +445,7 @@ struct ForgotPasswordSheet: View {
                     }
                     .padding(20)
                 }
-                .scrollIndicators(.hidden)
+                .platformScrollIndicators()
                 .scrollDismissesKeyboard(.interactively)
             }
             .background(Theme.background.ignoresSafeArea())
@@ -450,14 +454,14 @@ struct ForgotPasswordSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(sent ? "Done" : "Cancel") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                         .font(.body.weight(.medium))
                         .foregroundStyle(Theme.textPrimary)
                 }
             }
             .onAppear { if !sent { emailFocused = true } }
         }
-        .presentationDetents([.medium])
-        .presentationDragIndicator(.visible)
+        .phoneSheetDetents([.medium])
     }
 
     private var formState: some View {

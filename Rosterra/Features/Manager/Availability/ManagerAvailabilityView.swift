@@ -51,7 +51,7 @@ struct ManagerAvailabilityView: View {
     }
 
     private func layoutIsWide(_ width: CGFloat) -> Bool {
-        UIDevice.current.userInterfaceIdiom != .phone && width >= 720
+        !PlatformUI.isCompactLayout(width: width)
     }
 
     var embedInNavigationStack = true
@@ -80,10 +80,8 @@ struct ManagerAvailabilityView: View {
         }
         .navigationTitle("Availability")
         .navigationBarTitleDisplayMode(.inline)
+        .screenTitlePill("Availability", icon: "calendar.badge.clock", fraction: 0)
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                ScreenTitlePill(title: "Availability", icon: "calendar.badge.clock")
-            }
             ToolbarItem(placement: .topBarTrailing) {
                 lockButton
             }
@@ -137,6 +135,7 @@ struct ManagerAvailabilityView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .disabled(weekOffset == 0)
             .glassCapsule()
             .accessibilityLabel(weekOffset == 0 ? "This week" : "Jump to this week")
@@ -158,6 +157,7 @@ struct ManagerAvailabilityView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerHover()
         .disabled(!enabled)
         .glassCapsule(interactive: true)
         .accessibilityLabel(system == "chevron.left" ? "Previous week" : "Next week")
@@ -175,6 +175,7 @@ struct ManagerAvailabilityView: View {
                 .background(Capsule(style: .continuous).fill(Theme.card))
         }
         .buttonStyle(.plain)
+        .pointerHover()
         .disabled(isLockWorking)
         .accessibilityLabel(isWeekAvailabilityLocked ? "Unlock staff availability" : "Lock staff availability")
         .accessibilityHint("Prevents staff from editing availability for \(weekRelativeLabel.lowercased())")
@@ -264,11 +265,7 @@ struct ManagerAvailabilityView: View {
             }
             .padding(hPad)
             .tracksTitlePillCollapse()
-            .scrollFadeContentTracking(in: "manager-availability-matrix")
         }
-        // Same edge fade as Staff: content softens under the week nav (top)
-        // and summary bar (bottom) while scrolling.
-        .fadedScrollHints(coordinateSpace: "manager-availability-matrix", showsChevrons: false)
     }
 
     // Narrow: per-staff cards
@@ -310,9 +307,7 @@ struct ManagerAvailabilityView: View {
                 }
                 .padding(16)
             }
-            .scrollFadeContentTracking(in: "manager-availability-list")
         }
-        .fadedScrollHints(coordinateSpace: "manager-availability-list", showsChevrons: false)
     }
 
     private func dayCell(_ day: DayAvailability, compact: Bool = false) -> some View {

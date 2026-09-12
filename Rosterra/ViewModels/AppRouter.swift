@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 
 /// Cross-screen navigation state: the selected tab and any pending roster action
 /// requested via a deep link / push tap (`?submit=` / `?absent=`).
@@ -10,8 +11,42 @@ final class AppRouter {
     /// without holding the SwiftUI `@State` instance strongly.
     static weak var shared: AppRouter?
 
-    enum Tab: Int, CaseIterable {
+    enum Tab: Int, CaseIterable, Identifiable {
         case home, roster, tasks, availability, account
+
+        var id: Self { self }
+
+        var title: String {
+            switch self {
+            case .home: return "Home"
+            case .roster: return "Roster"
+            case .tasks: return "Tasks"
+            case .availability: return "Availability"
+            case .account: return "Account"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .home: return "house"
+            case .roster: return "calendar"
+            case .tasks: return "list.bullet.clipboard"
+            case .availability: return "calendar.badge.clock"
+            case .account: return "person.crop.circle"
+            }
+        }
+
+        /// ⌘1…⌘4 in sidebar order; Account uses ⌘, (Mac Settings convention).
+        /// Bound only by the `Go` menu — see `RosterraApp`.
+        var commandShortcut: KeyEquivalent {
+            switch self {
+            case .home: return "1"
+            case .roster: return "2"
+            case .tasks: return "3"
+            case .availability: return "4"
+            case .account: return ","
+            }
+        }
     }
 
     var selectedTab: Int = Tab.home.rawValue
@@ -32,6 +67,15 @@ final class AppRouter {
     }
 
     func selectManager(_ tab: ManagerTab) {
+        // The iPhone TabView only tags 5 of the 11 ManagerTab cases (the
+        // rest live behind Account -> Management). Selecting an untagged
+        // case there is a silent no-op — the tab bar just keeps whatever
+        // was already selected — so fail closed to Account, where the
+        // manager can find the real destination themselves.
+        if PlatformUI.isPhone && !tab.isPhoneTab {
+            selectedManagerTab = .account
+            return
+        }
         selectedManagerTab = tab
     }
 
@@ -126,7 +170,11 @@ final class AppRouter {
         let p = path.lowercased()
         if p.contains("roster") || p.contains("history") {
             selectedTab = Tab.roster.rawValue
-        } else if p.contains("tasks") || p.contains("job") {
+        } else if p.contains("job") {
+            // Daily Jobs lives as a card on Home (right under the Start Shift
+            // card), not its own tab — route there.
+            selectedTab = Tab.home.rawValue
+        } else if p.contains("tasks") {
             selectedTab = Tab.tasks.rawValue
         } else if p.contains("availability") {
             selectedTab = Tab.availability.rawValue
@@ -148,8 +196,11 @@ final class AppRouter {
             return .timesheets
         case "shift-started", "shift-ended", "shift-running-late", "shift-overtime-started":
             return .dashboard
-        case "task-completed", "jobs-all-completed":
+        case "task-completed":
             return .tasks
+        case "jobs-all-completed":
+            // Daily Jobs overview lives on the Dashboard, not the Tasks tab.
+            return .dashboard
         case "availability-updated":
             return .availability
         default:

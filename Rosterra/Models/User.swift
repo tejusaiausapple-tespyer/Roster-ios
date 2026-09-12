@@ -28,6 +28,12 @@ struct AppUser: Identifiable, Equatable {
     var emergencyContactEmail: String?
     var notes: String?
     var defaultLocation: String?
+    /// Manager-set job title / role (e.g. "Console Operator"), shown on the
+    /// staff directory and used to default the Role field when the manager
+    /// creates a new shift for this staff member — set once, no need to
+    /// re-pick it every time. One of `ManagerShiftEditorSheet.roleOptions`,
+    /// or nil if never set.
+    var defaultDepartment: String?
     var needsSetup: Bool
     var createdAt: String?
     var updatedAt: String?
@@ -86,6 +92,7 @@ struct AppUser: Identifiable, Equatable {
         }
         self.notes = FS.string(data, "notes")
         self.defaultLocation = FS.string(data, "defaultLocation")
+        self.defaultDepartment = FS.string(data, "defaultDepartment")
         self.needsSetup = FS.bool(data, "needsSetup")
         self.createdAt = FS.isoString(data, "createdAt")
         self.updatedAt = FS.isoString(data, "updatedAt")

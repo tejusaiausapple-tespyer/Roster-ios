@@ -134,6 +134,7 @@ struct ManagerTimesheetDetailSheet: View {
                 if !isEmbedded {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Close") { dismiss() }
+                            .keyboardShortcut(.cancelAction)
                     }
                 }
             }
@@ -482,6 +483,7 @@ struct ManagerTimesheetDetailSheet: View {
                 )
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .disabled(isSubmitting)
 
             Button {
@@ -505,6 +507,7 @@ struct ManagerTimesheetDetailSheet: View {
                 )
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .disabled(isSubmitting)
         }
         .padding(.horizontal, Theme.screenPadding)
@@ -554,6 +557,7 @@ struct ManagerTimesheetDetailSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { showRejectionDialog = false }
+                        .keyboardShortcut(.cancelAction)
                 }
             }
         }

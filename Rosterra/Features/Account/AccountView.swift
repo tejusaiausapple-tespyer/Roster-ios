@@ -6,7 +6,6 @@ import PhotosUI
 struct AccountView: View {
     @Environment(RosterRepository.self) private var repo
     @Environment(AuthViewModel.self) private var auth
-    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.openURL) private var openURL
     @AppStorage("preferredColorScheme") private var preferredColorSchemeSetting: String = "system"
 
@@ -15,6 +14,8 @@ struct AccountView: View {
     @State private var showSignOutConfirm = false
     @State private var deviceAuthOn = false
     @State private var deviceAuthWorking = false
+    @State private var passkeyOn = false
+    @State private var passkeyWorking = false
     @State private var pushEnabled = false
     @State private var pendingReminderCount = 0
     @State private var nextReminderSummary: String?
@@ -24,7 +25,7 @@ struct AccountView: View {
     @State private var showNotificationExplainer = false
 
     private enum AccountSheet: Identifiable {
-        case changePassword, changeEmail, verifyPassword, imagePicker
+        case changePassword, changeEmail, verifyPassword, verifyPasskey, imagePicker
         var id: String { String(describing: self) }
     }
 
@@ -38,10 +39,16 @@ struct AccountView: View {
     var body: some View {
         NavigationStack {
             List {
-                TitlePillCollapseReporter()
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
+                // Zero-footprint scroll probe: own section with no spacing —
+                // a loose row would form an implicit section (44pt min row
+                // height + section spacing) and push the first card ~100pt down.
+                Section {
+                    TitlePillCollapseReporter()
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+                .listSectionSpacing(0)
                 photoSection
                 if user?.emailChangeRequired == true {
                     emailRequestSection
@@ -61,11 +68,7 @@ struct AccountView: View {
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle("Account")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    ScreenTitlePill(title: "Account", icon: "person.crop.circle.fill")
-                }
-            }
+            .screenTitlePill("Account", icon: "person.crop.circle.fill", fraction: 0)
             .sheet(item: $activeSheet) { sheet in
                 switch sheet {
                 case .changePassword:
@@ -91,6 +94,18 @@ struct AccountView: View {
                                     toastMessage = ToastMessage(kind: .error, text: "Could not enable \(device.biometryLabel)")
                                 }
                             }
+                        }
+                    }
+                case .verifyPasskey:
+                    if let email = user?.email {
+                        VerifyPasswordSheet(
+                            email: email,
+                            heading: "Enable Passkey Sign-In",
+                            detail: "Confirm your password, then create a passkey for this device.",
+                            navigationTitle: "Enable Passkey",
+                            symbolName: "person.badge.key.fill"
+                        ) { verifiedPassword in
+                            Task { await enablePasskey(email: email, password: verifiedPassword) }
                         }
                     }
                 case .imagePicker:
@@ -182,6 +197,7 @@ struct AccountView: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .pointerHover()
                 .contextMenu {
                     if profileImage != nil {
                         Button(role: .destructive) {
@@ -218,35 +234,25 @@ struct AccountView: View {
         Section {
             VStack(alignment: .leading, spacing: 14) {
                 
-                // Email
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(alignment: .center, spacing: 8) {
-                            Text("Email")
-                                .font(.footnote.weight(.bold))
-                                .foregroundStyle(Theme.textTertiary)
-                                .textCase(.uppercase)
-                            
-                            // Email Verification Badge
-                            Text(isEmailVerified ? "Verified" : "Pending")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(isEmailVerified ? Theme.accent : .orange)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(Capsule().fill((isEmailVerified ? Theme.accent : .orange).opacity(0.12)))
-                        }
-                        Text(user?.email ?? "")
-                            .font(.body)
-                            .foregroundStyle(Theme.textSecondary)
+                // Email — no self-serve edit here: staff only change email via
+                // emailRequestSection, after a manager asks for it.
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .center, spacing: 8) {
+                        Text("Email")
+                            .font(.footnote.weight(.bold))
+                            .foregroundStyle(Theme.textTertiary)
+                            .textCase(.uppercase)
+
+                        // Email Verification Badge
+                        Text(isEmailVerified ? "Verified" : "Pending")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(isEmailVerified ? Theme.accent : .orange)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Capsule().fill((isEmailVerified ? Theme.accent : .orange).opacity(0.12)))
                     }
-                    Spacer()
-                    Button {
-                        activeSheet = .changeEmail
-                    } label: {
-                        Image(systemName: "pencil")
-                            .font(.footnote)
-                            .foregroundStyle(Theme.brand)
-                    }
-                    .buttonStyle(.plain)
+                    Text(user?.email ?? "")
+                        .font(.body)
+                        .foregroundStyle(Theme.textSecondary)
                 }
                 
                 if let employeeId = user?.employeeId, !employeeId.isEmpty {
@@ -393,21 +399,24 @@ struct AccountView: View {
     // MARK: Appearance
 
     private var appearanceSection: some View {
-        Section("Appearance") {
+        Section {
             Toggle(isOn: Binding(
-                get: {
-                    if preferredColorSchemeSetting == "system" {
-                        return colorScheme == .dark
-                    }
-                    return preferredColorSchemeSetting == "dark"
-                },
-                set: { newValue in
-                    preferredColorSchemeSetting = newValue ? "dark" : "light"
-                }
+                get: { preferredColorSchemeSetting == "dark" },
+                set: { preferredColorSchemeSetting = $0 ? "dark" : "system" }
             )) {
                 Label("Dark Mode", systemImage: "moon.fill")
             }
             .tint(Theme.brand)
+        } header: {
+            Text("Appearance")
+        } footer: {
+            Text("Off follows your device Light/Dark setting.")
+        }
+        .onAppear {
+            // Old toggle wrote "light" on off; that value is no longer offered.
+            if preferredColorSchemeSetting == "light" {
+                preferredColorSchemeSetting = "system"
+            }
         }
     }
 
@@ -422,6 +431,13 @@ struct AccountView: View {
                 .tint(Theme.brand)
                 .disabled(deviceAuthWorking)
             }
+            if PasskeyManager.shared.isSupported {
+                Toggle(isOn: Binding(get: { passkeyOn }, set: { togglePasskey($0) })) {
+                    Label("Sign in with Passkey", systemImage: "person.badge.key.fill")
+                }
+                .tint(Theme.brand)
+                .disabled(passkeyWorking)
+            }
             Button {
                 activeSheet = .changePassword
             } label: {
@@ -430,10 +446,19 @@ struct AccountView: View {
         } header: {
             Text("Security")
         } footer: {
-            if device.isSupported {
-                Text("Require \(device.biometryLabel) each time you open the app.")
-            }
+            Text(securityFooter)
         }
+    }
+
+    private var securityFooter: String {
+        var parts: [String] = []
+        if device.isSupported {
+            parts.append("Require \(device.biometryLabel) each time you open the app.")
+        }
+        if PasskeyManager.shared.isSupported {
+            parts.append("A passkey lets you sign in on this device without typing your password.")
+        }
+        return parts.joined(separator: " ")
     }
 
     // MARK: Info
@@ -447,11 +472,15 @@ struct AccountView: View {
                     Text(location).foregroundStyle(Theme.textSecondary)
                 }
             }
-            HStack {
-                Label("Version", systemImage: "info.circle")
-                Spacer()
-                Text(ReleaseHistory.current.versionString)
-                    .foregroundStyle(Theme.textSecondary)
+            NavigationLink {
+                AppVersionHistoryView()
+            } label: {
+                HStack {
+                    Label("Version", systemImage: "info.circle")
+                    Spacer()
+                    Text(ReleaseHistory.current.versionString)
+                        .foregroundStyle(Theme.textSecondary)
+                }
             }
             NavigationLink {
                 PrivacyPolicyView()
@@ -548,11 +577,13 @@ struct AccountView: View {
 
     private func refreshStatuses() async {
         try? await Auth.auth().currentUser?.reload()
+        await PendingEmailChange.reconcileIfNeeded()
         isEmailVerified = Auth.auth().currentUser?.isEmailVerified == true
         
         if let uid = auth.uid {
             deviceAuthOn = device.isEnabled(uid: uid)
         }
+        passkeyOn = PasskeyStore.isRegistered
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         pushEnabled = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
         let pending = await ShiftReminderScheduler.pendingStatus()
@@ -600,6 +631,45 @@ struct AccountView: View {
         }
     }
 
+    private func togglePasskey(_ enable: Bool) {
+        guard !passkeyWorking else { return }
+        guard let email = user?.email else { return }
+        if enable {
+            if let password = auth.temporaryPassword {
+                Task { await enablePasskey(email: email, password: password) }
+            } else {
+                passkeyOn = false
+                activeSheet = .verifyPasskey
+            }
+        } else {
+            PasskeyStore.clear()
+            passkeyOn = false
+            Haptics.light()
+        }
+    }
+
+    private func enablePasskey(email: String, password: String) async {
+        guard let uid = auth.uid else { return }
+        passkeyWorking = true
+        defer { passkeyWorking = false }
+        do {
+            try await PasskeyManager.shared.registerAndStore(email: email, userID: uid, password: password)
+            auth.temporaryPassword = nil
+            passkeyOn = true
+            Haptics.success()
+            toastMessage = ToastMessage(kind: .success, text: "Passkey enabled")
+        } catch let error as PasskeyManager.PasskeyError {
+            passkeyOn = false
+            if case .cancelled = error { return }
+            Haptics.error()
+            toastMessage = ToastMessage(kind: .error, text: error.localizedDescription)
+        } catch {
+            passkeyOn = false
+            Haptics.error()
+            toastMessage = ToastMessage(kind: .error, text: "Could not enable passkey")
+        }
+    }
+
     private func openSystemSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
@@ -636,6 +706,10 @@ struct VerifyPasswordSheet: View {
     @Environment(AuthViewModel.self) private var auth
     
     let email: String
+    var heading: String = "Enable Face ID Sign-In"
+    var detail: String = "Confirm your password to securely store your credentials on this device."
+    var navigationTitle: String = "Enable Biometrics"
+    var symbolName: String = "faceid"
     let onVerifySuccess: (String) -> Void
     
     @State private var password = ""
@@ -652,14 +726,14 @@ struct VerifyPasswordSheet: View {
                     VStack(spacing: 12) {
                         ZStack {
                             Circle().fill(Theme.brand.opacity(0.12)).frame(width: 64, height: 64)
-                            Image(systemName: "faceid")
+                            Image(systemName: symbolName)
                                 .font(.system(size: 28))
                                 .foregroundStyle(Theme.brand)
                         }
-                        Text("Enable Face ID Sign-In")
+                        Text(heading)
                             .font(.system(size: 20, weight: .bold, design: .rounded))
                             .foregroundStyle(Theme.textPrimary)
-                        Text("Confirm your password to securely store your credentials on this device.")
+                        Text(detail)
                             .font(.subheadline)
                             .foregroundStyle(Theme.textSecondary)
                             .multilineTextAlignment(.center)
@@ -699,18 +773,18 @@ struct VerifyPasswordSheet: View {
                 .overlay(RoundedRectangle(cornerRadius: Theme.cornerLarge, style: .continuous).strokeBorder(Theme.separator, lineWidth: 1))
                 .padding(.horizontal, 20)
             }
-            .navigationTitle("Enable Biometrics")
+            .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                         .foregroundStyle(Theme.textPrimary)
                 }
             }
             .onAppear { isFocused = true }
         }
-        .presentationDetents([.medium])
-        .presentationDragIndicator(.visible)
+        .phoneSheetDetents([.medium])
     }
     
     private func verify() async {

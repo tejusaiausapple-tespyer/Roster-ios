@@ -63,7 +63,12 @@ Rosterra/
 │       ├── Roster/
 │       ├── Timesheets/
 │       └── Shell/
-├── DesignSystem/           # Theme + reusable UI components
+├── Mac/                    # Mac Catalyst UI — own design system, shell and screens
+│   ├── Design/             # MacColor / MacSpace / MacType + components
+│   ├── Shell/              # Sidebar, split view, menu bar, window config
+│   ├── ViewModels/
+│   └── Screens/            # Auth, Staff, Manager, Account
+├── DesignSystem/           # Theme + reusable UI components (iPhone/iPad)
 └── Resources/              # Assets, plists, entitlements
 ```
 
@@ -110,6 +115,7 @@ xcodegen generate
 ## Key Architecture Decisions
 
 - **Single codebase, two roles** — Routes to Staff or Manager UI based on user's `role` field in Firestore
+- **Mac has its own UI layer** — `Rosterra/Mac` replaces `Rosterra/Features` entirely on Catalyst, sharing Models, Services and the `AppRoute` gate logic. See [`docs/mac-app.md`](docs/mac-app.md)
 - **Real-time by default** — All data uses Firestore `onSnapshot` listeners, no polling
 - **RosterRepository as single source** — One `@Observable` class holds all app state via SwiftUI environment
 - **Australia/Adelaide timezone** — All date logic is timezone-aware via `RosterCalendar`
@@ -123,6 +129,7 @@ xcodegen generate
 | Document | Description |
 |----------|-------------|
 | [`docs/agents.md`](docs/agents.md) | **AI agent context** — comprehensive reference for AI models working on this project |
+| [`docs/mac-app.md`](docs/mac-app.md) | Mac Catalyst app — its own UI layer under `Rosterra/Mac`, sharing Models + Services |
 | [`docs/staff-guide.md`](docs/staff-guide.md) | Staff-side feature documentation |
 | [`docs/manager-guide.md`](docs/manager-guide.md) | Manager-side feature documentation |
 | [`docs/architecture.md`](docs/architecture.md) | How staff and manager sides connect |
@@ -150,16 +157,18 @@ xcodegen generate
 - Manager availability overview (staff × 7-day matrix)
 - Manager weekly reports (hours, labour cost, per-staff breakdown)
 - Device authentication gate (Face ID / Touch ID / passcode)
+- Passkey sign-in (Account → Security; login shows Sign in with Passkey once registered)
 - Forced password change flow
 - Profile completion enforcement
-- iPad/Mac adaptive layouts (sidebar + width-driven grids, Liquid Glass on iOS 26+)
+- iPad adaptive layouts (sidebar + width-driven grids, Liquid Glass on iOS 26+)
+- Mac Catalyst app rebuilt Mac-first: own design system, source list, menu bar, sortable tables, list-with-inspector screens, save panels
 - Push notifications (paid team wired 2026-07-15; APNs → FCM → Firestore end-to-end)
+- Manager task management (create/review/redo)
+- Manager tenure & hours
+- Manager wage awards and payroll (draft → approve → submit payslips)
 
 ### 🚧 Planned
-- Manager task management UI (placeholder tab)
-- Manager tenure & hours view (placeholder tab)
-- Manager wage/payroll view (placeholder tab)
-- Passkey authentication flow (service code exists; registration not wired)
+- None currently tracked in this README. See `docs/ROADMAP-PROGRESS.md` for open product decisions.
 
 ---
 

@@ -7,7 +7,7 @@ final class DailyJobTests: XCTestCase {
         DailyJobAssignment(
             id: "s1_t1", shiftId: "s1", staffId: "u1", templateId: "t1",
             title: "Wash floors", date: date, assignedAt: nil, assignedBy: nil,
-            completed: false, completedAt: nil, completedBy: nil
+            completed: false, completedAt: nil, completedBy: nil, order: nil
         )
     }
 

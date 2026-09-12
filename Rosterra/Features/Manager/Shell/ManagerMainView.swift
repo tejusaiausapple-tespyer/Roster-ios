@@ -17,7 +17,7 @@ struct ManagerMainView: View {
 
     @ViewBuilder
     private var content: some View {
-        if UIDevice.current.userInterfaceIdiom == .phone {
+        if PlatformUI.isPhone {
             // iOS Compact Layout: 5 visible bottom tabs
             TabView(selection: Binding(get: { selectedTab }, set: { selectedTab = $0 })) {
                 ManagerDashboardView()
@@ -43,6 +43,7 @@ struct ManagerMainView: View {
                     Label(ManagerTab.timesheets.title, systemImage: ManagerTab.timesheets.icon)
                 }
                 .tag(ManagerTab.timesheets)
+                .badge(badge(for: .timesheets))
 
                 ManagerAccountView()
                 .tabItem {
@@ -50,11 +51,13 @@ struct ManagerMainView: View {
                 }
                 .tag(ManagerTab.account)
             }
-            .tint(Color(hex: 0x4F46E5))
+            .tint(Theme.brand)
         } else {
-            // iPadOS & macOS: Sidebar split view with all 10 tabs
+            // iPadOS & macOS: solid source-list sidebar with every ManagerTab
+            // (Account pinned in the profile footer).
             NavigationSplitView(columnVisibility: $columnVisibility) {
                 sidebar
+                    .navigationSplitViewColumnWidth(min: 248, ideal: 280, max: 340)
             } detail: {
                 switch selectedTab {
                 case .account:
@@ -86,23 +89,52 @@ struct ManagerMainView: View {
 
     // MARK: - Sidebar (iPad / macOS)
 
-    /// The original plain sidebar list, with Account moved out of the list
-    /// and pinned to the bottom as a profile row.
+    /// Floating source-list: inset rounded card, grouped destinations,
+    /// profile footer. Account stays out of the list and is pinned at the bottom.
     private var sidebar: some View {
-        List(ManagerTab.allCases.filter { $0 != .account }, selection: Binding(
-            get: { selectedTab },
-            set: { if let val = $0 { selectedTab = val } }
-        )) { tab in
-            NavigationLink(value: tab) {
-                Label(tab.title, systemImage: tab.icon)
+        FloatingSidebarPanel {
+            VStack(spacing: 0) {
+                SidebarBrandHeader(
+                    companyName: repo.appSettings.companyName,
+                    roleLabel: "Manager"
+                )
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(ManagerSidebarSection.allCases) { section in
+                            SidebarSectionLabel(title: section.title)
+                            ForEach(section.tabs) { tab in
+                                SidebarItemRow(
+                                    title: tab.title,
+                                    icon: tab.icon,
+                                    isSelected: selectedTab == tab,
+                                    badge: badge(for: tab)
+                                ) {
+                                    selectedTab = tab
+                                }
+                            }
+                        }
+                    }
+                    .padding(.bottom, 12)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                SidebarProfileFooter(
+                    name: repo.currentUser?.fullName ?? "—",
+                    email: repo.currentUser?.email ?? "",
+                    initials: repo.currentUser?.initials ?? "M",
+                    isSelected: selectedTab == .account
+                ) {
+                    selectedTab = .account
+                }
             }
         }
-        .navigationTitle("Manager Portal")
-        .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom, spacing: 0) { sidebarFooter }
+        .navigationTitle("Manager")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar)
+        .sidebarColumnFill()
         // The system edge-swipe opens the sidebar, but there is no built-in
         // right-to-left swipe to dismiss it. Mirror the gesture: a leftward
-        // drag anywhere on the sidebar collapses it.
+        // drag anywhere on the sidebar collapses it. Mouse users use the
+        // system sidebar toggle (or View → Hide Sidebar on Mac).
         .simultaneousGesture(
             DragGesture(minimumDistance: 30)
                 .onEnded { value in
@@ -114,48 +146,13 @@ struct ManagerMainView: View {
         )
     }
 
-    private var sidebarFooter: some View {
-        Button {
-            selectedTab = .account
-        } label: {
-            HStack(spacing: 12) {
-                Circle()
-                    .fill(Theme.brand.opacity(0.14))
-                    .frame(width: 36, height: 36)
-                    .overlay(
-                        Text(String((repo.currentUser?.fullName ?? "M").prefix(2)).uppercased())
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(Theme.brand)
-                    )
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(repo.currentUser?.fullName ?? "—")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                    Text(repo.currentUser?.email ?? "")
-                        .font(.caption2)
-                        .foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Theme.textTertiary)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(selectedTab == .account ? Theme.brand.opacity(0.12) : .clear)
-            )
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
+    private func badge(for tab: ManagerTab) -> Int {
+        switch tab {
+        case .timesheets:
+            return repo.timesheets.filter { $0.status == .pending }.count
+        default:
+            return 0
         }
-        .buttonStyle(.plain)
-        .background(.bar)
-        .overlay(alignment: .top) { Divider() }
-        .accessibilityLabel("Account settings")
     }
 }
 

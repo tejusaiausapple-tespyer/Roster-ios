@@ -28,13 +28,18 @@ final class AuthViewModel {
     private var repository: RosterRepository?
     private var authListener: AuthStateDidChangeListenerHandle?
     private var backgroundedAt: Date?
-    private var isLoggingIn = false
+    /// Not `private` so tests can simulate the fresh-login path through
+    /// `handleAuthState` directly, without driving a real `login()` call
+    /// (which hits live Firebase Auth + Firestore — unsuitable for a fast,
+    /// hermetic unit test).
+    var isLoggingIn = false
 
     // MARK: - Wiring
 
     func bind(repository: RosterRepository) {
         guard self.repository == nil else { return }
         self.repository = repository
+        NotificationService.shared.bind(repository: repository)
         guard FirebaseBootstrap.isConfigured else {
             isRestoring = false
             return
@@ -44,7 +49,10 @@ final class AuthViewModel {
         }
     }
 
-    private func handleAuthState(uid: String?) {
+    /// Not `private` so tests can drive this state machine directly (see
+    /// `isLoggingIn`) — the gate-skip decision here is exactly what a past
+    /// bug lived in, and it was previously untestable.
+    func handleAuthState(uid: String?) {
         isRestoring = false
         self.uid = uid
         if let uid {
@@ -99,8 +107,11 @@ final class AuthViewModel {
             // Fresh login skips the device-auth gate for this session.
             deviceAuthVerified = true
             temporaryPassword = password
+            // ServerClock, not the device clock — lastLoginAt should reflect
+            // trusted time the same way clock-in/out attendance does, not a
+            // value a manipulated device clock could report arbitrarily.
             try? await Firestore.firestore().collection("users").document(uid)
-                .updateData(["lastLoginAt": FS.isoFormatter.string(from: Date())])
+                .updateData(["lastLoginAt": FS.isoFormatter.string(from: ServerClock.shared.now)])
             // Best-effort, deliberately not awaited — claims this device as
             // the account's single active notification device without
             // adding a network round trip to the login flow. Distinct from
@@ -116,21 +127,27 @@ final class AuthViewModel {
 
     func logout() {
         Haptics.signOut()
-        endSession()
+        Task { await endSession() }
     }
 
     /// Force sign-out with a message (e.g. account became locked while signed in).
     func forceSignOut(message: String) {
         forcedSignOutMessage = message
         Haptics.forcedSignOut()
-        endSession()
+        Task { await endSession() }
     }
 
-    private func endSession() {
+    /// Order matters: the token delete MUST complete (or fail) while still
+    /// authenticated as the departing user, before `signOut()` changes the
+    /// auth context — see the doc comment on `clearTokenOnLogout`. Wrapped in
+    /// its own Task by `logout()`/`forceSignOut()` so callers keep a
+    /// synchronous call site; the ordering guarantee lives here regardless.
+    private func endSession() async {
         if let uid {
-            NotificationService.shared.clearTokenOnLogout(uid: uid)
+            await NotificationService.shared.clearTokenOnLogout(uid: uid)
         }
         ShiftReminderScheduler.cancelAll()
+        DailyJobReminderScheduler.cancelAll()
         try? AuthService.shared.signOut()
         deviceAuthVerified = false
         deviceAuthEnabled = false
@@ -139,14 +156,38 @@ final class AuthViewModel {
 
     // MARK: - Device auth gate
 
-    func verifyDeviceAuth() async {
-        guard let uid else { return }
-        let ok = await DeviceAuthService.shared.verify(uid: uid)
-        if ok {
+    /// Returns a message for `DeviceAuthGateView` to show on a non-success,
+    /// non-cancel outcome (nil otherwise — cancel/dismiss needs no message,
+    /// success needs none either since the gate just closes).
+    @discardableResult
+    func verifyDeviceAuth() async -> String? {
+        guard let uid else { return nil }
+        switch await DeviceAuthService.shared.verify(uid: uid) {
+        case .success:
             Haptics.authSuccess()
             deviceAuthVerified = true
-        } else {
+            return nil
+        case .biometryChanged:
             Haptics.authFailure()
+            deviceAuthEnabled = false
+            // The Firebase session itself is still valid — only the local
+            // re-lock gate is no longer trustworthy — so this is a full
+            // sign-in requirement, not an account-status forced sign-out,
+            // but forceSignOut's messaging path is exactly what's needed.
+            forceSignOut(message: "Your device's Face ID/Touch ID enrollment changed, so secure unlock was turned off for your safety. Please sign in again.")
+            return nil
+        case .cancelled:
+            Haptics.authFailure()
+            return nil
+        case .lockedOut:
+            Haptics.authFailure()
+            return "Too many failed attempts. Use your device passcode, or try again later."
+        case .notEnrolled:
+            Haptics.authFailure()
+            return "No Face ID/Touch ID is set up on this device. Use your device passcode, or set up biometrics in Settings."
+        case .failed(let message):
+            Haptics.authFailure()
+            return message
         }
     }
 
@@ -157,23 +198,29 @@ final class AuthViewModel {
 
     // MARK: - Scene phase / background relock
 
-    func handleScenePhase(_ phase: ScenePhaseKind) {
+    /// `now` defaults to the real clock for every production call site;
+    /// tests pass an explicit instant to exercise the relock-threshold
+    /// branch deterministically instead of sleeping for real minutes.
+    func handleScenePhase(_ phase: ScenePhaseKind, now: Date = Date()) {
         switch phase {
         case .background:
-            backgroundedAt = Date()
+            backgroundedAt = now
             // Don't keep the plaintext login password in memory once the app
             // leaves the foreground. (It exists only to let the Account tab
             // enable Face ID without re-prompting in the same session.)
             temporaryPassword = nil
         case .active:
             if let backgroundedAt,
-               Date().timeIntervalSince(backgroundedAt) >= AppConfig.deviceAuthBackgroundRelock,
+               now.timeIntervalSince(backgroundedAt) >= AppConfig.deviceAuthBackgroundRelock,
                deviceAuthEnabled {
                 deviceAuthVerified = false
             }
             self.backgroundedAt = nil
-            Task { await ServerClock.shared.sync() }
-            Task { await repository?.refreshFromServer() }
+            Task {
+                await ServerClock.shared.sync()
+                await PendingEmailChange.reconcileIfNeeded()
+                await repository?.refreshFromServer()
+            }
         case .inactive:
             break
         }

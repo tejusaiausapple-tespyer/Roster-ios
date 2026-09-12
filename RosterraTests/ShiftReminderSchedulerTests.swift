@@ -149,13 +149,20 @@ final class ShiftReminderSchedulerTests: XCTestCase {
     }
 
     @MainActor
-    func testManagerJobsAllCompletedOpensTasks() {
-        assertManagerEvent("jobs-all-completed", opens: .tasks)
+    func testManagerJobsAllCompletedOpensDashboard() {
+        assertManagerEvent("jobs-all-completed", opens: .dashboard)
     }
 
     @MainActor
-    func testManagerAvailabilityUpdatedOpensAvailability() {
-        assertManagerEvent("availability-updated", opens: .availability)
+    func testManagerAvailabilityUpdatedOpensAccountOnPhone() {
+        // .availability isn't one of the 5 tabs ManagerMainView tags on the
+        // iPhone TabView (only reachable there via Account -> Management),
+        // so selectManager fails closed to .account rather than selecting a
+        // tag the TabView doesn't recognize (a silent no-op otherwise).
+        // Unit tests run under the iPhone simulator idiom, so this is the
+        // behavior exercised here; iPad/Mac's sidebar tags every tab and
+        // would route straight to .availability.
+        assertManagerEvent("availability-updated", opens: .account)
     }
 
     @MainActor

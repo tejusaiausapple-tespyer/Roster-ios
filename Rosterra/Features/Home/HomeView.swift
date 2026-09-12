@@ -55,6 +55,7 @@ struct HomeView: View {
                 } else {
                     companyHeader
                     todaySection
+                    dailyJobsCard
                     hoursSection
                     upcomingSection
                 }
@@ -70,7 +71,7 @@ struct HomeView: View {
                     messagesButton
                 }
             }
-            .refreshable { await repo.refreshFromServer() }
+            .macRefreshable { await repo.refreshFromServer() }
             .sheet(item: $activeSheet) { sheet in
                 switch sheet {
                 case .messages: NotificationsSheet()
@@ -96,8 +97,8 @@ struct HomeView: View {
     }
 
     private var messagesButton: some View {
-        // Badge counts unread messages + pending Daily Jobs for the current shift.
-        let badgeCount = repo.unreadMessageCount + repo.pendingDailyJobCount
+        // Daily Jobs is a Home card (not a tab). This bell is messages-only.
+        let badgeCount = repo.unreadMessageCount
         return Button {
             activeSheet = .messages
         } label: {
@@ -107,16 +108,20 @@ struct HomeView: View {
                 if badgeCount > 0 {
                     // Overlap the bell by ~a third — offset ≈ badge radius/2
                     // keeps it attached to the icon instead of floating.
-                    Text("\(min(badgeCount, 9))")
+                    // Capsule (not a fixed-size Circle) so "9+" isn't
+                    // clipped/indistinguishable from exactly 9 unread.
+                    Text(badgeCount > 9 ? "9+" : "\(badgeCount)")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.white)
-                        .frame(width: 16, height: 16)
-                        .background(Circle().fill(Theme.error))
+                        .frame(minWidth: 16, minHeight: 16)
+                        .padding(.horizontal, badgeCount > 9 ? 3 : 0)
+                        .background(Capsule().fill(Theme.error))
                         .offset(x: 5, y: -5)
                 }
             }
         }
         .accessibilityLabel("Notifications, \(badgeCount) unread")
+        .help("Notifications, \(badgeCount) unread")
     }
 
     // MARK: Greeting header
@@ -160,8 +165,61 @@ struct HomeView: View {
         }
     }
 
+    // MARK: Daily Jobs
+
+    /// Opens the full dedicated Daily Jobs page (no longer buried in the bell
+    /// popup) — only shown when there's actually something assigned today.
+    @ViewBuilder
+    private var dailyJobsCard: some View {
+        let jobs = repo.activeDailyJobsForStaff
+        if !jobs.isEmpty {
+            let done = jobs.filter(\.completed).count
+            NavigationLink {
+                DailyJobsView()
+            } label: {
+                HStack(spacing: 14) {
+                    let tint = repo.pendingDailyJobCount > 0 ? Theme.warning : Theme.accent
+                    Image(systemName: "checklist")
+                        .font(.title3)
+                        .foregroundStyle(tint)
+                        .frame(width: 40, height: 40)
+                        .background(tint.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerMedium))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Daily Jobs")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text("\(done)/\(jobs.count) done today")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+                .padding(14)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous)
+                        .fill(Theme.card)
+                )
+            }
+            .buttonStyle(.plain)
+            .pointerHover()
+        }
+    }
+
     /// Clock in/out applies until hours are submitted: no timesheet yet, or
     /// there's an active/ended session for this shift awaiting submission.
+    ///
+    /// `RosterRepository.reconcileClockSessionFromServerIfNeeded` rebuilds a
+    /// lost local session from verified attendance as soon as both `shifts`
+    /// and `attendanceRecords` have loaded, so `repo.clockSession` is already
+    /// the reconciled truth by the time this runs — this doesn't need its
+    /// own server check.
     private func isClockable(_ shift: Shift) -> Bool {
         if repo.clockSession?.shiftId == shift.id { return true }
         guard repo.clockSession == nil else { return false } // busy on another shift

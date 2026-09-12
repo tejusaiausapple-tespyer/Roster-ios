@@ -33,6 +33,25 @@ final class NotificationService: NSObject {
     /// Cached until a user is signed in (token can arrive before login).
     private var pendingToken: String?
 
+    /// Weak handle for silent-push refresh (owned by SwiftUI `@State`).
+    @MainActor
+    private weak var repository: RosterRepository?
+
+    /// A notification tap that arrived before `AppRouter.shared` was set —
+    /// e.g. `AppDelegate` registers as the `UNUserNotificationCenter`
+    /// delegate synchronously in `didFinishLaunchingWithOptions`, which can
+    /// win the race against `RosterraApp`'s `.onAppear` on a cold launch via
+    /// notification tap. Buffered here and replayed once the router becomes
+    /// available, instead of being silently dropped by `AppRouter.shared?`.
+    @MainActor
+    private var pendingTapUserInfo: [AnyHashable: Any]?
+
+    /// Called once from `AuthViewModel.bind` so background pushes can refresh.
+    @MainActor
+    func bind(repository: RosterRepository) {
+        self.repository = repository
+    }
+
     // MARK: - Authorization & registration
 
     /// Ask for notification permission (first call shows the system prompt)
@@ -162,10 +181,17 @@ final class NotificationService: NSObject {
     /// `syncTokenAfterLogin` writes — uses the last-registered token (cached
     /// in UserDefaults, since this method is only handed a uid) to compute
     /// its doc id.
-    func clearTokenOnLogout(uid: String) {
+    ///
+    /// Must be awaited by the caller BEFORE `AuthService.signOut()` runs —
+    /// the delete rule requires `request.auth.uid == userId` (this uid), so
+    /// once sign-out (or a new login) changes the auth context, a
+    /// still-in-flight or offline-queued delete gets silently rejected and
+    /// the old token doc survives, which is exactly what let a device keep
+    /// receiving the previous account's pushes after switching users.
+    func clearTokenOnLogout(uid: String) async {
         guard AppConfig.pushEnabled,
               let token = UserDefaults.standard.string(forKey: Self.lastTokenDefaultsKey) else { return }
-        Self.tokenDocRef(uid: uid, token: token).delete()
+        try? await Self.tokenDocRef(uid: uid, token: token).delete()
         UserDefaults.standard.removeObject(forKey: Self.lastTokenDefaultsKey)
     }
 
@@ -183,8 +209,17 @@ final class NotificationService: NSObject {
     }
 
     private static func userAgentDescription() -> String {
+        #if targetEnvironment(macCatalyst)
+        // Catalyst runs under the scaled-iPad idiom, so `UIDevice` reports
+        // "iPadOS / iPad" here. With the single-active-device gate that leaves
+        // two indistinguishable iPad rows and no way to tell which one just
+        // took over the account's notifications.
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        return "macOS \(version.majorVersion).\(version.minorVersion) / Mac"
+        #else
         let device = UIDevice.current
         return "\(device.systemName) \(device.systemVersion) / \(device.model)"
+        #endif
     }
 
     // MARK: - Delivery handling (local now; remote automatically once enabled)
@@ -209,16 +244,34 @@ final class NotificationService: NSObject {
             var info = response.notification.request.content.userInfo
             // Local reminder ids encode the slot; surface it for routing.
             info["identifier"] = response.notification.request.identifier
-            AppRouter.shared?.handleNotificationUserInfo(info)
+            if let router = AppRouter.shared {
+                router.handleNotificationUserInfo(info)
+            } else {
+                pendingTapUserInfo = info
+            }
         }
     }
 
-    /// Silent background push (content-available) — refresh data so the app
-    /// is current when next opened. Inert until push is enabled. Main-actor
-    /// so the non-Sendable payload never crosses an isolation boundary.
+    /// Call once `AppRouter.shared` is set (`RosterraApp`'s `.onAppear`) to
+    /// deliver a tap that arrived too early instead of leaving it dropped.
+    @MainActor
+    func replayPendingTapIfNeeded() {
+        guard let info = pendingTapUserInfo, let router = AppRouter.shared else { return }
+        pendingTapUserInfo = nil
+        router.handleNotificationUserInfo(info)
+    }
+
+    /// Silent background push (content-available) — pull fresh Firestore data
+    /// so the next foreground open is current. Listeners alone may not wake
+    /// while suspended.
     @MainActor
     func handleBackgroundPush(_ userInfo: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
-        .newData
+        guard Auth.auth().currentUser != nil else { return .noData }
+        guard let repository else { return .noData }
+        await ServerClock.shared.sync()
+        await PendingEmailChange.reconcileIfNeeded()
+        await repository.refreshFromServer()
+        return .newData
     }
 
     private func isUrgent(_ userInfo: [AnyHashable: Any]) -> Bool {

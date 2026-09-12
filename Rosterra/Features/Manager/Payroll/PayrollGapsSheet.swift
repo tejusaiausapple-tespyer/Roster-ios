@@ -43,6 +43,7 @@ struct PayrollGapsSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                 }
             }
         }
@@ -60,6 +61,7 @@ struct PayrollGapsSheet: View {
                 .padding(.vertical, 16)
         }
         .buttonStyle(.plain)
+        .pointerHover()
         .glassProminentSurface(in: Capsule(style: .continuous), tint: Theme.brand)
         .shadow(color: Theme.brand.opacity(0.35), radius: 14, x: 0, y: 6)
         .padding(.bottom, 20)

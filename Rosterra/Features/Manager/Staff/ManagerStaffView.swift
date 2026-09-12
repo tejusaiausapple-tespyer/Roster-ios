@@ -54,7 +54,7 @@ struct ManagerStaffView: View {
                 let aPending = a.deletion?.status == .requested
                 let bPending = b.deletion?.status == .requested
                 if aPending != bPending { return aPending && !bPending }
-                return a.fullName < b.fullName
+                return a.fullName.localizedCaseInsensitiveCompare(b.fullName) == .orderedAscending
             }
     }
 
@@ -81,10 +81,8 @@ struct ManagerStaffView: View {
         }
         .navigationTitle("Staff")
         .navigationBarTitleDisplayMode(.inline)
+        .screenTitlePill("Staff Directory", icon: "person.2.fill", fraction: 0)
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                ScreenTitlePill(title: "Staff Directory", icon: "person.2.fill")
-            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     showAddStaff = true
@@ -92,11 +90,13 @@ struct ManagerStaffView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
+                .accessibilityLabel("Add staff")
+                .help("Add staff")
             }
         }
         // .always pins the search field: with .automatic it hides until pulled,
         // so the pull-to-refresh gesture dragged it down over the filter bar.
-        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search name or email")
+        .platformSearchable(text: $searchText, prompt: "Search name or email")
         .sheet(item: $selected) { user in
             ManagerStaffDetailSheet(user: user)
         }
@@ -144,6 +144,7 @@ struct ManagerStaffView: View {
             )
         }
         .buttonStyle(.plain)
+        .pointerHover()
     }
 
     // MARK: - Grid
@@ -165,18 +166,21 @@ struct ManagerStaffView: View {
                                 staffCard(user)
                             }
                             .buttonStyle(.plain)
+                            .pointerHover()
                         }
                     }
                     .padding(16)
                 }
             }
-            .scrollFadeContentTracking(in: "manager-staff-grid")
         }
-        // Content fades out beneath the filter bar (top) and summary bar
-        // (bottom) while scrolling — geometry-driven, so it holds on any
-        // device size or orientation.
-        .fadedScrollHints(coordinateSpace: "manager-staff-grid", showsChevrons: false)
-        .refreshable { await repo.refreshFromServer() }
+        .macRefreshable { await repo.refreshFromServer() }
+    }
+
+    /// Role once the manager's set one; falls back to employment type for a
+    /// staff member with no role assigned yet.
+    private func staffCardSubtitle(_ user: AppUser) -> String {
+        if let dept = user.defaultDepartment, !dept.isEmpty { return dept }
+        return user.employmentType?.label ?? "—"
     }
 
     private func staffCard(_ user: AppUser) -> some View {
@@ -194,7 +198,7 @@ struct ManagerStaffView: View {
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
-                    Text(user.employmentType?.label ?? "—")
+                    Text(staffCardSubtitle(user))
                         .font(.caption)
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
@@ -298,6 +302,7 @@ struct ManagerStaffDetailSheet: View {
     @State private var fullName: String
     @State private var phone: String
     @State private var employmentType: EmploymentType
+    @State private var defaultDepartment: String
     @State private var status: UserStatus
     @State private var startDate: Date?
     @State private var dob: Date?
@@ -327,6 +332,7 @@ struct ManagerStaffDetailSheet: View {
         let employeeId: String
         let tfn: String
         let employmentType: EmploymentType
+        let defaultDepartment: String
         let status: UserStatus
         let startDateKey: String?
         let dobKey: String?
@@ -346,6 +352,7 @@ struct ManagerStaffDetailSheet: View {
         _employeeId = State(initialValue: user.employeeId ?? "")
         _tfn = State(initialValue: tfnValue)
         _employmentType = State(initialValue: user.employmentType ?? .casual)
+        _defaultDepartment = State(initialValue: user.defaultDepartment ?? "")
         _status = State(initialValue: user.status)
         _startDate = State(initialValue: user.startDate.flatMap { RosterFormat.parseISODate($0) })
         _dob = State(initialValue: user.dob.flatMap { RosterFormat.parseISODate($0) })
@@ -360,6 +367,7 @@ struct ManagerStaffDetailSheet: View {
             employeeId: user.employeeId ?? "",
             tfn: TFN.normalize(user.tfn ?? ""),
             employmentType: user.employmentType ?? .casual,
+            defaultDepartment: user.defaultDepartment ?? "",
             status: user.status,
             startDateKey: user.startDate,
             dobKey: user.dob,
@@ -381,6 +389,7 @@ struct ManagerStaffDetailSheet: View {
             employeeId: employeeId,
             tfn: TFN.normalize(tfn),
             employmentType: employmentType,
+            defaultDepartment: defaultDepartment,
             status: status,
             startDateKey: dateKey(startDate),
             dobKey: dateKey(dob),
@@ -407,10 +416,11 @@ struct ManagerStaffDetailSheet: View {
                     editableTextRow(label: "Phone", text: $phone, keyboard: .phonePad)
                     editableTextRow(label: "Employee ID", text: $employeeId, capitalization: .characters, autocorrect: false)
                     employmentRow
+                    roleRow
                 } header: {
                     Text("Details")
                 } footer: {
-                    Text("Employee ID (letters and numbers, e.g. EMP001) appears on the staff member's profile and payslips.")
+                    Text("Employee ID (letters and numbers, e.g. EMP001) appears on the staff member's profile and payslips. Role fills in automatically when this staff member is rostered onto a new shift.")
                 }
 
                 Section {
@@ -495,12 +505,14 @@ struct ManagerStaffDetailSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if isSaving {
                         ProgressView()
                     } else {
                         Button(primaryActionTitle) { handlePrimaryAction() }
+                            .keyboardShortcut(.defaultAction)
                             .fontWeight(.semibold)
                     }
                 }
@@ -706,6 +718,40 @@ struct ManagerStaffDetailSheet: View {
         }
     }
 
+    /// Canonical role options plus the staff member's current value when it
+    /// isn't in that list — same "never silently change legacy data" rule as
+    /// `ManagerShiftEditorSheet.roleOptions`, which this mirrors.
+    private var roleOptions: [String] {
+        var options = ManagerShiftEditorSheet.roleOptions
+        if !defaultDepartment.isEmpty, !options.contains(defaultDepartment) {
+            options.insert(defaultDepartment, at: 0)
+        }
+        return options
+    }
+
+    private var roleRow: some View {
+        HStack {
+            Text("Role")
+                .font(.subheadline)
+                .foregroundStyle(Theme.textSecondary)
+            Spacer()
+            if isEditMode {
+                Picker("", selection: $defaultDepartment) {
+                    Text("Not set").tag("")
+                    ForEach(roleOptions, id: \.self) { role in
+                        Text(role).tag(role)
+                    }
+                }
+                .labelsHidden()
+                .tint(Theme.textPrimary)
+            } else {
+                Text(defaultDepartment.isEmpty ? "—" : defaultDepartment)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(valueColor)
+            }
+        }
+    }
+
     private var wageAssignmentSummary: String {
         guard let profile = repo.staffWageProfile(for: user.id) else { return "Not set" }
         var parts: [String] = []
@@ -820,6 +866,7 @@ struct ManagerStaffDetailSheet: View {
         if cleanedEmployeeId != savedBaseline.employeeId { fields["employeeId"] = cleanedEmployeeId }
         if cleanedTfn != savedBaseline.tfn { fields["tfn"] = cleanedTfn }
         if employmentType != savedBaseline.employmentType { fields["employmentType"] = employmentType.rawValue }
+        if defaultDepartment != savedBaseline.defaultDepartment { fields["defaultDepartment"] = defaultDepartment }
         if status != savedBaseline.status, user.status != .locked { fields["status"] = status.rawValue }
 
         let startKey = dateKey(startDate)
@@ -972,6 +1019,7 @@ struct StaffWageAssignmentSheet: View {
     @State private var hasEffectiveDate = false
     @State private var superEnabled = true
     @State private var superRateText = ""
+    @State private var claimsTaxFreeThreshold = true
     @State private var active = true
     @State private var isSaving = false
     @State private var toast: ToastMessage?
@@ -1042,6 +1090,15 @@ struct StaffWageAssignmentSheet: View {
                             Text(award.code.isEmpty ? award.name : "\(award.name) (\(award.code))").tag(award.id)
                         }
                     }
+                    .onChange(of: awardId) { _, _ in
+                        // classificationOptions is award-scoped — a level
+                        // chosen under the previous award almost never
+                        // belongs to the new one, so clear it rather than
+                        // silently persisting a level/award mismatch on save.
+                        if !classificationOptions.contains(where: { $0.level == classificationLevel }) {
+                            classificationLevel = ""
+                        }
+                    }
                     if !classificationOptions.isEmpty {
                         Picker("Classification", selection: $classificationLevel) {
                             Text("None").tag("")
@@ -1110,6 +1167,17 @@ struct StaffWageAssignmentSheet: View {
                 }
 
                 Section {
+                    Toggle("Claims tax-free threshold", isOn: $claimsTaxFreeThreshold)
+                        .tint(Theme.brand)
+                } header: {
+                    Text("Tax (PAYG)")
+                } footer: {
+                    Text(claimsTaxFreeThreshold
+                         ? "This is the staff member's main or only job. New payslips auto-calculate PAYG withholding from the ATO weekly tax table using this declaration."
+                         : "Threshold not claimed (e.g. a second job) — PAYG is withheld from the first dollar, at a higher rate. HELP/STSL debt and foreign-resident rates aren't modelled; adjust the payslip's PAYG amount manually for those.")
+                }
+
+                Section {
                     if supplementalLines.isEmpty {
                         Text("No additional pay items — add overtime or allowances in Wage → Classification Levels if needed.")
                             .font(.subheadline)
@@ -1143,12 +1211,14 @@ struct StaffWageAssignmentSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if isSaving {
                         ProgressView()
                     } else {
                         Button("Save") { save() }
+                            .keyboardShortcut(.defaultAction)
                     }
                 }
             }
@@ -1178,6 +1248,7 @@ struct StaffWageAssignmentSheet: View {
             if let rate = profile.superRate, rate > 0 {
                 superRateText = String(format: "%g", rate)
             }
+            claimsTaxFreeThreshold = profile.claimsTaxFreeThreshold
             active = profile.active
         } else if let userType = user.employmentType {
             employmentType = userType.rawValue
@@ -1202,6 +1273,7 @@ struct StaffWageAssignmentSheet: View {
             effectiveDate: hasEffectiveDate ? RosterCalendar.dayFormatter.string(from: effectiveDate) : nil,
             superEnabled: superEnabled,
             superRate: (Double(superRateText) ?? 0) > 0 ? Double(superRateText) : nil,
+            claimsTaxFreeThreshold: claimsTaxFreeThreshold,
             active: active
         )
         Task {

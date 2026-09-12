@@ -1,4 +1,5 @@
 import SwiftUI
+import os
 
 // Single, full-width, week-based timesheet review. No split screen: timesheets
 // for the selected week flow into an adaptive card grid (1 column on iPhone, more
@@ -18,7 +19,19 @@ struct ManagerTimesheetsView: View {
     @State private var selectionMode = false
     @State private var selectedIds: Set<String> = []
     @State private var isBulkApproving = false
-    @State private var bulkToast: ToastMessage?
+    @State private var toast: ToastMessage?
+
+    // Right-click (context menu) single-row actions — the Mac Catalyst
+    // fallback for rows, since this screen is a LazyVGrid (no swipeActions
+    // to extend the way Payroll/Wage have). Suppressed while selectionMode
+    // is on (see the contextMenu builder) so a context action can never
+    // desync selectedIds mid bulk-select.
+    @State private var pendingRejectTimesheet: Timesheet?
+    @State private var contextRejectReason: String = ""
+    /// Per-row in-flight guard — distinct from isBulkApproving (a single
+    /// screen-wide flag for the whole batch) so one row's context action
+    /// never blocks every other row's menu.
+    @State private var inFlightContextActionIds: Set<String> = []
 
     enum TimesheetFilterStatus: String, CaseIterable, Identifiable {
         case pending, absent, approved, rejected
@@ -145,10 +158,8 @@ struct ManagerTimesheetsView: View {
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle("Timesheets")
             .navigationBarTitleDisplayMode(.inline)
+            .screenTitlePill("Timesheets Review", icon: "clipboard.fill", fraction: 0)
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    ScreenTitlePill(title: "Timesheets Review", icon: "clipboard.fill")
-                }
                 ToolbarItem(placement: .primaryAction) {
                     selectToggleButton
                 }
@@ -157,7 +168,26 @@ struct ManagerTimesheetsView: View {
                 let shift = repo.shifts.first(where: { $0.id == ts.shiftId })
                 ManagerTimesheetDetailSheet(timesheet: ts, shift: shift)
             }
-            .toast($bulkToast)
+            .toast($toast)
+            // Lightweight reject prompt for the row context menu — not the
+            // full ManagerTimesheetDetailSheet's rejectionDialogSheet, which
+            // is private to that view and entangled with its own dismiss/
+            // state. Same non-empty-reason rule that sheet enforces.
+            .alert(
+                "Reject timesheet?",
+                isPresented: Binding(
+                    get: { pendingRejectTimesheet != nil },
+                    set: { if !$0 { pendingRejectTimesheet = nil; contextRejectReason = "" } }
+                ),
+                presenting: pendingRejectTimesheet
+            ) { _ in
+                TextField("Reason", text: $contextRejectReason)
+                Button("Cancel", role: .cancel) {}
+                Button("Reject", role: .destructive) { submitContextReject() }
+                    .disabled(contextRejectReason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } message: { ts in
+                Text("\(repo.user(id: ts.staffId)?.fullName ?? "The staff member") will see this reason.")
+            }
             // Exit selection mode when switching away from pending tab or week.
             .onChange(of: selectedStatusFilter) { _, _ in exitSelectionMode() }
             .onChange(of: weekOffset) { _, _ in exitSelectionMode() }
@@ -184,6 +214,7 @@ struct ManagerTimesheetsView: View {
                     .foregroundStyle(selectionMode ? Theme.textSecondary : Theme.brand)
             }
             .buttonStyle(.plain)
+            .pointerHover()
         }
     }
 
@@ -231,8 +262,10 @@ struct ManagerTimesheetsView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .disabled(weekOffset <= bounds.min)
             .accessibilityLabel("Previous week")
+            .help("Previous week")
 
             Button {
                 weekOffset = 0
@@ -252,6 +285,7 @@ struct ManagerTimesheetsView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .disabled(weekOffset == 0)
             .accessibilityLabel(weekOffset == 0 ? "This week" : "Back to this week")
 
@@ -265,8 +299,10 @@ struct ManagerTimesheetsView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .disabled(weekOffset >= bounds.max)
             .accessibilityLabel("Next week")
+            .help("Next week")
         }
         .padding(.horizontal, 4)
         .glassCapsule()
@@ -325,7 +361,7 @@ struct ManagerTimesheetsView: View {
     private var staffFilterChip: some View {
         Menu {
             Button("All staff") { selectedStaffFilterId = nil }
-            ForEach(repo.allUsers.filter { $0.role == .staff }) { staff in
+            ForEach(repo.allUsers.filter { $0.role == .staff }.sorted { $0.fullName.localizedCaseInsensitiveCompare($1.fullName) == .orderedAscending }) { staff in
                 Button(staff.fullName) { selectedStaffFilterId = staff.id }
             }
         } label: {
@@ -385,18 +421,60 @@ struct ManagerTimesheetsView: View {
                                 timesheetCard(ts, isSelected: isSelected)
                             }
                             .buttonStyle(.plain)
+                            .pointerHover()
                             .accessibilityHint(selectionMode && selectable ? (isSelected ? "Deselect" : "Select for bulk approval") : "Open timesheet detail")
+                            // Right-click equivalent of tap/approve/reject —
+                            // this screen is a LazyVGrid, not a List, so
+                            // there's no .swipeActions to extend the way
+                            // Payroll/Wage have; .contextMenu is the only
+                            // affordance available here. Suppressed during
+                            // selectionMode: selectedIds is plain state with
+                            // no gesture of its own guarding it, so a context
+                            // action changing this row's status mid
+                            // bulk-select would desync the bulk selection
+                            // (its id would linger in selectedIds after the
+                            // row it refers to no longer qualifies).
+                            .contextMenu {
+                                if !selectionMode {
+                                    Button {
+                                        selectedTimesheet = ts
+                                    } label: {
+                                        Label("View Details", systemImage: "doc.text.magnifyingglass")
+                                    }
+
+                                    if !inFlightContextActionIds.contains(ts.id) {
+                                        if ts.status == .pending {
+                                            Button {
+                                                contextApprove(ts)
+                                            } label: {
+                                                Label("Approve", systemImage: "checkmark.circle")
+                                            }
+                                        } else if ts.status == .absentReported {
+                                            Button {
+                                                contextApprove(ts)
+                                            } label: {
+                                                Label("Confirm Absence", systemImage: "checkmark.circle")
+                                            }
+                                        }
+
+                                        if ts.status == .pending || ts.status == .absentReported {
+                                            Button(role: .destructive) {
+                                                contextRejectReason = ""
+                                                pendingRejectTimesheet = ts
+                                            } label: {
+                                                Label("Reject", systemImage: "xmark.circle")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     .padding(16)
                 }
             }
-            .scrollFadeContentTracking(in: "manager-timesheets-grid")
         }
-        // Content fades under the week/filter bar (top) and summary/bulk bar
-        // (bottom) while scrolling — same treatment as Staff and Availability.
-        .fadedScrollHints(coordinateSpace: "manager-timesheets-grid", showsChevrons: false)
-        .refreshable { await repo.refreshFromServer() }
+        .macRefreshable { await repo.refreshFromServer() }
     }
 
     // Content layer — solid card (no glass). Highlights when selected in bulk mode.
@@ -589,6 +667,7 @@ struct ManagerTimesheetsView: View {
                     .fixedSize()
             }
             .buttonStyle(.plain)
+            .pointerHover()
 
             Spacer(minLength: 4)
 
@@ -629,6 +708,7 @@ struct ManagerTimesheetsView: View {
                 )
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .disabled(selectedIds.isEmpty || isBulkApproving)
             .accessibilityLabel(selectedIds.isEmpty ? "Approve all pending timesheets" : "Approve \(selectedIds.count) timesheets")
         }
@@ -665,36 +745,132 @@ struct ManagerTimesheetsView: View {
 
     // MARK: - Bulk approve action
 
+    /// Concurrent, not sequential — the old for-loop only started the next
+    /// approval after the previous one fully round-tripped, so backgrounding
+    /// the app mid-batch permanently stranded every not-yet-started id.
     private func bulkApprove() {
         guard !selectedIds.isEmpty, !isBulkApproving else { return }
         let ids = Array(selectedIds)
         isBulkApproving = true
 
+        // The expiration handler isn't guaranteed to run on the main thread,
+        // while the Task's defer below runs on whatever executor the Task
+        // resumes on — both check-and-set this identifier, so a plain `var`
+        // was a real (if narrow) data race. OSAllocatedUnfairLock makes the
+        // read-check-write atomic across both.
+        let bgTaskBox = OSAllocatedUnfairLock<UIBackgroundTaskIdentifier>(initialState: .invalid)
+        let started = UIApplication.shared.beginBackgroundTask(withName: "BulkApproveTimesheets") {
+            let identifier = bgTaskBox.withLock { id -> UIBackgroundTaskIdentifier in
+                let current = id
+                id = .invalid
+                return current
+            }
+            if identifier != .invalid {
+                UIApplication.shared.endBackgroundTask(identifier)
+            }
+        }
+        bgTaskBox.withLock { $0 = started }
+
         Task {
-            var failedCount = 0
-            for id in ids {
-                do {
-                    try await repo.approveTimesheet(id: id, managerNotes: nil)
-                } catch {
-                    failedCount += 1
+            defer {
+                let identifier = bgTaskBox.withLock { id -> UIBackgroundTaskIdentifier in
+                    let current = id
+                    id = .invalid
+                    return current
                 }
+                if identifier != .invalid {
+                    UIApplication.shared.endBackgroundTask(identifier)
+                }
+            }
+
+            let failedIds = await withTaskGroup(of: String?.self, returning: [String].self) { group in
+                for id in ids {
+                    group.addTask {
+                        do {
+                            try await repo.approveTimesheet(id: id, managerNotes: nil)
+                            return nil
+                        } catch {
+                            return id
+                        }
+                    }
+                }
+                var failures: [String] = []
+                for await failedId in group {
+                    if let failedId { failures.append(failedId) }
+                }
+                return failures
             }
 
             isBulkApproving = false
 
-            if failedCount == 0 {
+            if failedIds.isEmpty {
                 Haptics.success()
                 let approvedCount = ids.count
                 withAnimation(.easeInOut(duration: 0.18)) { exitSelectionMode() }
-                bulkToast = ToastMessage(kind: .success, text: "\(approvedCount) timesheet\(approvedCount == 1 ? "" : "s") approved")
-            } else if failedCount == ids.count {
+                toast = ToastMessage(kind: .success, text: "\(approvedCount) timesheet\(approvedCount == 1 ? "" : "s") approved")
+            } else if failedIds.count == ids.count {
                 Haptics.error()
-                bulkToast = ToastMessage(kind: .error, text: "Approval failed. Please try again.")
+                toast = ToastMessage(kind: .error, text: "Approval failed. Please try again.")
             } else {
                 Haptics.error()
-                let succeeded = ids.count - failedCount
-                withAnimation(.easeInOut(duration: 0.18)) { exitSelectionMode() }
-                bulkToast = ToastMessage(kind: .error, text: "\(succeeded) approved, \(failedCount) failed.")
+                let succeeded = ids.count - failedIds.count
+                // Leave only the failed rows selected instead of clearing
+                // selection entirely — the same Approve button the manager
+                // just tapped is now a one-tap retry of exactly the subset
+                // that didn't go through, rather than making them reselect
+                // by hand or re-approve everything (including rows that
+                // already succeeded) via "Approve All".
+                withAnimation(.easeInOut(duration: 0.18)) { selectedIds = Set(failedIds) }
+                toast = ToastMessage(kind: .error, text: "\(succeeded) approved, \(failedIds.count) failed — still selected, tap Approve to retry.")
+            }
+        }
+    }
+
+    // MARK: - Context-menu single-row actions (Mac right-click)
+
+    /// Approve (or confirm an absence report) directly from the row's
+    /// context menu — mirrors ManagerTimesheetDetailSheet's own
+    /// `isAbsenceReported ? confirmAbsence() : approve()` branch exactly.
+    private func contextApprove(_ ts: Timesheet) {
+        guard !inFlightContextActionIds.contains(ts.id) else { return }
+        inFlightContextActionIds.insert(ts.id)
+        let isAbsenceReport = ts.status == .absentReported
+        Task {
+            defer { inFlightContextActionIds.remove(ts.id) }
+            do {
+                if isAbsenceReport {
+                    try await repo.confirmAbsence(id: ts.id, managerNotes: nil)
+                } else {
+                    try await repo.approveTimesheet(id: ts.id, managerNotes: nil)
+                }
+                toast = ToastMessage(kind: .success, text: isAbsenceReport ? "Absence confirmed." : "Timesheet approved.")
+                Haptics.success()
+            } catch {
+                toast = ToastMessage(kind: .error, text: "Couldn't update. \(error.localizedDescription)")
+                Haptics.error()
+            }
+        }
+    }
+
+    /// Submits the reason typed into the reject alert (see `pendingRejectTimesheet`).
+    private func submitContextReject() {
+        guard let ts = pendingRejectTimesheet else { return }
+        let reason = contextRejectReason.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reason.isEmpty, !inFlightContextActionIds.contains(ts.id) else { return }
+        pendingRejectTimesheet = nil
+        inFlightContextActionIds.insert(ts.id)
+        Task {
+            defer {
+                inFlightContextActionIds.remove(ts.id)
+                contextRejectReason = ""
+            }
+            do {
+                try await repo.rejectTimesheet(id: ts.id, reason: reason, managerNotes: nil)
+                toast = ToastMessage(kind: .success, text: "Timesheet rejected.")
+                Haptics.success()
+            } catch {
+                toast = ToastMessage(kind: .error, text: "Couldn't reject. \(error.localizedDescription)")
+                Haptics.error()
             }
         }
     }

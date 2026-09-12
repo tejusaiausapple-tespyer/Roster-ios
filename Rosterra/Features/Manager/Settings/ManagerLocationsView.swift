@@ -26,10 +26,16 @@ struct ManagerLocationsView: View {
 
     var body: some View {
         List {
-            TitlePillCollapseReporter()
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
+            // Zero-footprint scroll probe: own section with no spacing —
+            // a loose row would form an implicit section (44pt min row
+            // height + section spacing) and push the first card ~100pt down.
+            Section {
+                TitlePillCollapseReporter()
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
+            .listSectionSpacing(0)
             if repo.locations.isEmpty {
                 Section {
                     Text("No locations yet. Add the suburbs your staff work in — they'll appear as a dropdown when creating shifts.")
@@ -69,10 +75,8 @@ struct ManagerLocationsView: View {
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("Locations")
         .navigationBarTitleDisplayMode(.inline)
+        .screenTitlePill("Locations", icon: "mappin.and.ellipse", fraction: 0)
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                ScreenTitlePill(title: "Locations", icon: "mappin.and.ellipse")
-            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     editor = .add
@@ -80,6 +84,7 @@ struct ManagerLocationsView: View {
                     Image(systemName: "plus")
                 }
                 .accessibilityLabel("Add location")
+                .help("Add location")
             }
         }
         .sheet(item: $editor) { mode in
@@ -92,6 +97,24 @@ struct ManagerLocationsView: View {
     }
 
     private func save(mode: EditorMode, newLocation: RosterLocation) async {
+        // A suburb+state collision with a different existing location would
+        // give two array entries the same `id` (RosterLocation.id is
+        // derived from suburb+state, not a separate stable field) — SwiftUI
+        // ForEach identity and any id-keyed lookup elsewhere would then be
+        // ambiguous between them.
+        let collidesWithAnother: Bool
+        switch mode {
+        case .add:
+            collidesWithAnother = repo.locations.contains { $0.id == newLocation.id }
+        case .edit(let old):
+            collidesWithAnother = repo.locations.contains { $0.id == newLocation.id && $0.id != old.id }
+        }
+        guard !collidesWithAnother else {
+            toast = ToastMessage(kind: .error, text: "\(newLocation.displayName) already exists — use a different suburb or state.")
+            Haptics.error()
+            return
+        }
+
         isWorking = true
         defer { isWorking = false }
         do {
@@ -99,7 +122,14 @@ struct ManagerLocationsView: View {
             case .add:
                 try await repo.addLocation(newLocation)
             case .edit(let old):
-                var updated = repo.locations.filter { $0 != old }
+                // Match by id (suburb+state), not full-struct equality — a
+                // concurrent edit to any other field (geofence radius,
+                // enforcement, coordinates) between this sheet opening and
+                // Save would otherwise make `old` no longer equal anything
+                // in the live array, so the filter would remove nothing and
+                // this save would append a duplicate entry instead of
+                // replacing the original.
+                var updated = repo.locations.filter { $0.id != old.id }
                 updated.append(newLocation)
                 try await repo.setLocations(updated)
             }
@@ -281,6 +311,7 @@ private struct LocationEditorSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -293,12 +324,12 @@ private struct LocationEditorSheet: View {
                                               geofenceEnforced: latitude != nil && geofenceEnforced))
                         dismiss()
                     }
+                        .keyboardShortcut(.defaultAction)
                     .disabled(suburb.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
         }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
+        .phoneSheetDetents([.medium, .large])
     }
 
     /// Resolve the typed address to coordinates with MKLocalSearch.

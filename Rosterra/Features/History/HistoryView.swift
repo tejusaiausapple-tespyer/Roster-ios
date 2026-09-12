@@ -114,13 +114,11 @@ struct HistoryView: View {
         .navigationTitle("History")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $search, prompt: "Search by location or date")
+        .screenTitlePill("History", icon: "clock.arrow.circlepath", fraction: 0)
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                ScreenTitlePill(title: "History", icon: "clock.arrow.circlepath")
-            }
             ToolbarItem(placement: .topBarTrailing) { filterMenu }
         }
-        .refreshable { await repo.refreshFromServer() }
+        .macRefreshable { await repo.refreshFromServer() }
     }
 
     // MARK: Filter menu
@@ -138,6 +136,7 @@ struct HistoryView: View {
                 .font(.body.weight(.semibold))
         }
         .accessibilityLabel("Filter")
+        .help("Filter")
     }
 
     private var isFiltering: Bool { period != .month || statusFilter != .all }
@@ -160,9 +159,13 @@ struct HistoryView: View {
     private func monthHeader(_ label: String) -> some View {
         HStack {
             Text(label)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Theme.textSecondary)
+                .font(.headline.weight(.bold))
+                .foregroundStyle(Theme.textPrimary)
                 .textCase(nil)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Capsule(style: .continuous).fill(Theme.card))
+                .shadow(color: Color.black.opacity(0.06), radius: 4, y: 2)
             Spacer()
         }
         .padding(.horizontal, Theme.screenPadding)
@@ -175,7 +178,7 @@ struct HistoryView: View {
 
     private func entryRow(_ entry: Entry) -> some View {
         let ts = entry.timesheet
-        return TimesheetRow(entry: entry, approverName: approverName(ts))
+        return TimesheetRow(entry: entry)
             .plainRow(insets: EdgeInsets(top: 6, leading: Theme.screenPadding, bottom: 6, trailing: Theme.screenPadding))
             .swipeActions(edge: .trailing) {
                 if ts.status == .rejected, let shift = entry.shift {
@@ -187,14 +190,19 @@ struct HistoryView: View {
                     }.tint(Theme.brand)
                 }
             }
+            .contextMenu {
+                if ts.status == .rejected, let shift = entry.shift {
+                    Button {
+                        router.pendingSubmitShiftId = shift.id
+                        router.select(.roster)
+                    } label: {
+                        Label("Resubmit hours", systemImage: "arrow.uturn.up")
+                    }
+                }
+            }
     }
 
     // MARK: Helpers
-
-    private func approverName(_ ts: Timesheet) -> String? {
-        guard let approvedBy = ts.approvedBy else { return nil }
-        return repo.currentUser?.id == approvedBy ? nil : nil // approver profiles aren't loaded for staff
-    }
 
     private func inPeriod(_ dateKey: String) -> Bool {
         guard !dateKey.isEmpty, let date = RosterFormat.parseISODate(dateKey) else { return period == .all }
@@ -218,6 +226,10 @@ struct HistoryView: View {
     }
 
     private func monthLabel(_ yyyymm: String) -> String {
+        // Orphaned entries (no matching shift and no submittedAt) group
+        // under the empty-string key — give that section a real header
+        // instead of a blank one.
+        guard !yyyymm.isEmpty else { return "Unknown date" }
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM"
@@ -232,7 +244,6 @@ struct HistoryView: View {
 /// Detailed timesheet row for the history list.
 struct TimesheetRow: View {
     let entry: HistoryView.Entry
-    var approverName: String?
 
     private var ts: Timesheet { entry.timesheet }
 

@@ -193,6 +193,7 @@ struct ManagerTaskEditorSheet: View {
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
+                .pointerHover()
             }
         }
     }

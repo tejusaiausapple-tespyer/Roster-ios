@@ -73,7 +73,7 @@ struct PayslipsView: View {
                 }
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
-                .refreshable { await load(forceRefresh: true) }
+                .macRefreshable { await load(forceRefresh: true) }
             }
             .zIndex(0)
 
@@ -149,7 +149,9 @@ struct PayslipsView: View {
             .shadow(color: Color.black.opacity(0.05), radius: 3, x: 0, y: 2)
         }
         .buttonStyle(.plain)
+        .pointerHover()
         .accessibilityLabel("Change month, currently \(monthLabel)")
+        .help("Change month, currently \(monthLabel)")
         .accessibilityHint(isExpanded ? "Collapses the month picker" : "Expands the month picker")
     }
 
@@ -291,6 +293,7 @@ private struct FloatingMonthYearPicker: View {
                     .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.brand))
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .padding(.top, 4)
             .accessibilityLabel("Select \(monthSymbols[tempMonth - 1]) \(tempYear)")
             .accessibilityHint("Selects this month and year and closes the picker")

@@ -1,5 +1,6 @@
 import Foundation
 import FirebaseAuth
+import OSLog
 
 enum WorkerAPIError: LocalizedError {
     case notAuthenticated
@@ -20,6 +21,11 @@ enum WorkerAPIError: LocalizedError {
 /// Firebase ID token, exactly like the web client.
 struct WorkerAPIClient {
     static let shared = WorkerAPIClient()
+
+    private static let log = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.surainvestments.roster",
+        category: "WorkerAPIClient"
+    )
 
     private func idToken(forceRefresh: Bool = false) async throws -> String {
         guard let user = Auth.auth().currentUser else { throw WorkerAPIError.notAuthenticated }
@@ -150,7 +156,16 @@ struct WorkerAPIClient {
         if let shiftIds { body["shiftIds"] = shiftIds }
         if let timesheetId { body["timesheetId"] = timesheetId }
         if let recipientIds { body["recipientIds"] = recipientIds }
-        _ = try? await post(path: "api/send-notification", body: body)
+        do {
+            _ = try await post(path: "api/send-notification", body: body)
+        } catch {
+            // The underlying write (approval, publish, roster change, …)
+            // already succeeded independently — this is fire-and-forget by
+            // design — but a silently-swallowed failure here means the
+            // manager sees "Approved"/"Published" while the staff member
+            // never actually got notified, with no record of why.
+            Self.log.error("sendNotification(\(event, privacy: .public)) failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// POST /api/notifications/activate-device — best-effort, fire-and-forget,

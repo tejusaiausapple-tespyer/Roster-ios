@@ -6,7 +6,6 @@ import PhotosUI
 struct ManagerAccountView: View {
     @Environment(RosterRepository.self) private var repo
     @Environment(AuthViewModel.self) private var auth
-    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.openURL) private var openURL
     @AppStorage("preferredColorScheme") private var preferredColorSchemeSetting: String = "system"
 
@@ -15,12 +14,14 @@ struct ManagerAccountView: View {
     @State private var showSignOutConfirm = false
     @State private var deviceAuthOn = false
     @State private var deviceAuthWorking = false
+    @State private var passkeyOn = false
+    @State private var passkeyWorking = false
     @State private var pushEnabled = false
     @State private var toastMessage: ToastMessage?
     @State private var profileImage: UIImage? = nil
 
     private enum AccountSheet: Identifiable {
-        case changePassword, changeEmail, verifyPassword, imagePicker
+        case changePassword, changeEmail, verifyPassword, verifyPasskey, imagePicker
         var id: String { String(describing: self) }
     }
 
@@ -30,14 +31,20 @@ struct ManagerAccountView: View {
     var body: some View {
         NavigationStack {
             List {
-                TitlePillCollapseReporter()
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
+                // Zero-footprint scroll probe: own section with no spacing —
+                // a loose row would form an implicit section (44pt min row
+                // height + section spacing) and push the first card ~100pt down.
+                Section {
+                    TitlePillCollapseReporter()
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+                .listSectionSpacing(0)
                 photoSection
                 detailsSection
                 businessSection
-                if UIDevice.current.userInterfaceIdiom == .phone {
+                if PlatformUI.isPhone {
                     managementSection
                 }
                 notificationsSection
@@ -51,11 +58,7 @@ struct ManagerAccountView: View {
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle("Account")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    ScreenTitlePill(title: "Account", icon: "person.crop.circle.fill")
-                }
-            }
+            .screenTitlePill("Account", icon: "person.crop.circle.fill", fraction: 0)
             .sheet(item: $activeSheet) { sheet in
                 switch sheet {
                 case .changePassword:
@@ -81,6 +84,18 @@ struct ManagerAccountView: View {
                                     toastMessage = ToastMessage(kind: .error, text: "Could not enable \(device.biometryLabel)")
                                 }
                             }
+                        }
+                    }
+                case .verifyPasskey:
+                    if let email = user?.email {
+                        VerifyPasswordSheet(
+                            email: email,
+                            heading: "Enable Passkey Sign-In",
+                            detail: "Confirm your password, then create a passkey for this device.",
+                            navigationTitle: "Enable Passkey",
+                            symbolName: "person.badge.key.fill"
+                        ) { verifiedPassword in
+                            Task { await enablePasskey(email: email, password: verifiedPassword) }
                         }
                     }
                 case .imagePicker:
@@ -137,6 +152,7 @@ struct ManagerAccountView: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .pointerHover()
                 .contextMenu {
                     if profileImage != nil {
                         Button(role: .destructive) {
@@ -198,6 +214,7 @@ struct ManagerAccountView: View {
                             .foregroundStyle(Theme.brand)
                     }
                     .buttonStyle(.plain)
+                    .pointerHover()
                 }
                 
                 if let member = user?.memberSince {
@@ -296,21 +313,24 @@ struct ManagerAccountView: View {
     }
 
     private var appearanceSection: some View {
-        Section("Appearance") {
+        Section {
             Toggle(isOn: Binding(
-                get: {
-                    if preferredColorSchemeSetting == "system" {
-                        return colorScheme == .dark
-                    }
-                    return preferredColorSchemeSetting == "dark"
-                },
-                set: { newValue in
-                    preferredColorSchemeSetting = newValue ? "dark" : "light"
-                }
+                get: { preferredColorSchemeSetting == "dark" },
+                set: { preferredColorSchemeSetting = $0 ? "dark" : "system" }
             )) {
                 Label("Dark Mode", systemImage: "moon.fill")
             }
             .tint(Theme.brand)
+        } header: {
+            Text("Appearance")
+        } footer: {
+            Text("Off follows your device Light/Dark setting.")
+        }
+        .onAppear {
+            // Old toggle wrote "light" on off; that value is no longer offered.
+            if preferredColorSchemeSetting == "light" {
+                preferredColorSchemeSetting = "system"
+            }
         }
     }
 
@@ -323,6 +343,13 @@ struct ManagerAccountView: View {
                 .tint(Theme.brand)
                 .disabled(deviceAuthWorking)
             }
+            if PasskeyManager.shared.isSupported {
+                Toggle(isOn: Binding(get: { passkeyOn }, set: { togglePasskey($0) })) {
+                    Label("Sign in with Passkey", systemImage: "person.badge.key.fill")
+                }
+                .tint(Theme.brand)
+                .disabled(passkeyWorking)
+            }
             Button {
                 activeSheet = .changePassword
             } label: {
@@ -331,10 +358,19 @@ struct ManagerAccountView: View {
         } header: {
             Text("Security")
         } footer: {
-            if device.isSupported {
-                Text("Require \(device.biometryLabel) each time you open the app.")
-            }
+            Text(securityFooter)
         }
+    }
+
+    private var securityFooter: String {
+        var parts: [String] = []
+        if device.isSupported {
+            parts.append("Require \(device.biometryLabel) each time you open the app.")
+        }
+        if PasskeyManager.shared.isSupported {
+            parts.append("A passkey lets you sign in on this device without typing your password.")
+        }
+        return parts.joined(separator: " ")
     }
 
     private var infoSection: some View {
@@ -390,11 +426,13 @@ struct ManagerAccountView: View {
 
     private func refreshStatuses() async {
         try? await Auth.auth().currentUser?.reload()
+        await PendingEmailChange.reconcileIfNeeded()
         isEmailVerified = Auth.auth().currentUser?.isEmailVerified == true
         
         if let uid = auth.uid {
             deviceAuthOn = device.isEnabled(uid: uid)
         }
+        passkeyOn = PasskeyStore.isRegistered
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         pushEnabled = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
     }
@@ -431,6 +469,45 @@ struct ManagerAccountView: View {
                 auth.refreshDeviceAuthEnabled()
                 Haptics.light()
             }
+        }
+    }
+
+    private func togglePasskey(_ enable: Bool) {
+        guard !passkeyWorking else { return }
+        guard let email = user?.email else { return }
+        if enable {
+            if let password = auth.temporaryPassword {
+                Task { await enablePasskey(email: email, password: password) }
+            } else {
+                passkeyOn = false
+                activeSheet = .verifyPasskey
+            }
+        } else {
+            PasskeyStore.clear()
+            passkeyOn = false
+            Haptics.light()
+        }
+    }
+
+    private func enablePasskey(email: String, password: String) async {
+        guard let uid = auth.uid else { return }
+        passkeyWorking = true
+        defer { passkeyWorking = false }
+        do {
+            try await PasskeyManager.shared.registerAndStore(email: email, userID: uid, password: password)
+            auth.temporaryPassword = nil
+            passkeyOn = true
+            Haptics.success()
+            toastMessage = ToastMessage(kind: .success, text: "Passkey enabled")
+        } catch let error as PasskeyManager.PasskeyError {
+            passkeyOn = false
+            if case .cancelled = error { return }
+            Haptics.error()
+            toastMessage = ToastMessage(kind: .error, text: error.localizedDescription)
+        } catch {
+            passkeyOn = false
+            Haptics.error()
+            toastMessage = ToastMessage(kind: .error, text: "Could not enable passkey")
         }
     }
 

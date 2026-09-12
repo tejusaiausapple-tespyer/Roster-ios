@@ -4,6 +4,7 @@ Reference for the App Store Connect (ASC) listing, App Review notes, and the
 App Privacy questionnaire. Keep in sync with the app when data use changes.
 
 App: Rosterra · Bundle ID: `com.surainvestments.roster` · Team: `GS2KGPX9P8`
+Apple ID: `6791077796` · Product page: https://apps.apple.com/app/id6791077796
 
 ---
 

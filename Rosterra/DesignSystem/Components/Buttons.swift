@@ -11,7 +11,7 @@ struct PrimaryButtonStyle: ButtonStyle {
             .font(.body.weight(.semibold))
             .foregroundStyle(.white.opacity(isEnabled ? 1 : 0.75))
             .frame(maxWidth: fullWidth ? .infinity : nil)
-            .padding(.vertical, 14)
+            .padding(.vertical, PlatformUI.isMac ? 10 : 14)
             .padding(.horizontal, 20)
             .background(
                 RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous)
@@ -19,6 +19,7 @@ struct PrimaryButtonStyle: ButtonStyle {
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: configuration.isPressed)
+            .pointerHover()
     }
 }
 
@@ -32,7 +33,7 @@ struct SecondaryButtonStyle: ButtonStyle {
             .font(.body.weight(.semibold))
             .foregroundStyle(tint)
             .frame(maxWidth: fullWidth ? .infinity : nil)
-            .padding(.vertical, 14)
+            .padding(.vertical, PlatformUI.isMac ? 10 : 14)
             .padding(.horizontal, 20)
             .background(
                 RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous)
@@ -40,6 +41,7 @@ struct SecondaryButtonStyle: ButtonStyle {
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: configuration.isPressed)
+            .pointerHover()
     }
 }
 
@@ -72,6 +74,7 @@ struct ToolbarSaveButton: View {
         .disabled(!isEnabled || isWorking)
         .animation(.easeInOut(duration: 0.18), value: isEnabled)
         .accessibilityLabel(isEnabled ? "\(title) changes" : "\(title), no changes to save")
+        .pointerHover()
     }
 }
 
@@ -85,11 +88,15 @@ struct InlinePillButtonStyle: ButtonStyle {
             .font(.caption.weight(.semibold))
             .foregroundStyle(filled ? Color.white : tint)
             .padding(.horizontal, 14)
-            .frame(minHeight: 44) // Apple's 44x44pt minimum tappable area — these are frequently-tapped primary actions (Submit hours, Didn't attend).
+            // Apple's 44x44pt minimum tappable area on touch — these are frequently-tapped
+            // primary actions (Submit hours, Didn't attend). Mac is pointer-driven, not
+            // finger-driven, so the touch minimum doesn't apply there.
+            .frame(minHeight: PlatformUI.isMac ? 32 : 44)
             .background(
                 Capsule().fill(filled ? AnyShapeStyle(tint) : AnyShapeStyle(tint.opacity(0.12)))
             )
             .scaleEffect(configuration.isPressed ? 0.95 : 1)
             .animation(.spring(response: 0.28, dampingFraction: 0.7), value: configuration.isPressed)
+            .pointerHover()
     }
 }

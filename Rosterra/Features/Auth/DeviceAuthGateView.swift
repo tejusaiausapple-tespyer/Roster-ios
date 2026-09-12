@@ -4,6 +4,7 @@ import SwiftUI
 struct DeviceAuthGateView: View {
     @Environment(AuthViewModel.self) private var auth
     @State private var isAuthenticating = false
+    @State private var errorMessage: String?
 
     private let device = DeviceAuthService.shared
 
@@ -17,9 +18,9 @@ struct DeviceAuthGateView: View {
                     Text("Locked")
                         .font(.title2.weight(.bold))
                         .foregroundStyle(Theme.textPrimary)
-                    Text("Unlock with \(device.biometryLabel) to continue.")
+                    Text(errorMessage ?? "Unlock with \(device.biometryLabel) to continue.")
                         .font(.subheadline)
-                        .foregroundStyle(Theme.textSecondary)
+                        .foregroundStyle(errorMessage == nil ? Theme.textSecondary : Theme.warning)
                         .multilineTextAlignment(.center)
                 }
                 Spacer()
@@ -33,6 +34,7 @@ struct DeviceAuthGateView: View {
 
                 Button("Sign out") { auth.logout() }
                     .buttonStyle(.plain)
+                    .pointerHover()
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -47,7 +49,7 @@ struct DeviceAuthGateView: View {
     private func unlock() async {
         guard !isAuthenticating else { return }
         isAuthenticating = true
-        await auth.verifyDeviceAuth()
+        errorMessage = await auth.verifyDeviceAuth()
         isAuthenticating = false
     }
 }

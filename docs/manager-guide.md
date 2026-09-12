@@ -29,23 +29,21 @@ The manager interface is **adaptive**:
 
 ```swift
 enum ManagerTab: String, CaseIterable, Identifiable {
-    case dashboard    // "Dashboard" - square.grid.2x2
-    case roster       // "Roster" - calendar
-    case timesheets   // "Timesheets" - clipboard
-    case staff        // "Staff" - person.2 ✅ implemented
-    case tasks        // "Tasks" - list.bullet.clipboard (placeholder)
-    case availability // "Availability" - calendar.badge.clock ✅ implemented
-    case reports      // "Reports" - chart.bar ✅ implemented
-    case tenure       // "Tenure & Hours" - rosette (placeholder)
-    case wage         // "Wage" - dollarsign.circle (placeholder)
-    case account      // "Account" - gear
+    case dashboard    // "Dashboard"
+    case roster       // "Roster"
+    case timesheets   // "Timesheets"
+    case staff        // "Staff"
+    case tasks        // "Tasks"
+    case availability // "Availability"
+    case reports      // "Reports"
+    case tenure       // "Tenure & Hours"
+    case wage         // "Wage"
+    case payroll      // "Payroll"
+    case account      // "Account"
 }
 ```
 
-**Currently implemented tabs:** Dashboard, Roster, Timesheets, Staff, Availability, Reports, Account
-**Placeholder tabs:** Tasks, Tenure & Hours, Wage
-
-> **iPhone** shows 5 tabs (Dashboard, Roster, Tasks, Timesheets, Account); **Staff, Availability, and Reports are reached from the Account tab's "Management" section** (above Notifications), pushed with `embedInNavigationStack: false` to avoid a nested navigation bar. **iPad/Mac** shows all tabs in the sidebar.
+All of these tabs are implemented. iPhone shows five bottom tabs (Dashboard, Roster, Tasks, Timesheets, Account); Staff, Availability, Reports, Tenure, Wage, and Payroll are reached from Account → Management. iPad/Mac shows every tab in the sidebar.
 
 ---
 
@@ -226,7 +224,6 @@ The `RosterRepository` detects manager role and removes `staffId` filters from F
 | `Features/Manager/Timesheets/ManagerTimesheetDetailSheet.swift` | Timesheet detail + approve/reject |
 | `Features/Manager/Shell/ManagerMainView.swift` | Adaptive tab/sidebar navigation |
 | `Features/Manager/Shell/ManagerNavigation.swift` | `ManagerTab` enum with all tab definitions |
-| `Features/Manager/Shell/ManagerPlaceholderView.swift` | Placeholder for unimplemented tabs |
 | `Features/Manager/Shell/ManagerAccountView.swift` | Manager account/settings view |
 
 ---
@@ -248,17 +245,16 @@ Weekly analytics computed from loaded shifts + timesheets. Week selector. Metric
 
 ---
 
-## Planned Manager Features (Not Yet Implemented)
+## Planned Manager Features
 
-These tabs still show `ManagerPlaceholderView`:
+Remaining manager work is polish, not placeholder tabs:
 
-| Tab | Intended Purpose |
-|-----|-----------------|
-| Tasks | Task management — create/edit/delete tasks, view completion reports |
-| Tenure & Hours | Staff tenure tracking, total hours per employee |
-| Wage | Wage calculation based on hours × rate, exportable payroll data |
+| Area | Notes |
+|------|-------|
+| Manager Messages compose | Staff inbox exists; compose is still PWA-only |
+| Reports cost assumptions | Confirm labour-cost/super defaults stay in sync with payroll |
 
-Also not yet wired: the Dashboard "Quick Actions" buttons (New Shift / New Task / Staff Directory are visual only). Staff record editing IS implemented — see §5 above.
+Dashboard Quick Actions (New Shift / New Task / Staff Directory) are wired on the current dashboard.
 
 ---
 

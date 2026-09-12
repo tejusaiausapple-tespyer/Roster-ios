@@ -2,6 +2,54 @@ import XCTest
 import FirebaseFirestore
 @testable import Rosterra
 
+#if targetEnvironment(macCatalyst)
+final class MacRosterCopyPlanTests: XCTestCase {
+    func testPublishedCardsStayLockedAcrossWeeks() {
+        for date in ["2026-08-31", "2026-09-07", "2026-09-14"] {
+            XCTAssertFalse(MacRosterCopyPlan.canDrag(TestSupport.shift(date: date)))
+            XCTAssertTrue(MacRosterCopyPlan.canDrag(TestSupport.shift(date: date, status: "draft")))
+        }
+        for status in ["completed", "cancelled"] {
+            XCTAssertFalse(MacRosterCopyPlan.canDrag(TestSupport.shift(date: "2026-09-14", status: status)))
+        }
+    }
+
+    func testCopySelectedStaffCreatesDraftsAndKeepsSourceUnchanged() {
+        let first = TestSupport.shift(id: "a", staffId: "one", date: "2026-09-07")
+        let second = TestSupport.shift(id: "b", staffId: "two", date: "2026-09-07")
+        let plan = MacRosterCopyPlan(source: [first, second], existing: [], staffIDs: ["two"])
+        XCTAssertEqual(plan.drafts.count, 1)
+        XCTAssertEqual(plan.drafts.first?.staffId, "two")
+        XCTAssertEqual(plan.drafts.first?.date, "2026-09-14")
+        XCTAssertEqual(plan.drafts.first?.status, .draft)
+        XCTAssertEqual(second.status, .published)
+        XCTAssertEqual(second.date, "2026-09-07")
+        XCTAssertTrue(MacRosterCopyPlan(source: [first], existing: [], staffIDs: []).drafts.isEmpty)
+    }
+
+    func testCopySkipsDuplicatesConflictsAndCancelledSources() {
+        let source = TestSupport.shift(id: "a", date: "2026-09-07")
+        let cancelled = TestSupport.shift(id: "b", date: "2026-09-08", status: "cancelled")
+        let conflict = TestSupport.shift(id: "existing", date: "2026-09-14", start: "16:00", end: "19:00")
+        let plan = MacRosterCopyPlan(source: [source, cancelled], existing: [conflict], staffIDs: nil)
+        XCTAssertTrue(plan.drafts.isEmpty)
+        XCTAssertEqual(plan.skipped, 1)
+        let firstCopy = MacRosterCopyPlan(source: [source], existing: [], staffIDs: nil)
+        let retry = MacRosterCopyPlan(source: [source], existing: firstCopy.drafts, staffIDs: nil)
+        XCTAssertTrue(retry.drafts.isEmpty)
+        XCTAssertEqual(retry.skipped, 1)
+    }
+
+    func testCopyDetectsOvernightOverlapButAllowsAdjacentShifts() {
+        let source = TestSupport.shift(date: "2026-09-07", start: "00:30", end: "06:00")
+        let overnight = TestSupport.shift(id: "overnight", date: "2026-09-13", start: "22:00", end: "01:00")
+        XCTAssertTrue(MacRosterCopyPlan(source: [source], existing: [overnight], staffIDs: nil).drafts.isEmpty)
+        let adjacent = TestSupport.shift(id: "adjacent", date: "2026-09-14", start: "06:00", end: "09:00")
+        XCTAssertEqual(MacRosterCopyPlan(source: [source], existing: [adjacent], staffIDs: nil).drafts.count, 1)
+    }
+}
+#endif
+
 /// FS coercion helpers and model `init?(id:data:)` parsing — the tolerant
 /// boundary between loosely-typed Firestore documents and the typed domain.
 final class ModelParsingTests: XCTestCase {

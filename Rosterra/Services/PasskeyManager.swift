@@ -17,14 +17,9 @@ import LocalAuthentication
 /// Domains entitlement, and `apple-app-site-association` hosting the real
 /// team ID (was a `TEAMID` placeholder — fixed 2026-07-15).
 ///
-/// NOTE: `register(email:userID:)` below is not currently called from any
-/// screen — there is no UI flow that creates a passkey, so
-/// `PasskeyStore.isRegistered` is always false and the "Sign in with
-/// Passkey" quick-login row on `LoginView` never surfaces today. Wiring a
-/// registration entry point (e.g. in Account settings) is a follow-up, not
-/// a launch blocker: with no trigger, this code path cannot fail for users.
-/// `signIn(credentialID:)` is fully wired and would work once a credential
-/// exists.
+/// Registration is offered from Account → Security (staff and manager).
+/// Until a passkey is stored, `LoginView` hides Sign in with Passkey and
+/// Face ID quick-login remains the fallback.
 @MainActor
 final class PasskeyManager: NSObject {
     static let shared = PasskeyManager()
@@ -61,6 +56,13 @@ final class PasskeyManager: NSObject {
     }
 
     // MARK: - Registration
+
+    /// Create a platform passkey and persist it with the Firebase password
+    /// in `PasskeyStore`. Triggers the system passkey UI.
+    func registerAndStore(email: String, userID: String, password: String) async throws {
+        let credentialID = try await register(email: email, userID: userID)
+        PasskeyStore.save(email: email, credentialID: credentialID, password: password)
+    }
 
     /// Register a new platform passkey for the user. Returns the credential ID
     /// (base64url) to persist locally. Triggers the system passkey creation UI.
@@ -187,6 +189,13 @@ enum PasskeyStore {
 
     static var email: String? { UserDefaults.standard.string(forKey: emailKey) }
     static var credentialID: String? { UserDefaults.standard.string(forKey: credentialKey) }
+
+    /// Update only the stored email (passkey id + password unchanged). Used
+    /// after Auth email verification completes for a pending change.
+    static func updateSavedEmail(_ email: String) {
+        guard isRegistered else { return }
+        UserDefaults.standard.set(email, forKey: emailKey)
+    }
 
     static func save(email: String, credentialID: String, password: String) {
         guard storeProtectedPassword(password) else { return }

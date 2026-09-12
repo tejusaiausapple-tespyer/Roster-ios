@@ -51,7 +51,11 @@ struct ToolbarLeadingTitlePill: View {
     let title: String
 
     private var labelWidth: CGFloat {
+        #if targetEnvironment(macCatalyst)
+        240
+        #else
         min(240, UIScreen.main.bounds.width - 96)
+        #endif
     }
 
     var body: some View {

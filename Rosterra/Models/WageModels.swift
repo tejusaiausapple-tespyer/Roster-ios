@@ -334,6 +334,11 @@ struct StaffWageProfile: Identifiable, Equatable {
     /// Optional SG percentage override (e.g. 12.0). nil ⇒ user doc / statutory
     /// default. Ignored when `superEnabled` is false.
     var superRate: Double?
+    /// The staff member's TFN declaration: claiming the tax-free threshold
+    /// (this is their main/only job) vs not (e.g. a second job). Copied onto
+    /// each generated payslip and drives `PAYGCalculator`'s scale — defaults
+    /// true, the common case and the ATO's own default assumption.
+    var claimsTaxFreeThreshold: Bool
     /// Inactive profiles are skipped by automatic draft payslip generation.
     var active: Bool
 
@@ -345,7 +350,7 @@ struct StaffWageProfile: Identifiable, Equatable {
          earningsLineIds: [String] = [], hourlyRateOverride: Double? = nil,
          employmentType: String? = nil, ageGroup: String? = nil,
          effectiveDate: String? = nil, superEnabled: Bool = true,
-         superRate: Double? = nil, active: Bool = true) {
+         superRate: Double? = nil, claimsTaxFreeThreshold: Bool = true, active: Bool = true) {
         self.id = Self.docId(for: staffId)
         self.staffId = staffId
         self.awardId = awardId
@@ -357,6 +362,7 @@ struct StaffWageProfile: Identifiable, Equatable {
         self.effectiveDate = effectiveDate
         self.superEnabled = superEnabled
         self.superRate = superRate
+        self.claimsTaxFreeThreshold = claimsTaxFreeThreshold
         self.active = active
     }
 
@@ -373,6 +379,7 @@ struct StaffWageProfile: Identifiable, Equatable {
         self.effectiveDate = FS.string(data, "effectiveDate")
         self.superEnabled = FS.bool(data, "superEnabled", default: true)
         self.superRate = (data["superRate"] as? NSNumber)?.doubleValue
+        self.claimsTaxFreeThreshold = FS.bool(data, "claimsTaxFreeThreshold", default: true)
         self.active = FS.bool(data, "active", default: true)
     }
 
@@ -382,6 +389,7 @@ struct StaffWageProfile: Identifiable, Equatable {
             "staffId": staffId,
             "earningsLineIds": earningsLineIds,
             "superEnabled": superEnabled,
+            "claimsTaxFreeThreshold": claimsTaxFreeThreshold,
             "active": active,
         ]
         dict["awardId"] = awardId ?? NSNull()
@@ -398,7 +406,7 @@ struct StaffWageProfile: Identifiable, Equatable {
     func resolvedSuperRate(userDefault: Double?) -> Double {
         guard superEnabled else { return 0 }
         if let superRate, superRate > 0 { return superRate }
-        return userDefault ?? 12.0
+        return userDefault ?? BusinessRules.defaultSuperRatePercent
     }
 
     /// The ordinary hourly rate this profile resolves to. Precedence:

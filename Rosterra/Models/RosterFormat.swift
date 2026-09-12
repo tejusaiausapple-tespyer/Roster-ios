@@ -12,7 +12,8 @@ enum RosterFormat {
         return f
     }
 
-    /// Parse a `yyyy-MM-dd` key into a Date (noon in business TZ to avoid DST edges).
+    /// Parse a `yyyy-MM-dd` key into a Date — midnight in the business
+    /// timezone (via `RosterCalendar.dateFromKey`), not noon.
     static func parseISODate(_ key: String) -> Date? {
         RosterCalendar.dateFromKey(key)
     }

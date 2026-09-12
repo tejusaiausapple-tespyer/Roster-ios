@@ -1,13 +1,20 @@
 # agents.md — AI Agent Context for Rosterra
 
+> **Mac Catalyst:** the Mac build does **not** use `Rosterra/Features`. It has
+> its own UI layer under `Rosterra/Mac` (design system, shell, screens) that
+> shares `Models/`, `Services/`, `AppRouter`, `AuthViewModel` and `AppRoute`.
+> Read [`mac-app.md`](./mac-app.md) before changing Mac UI, and remember that
+> edits under `Rosterra/Features` do not reach the Mac app.
+
+
 > **PURPOSE**: This file provides ALL context an AI agent needs to understand, modify, debug, or extend the Rosterra iOS project. AI agents MUST read this file first and update it when making structural changes.
 
 ---
 
 ## Last Updated
 
-2026-07-07 by AI agent (accuracy pass: Rosterra rename, manager Tasks + Wage now built,
-added shift_attendance / daily-jobs / wages collections, manager tabs, single-tenant note).
+2026-08-16 by AI agent (Mac/iPad sidebar redesigned as a solid source-list;
+was glass cards). Prior: 2026-08-14 Mac Catalyst + UI.
 
 ---
 
@@ -53,6 +60,7 @@ RosterraApp (entry point)
 └── RootView (auth state router)
     ├── LoginView (unauthenticated)
     ├── MainTabView (staff role)
+    │     iPhone: bottom TabView. iPad/Mac: NavigationSplitView sidebar.
     │   ├── HomeView
     │   ├── RosterView (→ pushes HistoryView via "View Shift History").
     │   │     GOTCHA: the `.task(id: router.pendingSubmitShiftId/…AbsentShiftId)`
@@ -89,7 +97,7 @@ Rosterra/
 ├── Features/               # All UI views, organized by domain
 │   ├── Auth/               # Login, password change, profile completion
 │   ├── Home/               # Staff home screen + notifications
-│   ├── Shell/              # MainTabView (staff tab bar)
+│   ├── Shell/              # MainTabView (staff tab bar on iPhone, sidebar on iPad/Mac)
 │   ├── Roster/             # Staff roster view
 │   ├── Availability/       # Staff availability management
 │   ├── History/            # Timesheet history
@@ -111,6 +119,7 @@ Rosterra/
 │       └── Shell/          # Manager tab bar + navigation
 ├── DesignSystem/           # Theme + reusable UI components
 │   ├── Theme.swift
+│   ├── PlatformUI.swift    # width-driven layout, Mac scroll/hover/sheet helpers
 │   └── Components/
 └── Resources/              # Assets, Info.plist, entitlements, GoogleService-Info.plist
 ```
@@ -136,7 +145,6 @@ Rosterra/
 | `ProfileCompletionView.swift` | Enforced profile completion (DOB, address, phone) |
 | `DeviceAuthGateView.swift` | Biometric/passcode lock screen |
 | `SetupRequiredView.swift` | Shown when `GoogleService-Info.plist` is missing from the bundle (developer setup screen) |
-| `ManagerBlockedView.swift` | **Unused/legacy** — managers now get the native `ManagerMainView`; locked accounts are signed out at login instead |
 
 ### Models (all in `Models/`)
 | File | Key Types |
@@ -262,16 +270,24 @@ Rosterra/
 
 ## Design System
 
+### Mac redesign — 9 September 2026
+
+Mac-only implementation lives under `Rosterra/Mac`; leave iPhone/shared feature styling unchanged during this phase. `MacScreen` exposes a persistent page title, `MacSidebar` bounds company-name width to 220–260pt, and `MacShellView` presents the sidebar as an overlay below 1100pt (the current Mac window minimum is 900pt). Dashboard metrics adapt to available width; today's roster and pending approvals precede charts.
+
+The Mac roster keeps controls and a compact totals footer outside its scrolling schedule, uses native segmented Week/Day/Staff selection, and preserves readable card widths with horizontal scrolling. Only drafts can drag, regardless of week. Move/copy handlers re-read the current repository shift before committing and prevent simultaneous local submissions. Published-card locking and availability-week locking are independent.
+
+`MacRosterCopyPlan` in the existing Mac roster source drives the copy-week preview and write candidate list. It supports all/selected staff, creates drafts, excludes cancelled sources, and skips duplicates/overlaps (including overnight overlaps). The dialog fetches a preview, and the commit fetches fresh source/destination snapshots; individual failures are counted for retry. These checks are client-side, not a new server transaction or a guarantee against concurrent writes from another manager. Four Catalyst-only regression tests live in `ModelParsingTests.swift`. See `docs/mac-ipad-pwa-parity-review.md` for the broader parity requirements and remaining work.
+
 ### Theme (`DesignSystem/Theme.swift`)
 - Colors defined with light/dark variants using `Color(UIColor { traitCollection in ... })`
 - Brand: indigo `#4F46E5` / `#6366F1`
 - Accent: green `#10B981` / `#34D399`
-- Surfaces: background, card, separator
+- Surfaces: background, card, separator, **sidebar** (opaque column + selection/hover/icon-well tokens)
 - Text: primary, secondary, tertiary
 - Status styles: pending (amber), approved (green), rejected (red), draft (gray), absent (purple)
 - Corner radii: small (8), medium (12), large (16)
 - Layout constants: `maxContentWidth` (1400), `minColumnWidth` (168)
-- **Liquid Glass helpers (2026 UI)**: `glassSurface(in:tint:interactive:)`, `glassCapsule(tint:interactive:)`, `glassProminentSurface(in:tint:)`. Reserved for the navigation layer (bars, control clusters, floating buttons) — never content. Gated by `#if compiler(>=6.2)` + `if #available(iOS 26.0, *)`, with an `.ultraThinMaterial` fallback for iOS 17–25. The app deploys to iOS 17 but adopts real Liquid Glass automatically on iOS/iPadOS/macOS 26+.
+- **Liquid Glass helpers (2026 UI)**: `glassSurface(in:tint:interactive:)`, `glassCapsule(tint:interactive:)`, `glassProminentSurface(in:tint:)`. Reserved for the navigation layer (bars, control clusters, floating buttons) — never content, and **not** the iPad/Mac sidebar (that column is a solid source-list). Gated by `#if compiler(>=6.2)` + `if #available(iOS 26.0, *)`, with an `.ultraThinMaterial` fallback for iOS 17–25. The app deploys to iOS 17 but adopts real Liquid Glass automatically on iOS/iPadOS/macOS 26+.
 
 ### Reusable Components (`DesignSystem/Components/`)
 | Component | Purpose |
@@ -287,7 +303,7 @@ Rosterra/
 | `EmptyStateView.swift` | Empty state with icon + message + action |
 | `SectionHeader.swift` | Section title with optional trailing view |
 | `CameraPicker.swift` | Camera/photo library picker for task photos |
-| `ScreenTitlePill.swift` | Navigation bar pill-shaped title |
+| `GlassSidebar.swift` | Mac/iPad source-list chrome: `SidebarCanvas`, `SidebarBrandHeader`, `SidebarSectionLabel`, `SidebarItemRow`, `SidebarProfileFooter` (solid filled selection, not glass) |
 
 ---
 
@@ -324,18 +340,15 @@ Defined in `project.yml` under `packages:` using the Firebase GitHub URL.
 - ✅ Manager Tasks management (create/edit/assign tasks, live completion review, request-redo flow, photo lifecycle)
 - ✅ Manager Wage module (Xero-AU-style awards + classifications, earnings lines, per-staff wage/super profiles; manager-only `wages` collection)
 - ✅ Payroll module (2026-07-10): weekly draft payslips auto-generated (client-side, idempotent, first manager session on/after Monday) from approved timesheets + wage assignments; manager-only review→edit→approve→submit workflow (staff see payslips ONLY after Submit); live A4 AU-style PDF (`PayslipPDFService`, same renderer for preview + export); corrected-copy flow for submitted payslips; audit trail on-doc + `auditLogs`; staff Account → Payslips page. Firestore `payslips` rules deployed 2026-07-10 — ⏳ device verification pending
-- ✅ Daily Jobs (manager per-shift job assignments from the roster; library add/delete; staff Complete/Undo via the Home bell panel)
+- ✅ Daily Jobs (manager per-shift job assignments from the roster; library add/delete; staff Complete/Undo from the Home Daily Jobs card)
 - ✅ Verified shift attendance (server-timestamped clock-in/out + GPS/geofence capture; manager Verified Attendance card)
 - ✅ Device auth gate (biometric lock)
+- ✅ Passkey sign-in (Account → Security registers a device passkey; LoginView asserts it)
 - ✅ Forced password change flow
 - ✅ Profile completion flow
 
 ### Not Yet Implemented / Disabled
-- ❌ Push **delivery** (FCM token registration/sync is live, but end-to-end delivery waits on
-  a paid Apple Developer account / APNs — see `docs/WHEN_DEVELOPER_ACCOUNT_READY.md`)
-- ✅ Manager **Tenure & Hours** (`ManagerTenureView` + `TenureMetrics`) — service tenure from first approved shift, approved hours, KPIs, detail sheet (exports deferred)
-- ✅ **ATO-safe account deletion** — request/approve/cancel + 30-day Auth purge; retains identity/TFN/timesheets/payslips (`docs/APP_STORE_SUBMISSION.md`)
-- ❌ Passkey-based auth (code exists but not wired into main flow)
+- None currently. Passkey registration shipped 2026-08-14.
 
 > Previously listed here but now BUILT (2026-07-06/07): **Manager Tasks management UI**
 > (`Features/Manager/Tasks/` — list/editor/review + redo flow) and the **Manager Wage module**
@@ -371,8 +384,10 @@ Defined in `project.yml` under `packages:` using the Firebase GitHub URL.
 5. Update this `agents.md` file
 
 **2026 UI conventions for new manager tabs (match `ManagerRosterView`):**
-- Drive layout from **measured container width** (via `GeometryReader`), not size class alone, so Split View / Slide Over / resized Mac windows behave. Reuse a compact layout below ~720pt.
-- Center wide content at `Theme.maxContentWidth`; avoid horizontal scrolling for primary content.
+- Drive layout from **measured container width** (via `GeometryReader` + `PlatformUI.isCompactLayout`), not size class or idiom alone, so Split View / Slide Over / resized Mac windows behave. Reuse a compact layout below ~720pt (`PlatformUI.compactWidth`).
+- Staff and manager shells: **bottom tabs on iPhone**, **sidebar on iPad/Mac** (`PlatformUI.usesSidebarChrome`). Don't put a phone tab bar on Mac. The sidebar is a **solid source-list** (`SidebarItemRow` in `GlassSidebar.swift`) with grouped sections and a pinned profile footer — not Liquid Glass cards.
+- Center wide content at `Theme.maxContentWidth` with `.contentLane()`; avoid horizontal scrolling for primary content.
+- Mac Catalyst: keep scroll indicators (`.platformScrollIndicators()`), use `.phoneSheetDetents` so medium sheets don't become tiny windows, and add `.pointerHover()` on clickable cards. Window opens at 1100×740, min 560×480, and is freely resizable (`windowResizability(.contentMinSize)` + `sizeRestrictions.maximumSize` in `AppDelegate` — Catalyst otherwise locks min==max).
 - Apply **Liquid Glass** only to the navigation layer (bars, control clusters, floating buttons) using the `Theme` glass helpers (`glassCapsule`, `glassProminentSurface`, `glassSurface`); keep lists/cards solid.
 - **Footer pills / summary bars: always use dark text** (`Theme.textPrimary`), never `textSecondary`/`textTertiary`. Glass/translucent footers wash out light text, so keep footer chip labels dark for legibility (see the Roster and Timesheets bottom summary bars). Prefer a **fixed footer** (in the layout `VStack`) over a translucent `.safeAreaInset` bar when content would otherwise scroll under and show through.
 - **One sheet per view.** Do NOT attach multiple `.sheet` / `.sheet(item:)` modifiers to the same view — SwiftUI presents them unreliably (slow, or sometimes never until an app restart). Use a single `.sheet(item:)` driven by one `Identifiable` enum with a case per destination (see `ManagerRosterView.ActiveSheet` for create vs edit).
@@ -432,7 +447,7 @@ When working on this project:
 6. **Keep timezone-aware** — always use `RosterCalendar` for date operations
 7. **Update this file** when adding new features, models, or services
 8. **Match existing naming** — `{Feature}View.swift`, `{Feature}Sheet.swift`
-9. **iPad support** — views should work on both iPhone and iPad (use `UIDevice.current.userInterfaceIdiom` checks where layout differs)
+9. **iPad / Mac support** — drive layout from measured width via `PlatformUI` (compact below 720pt). Use sidebar chrome when `PlatformUI.usesSidebarChrome`. Don't branch Dashboard / Payroll / Wage on idiom alone.
 10. **Accessibility** — use semantic labels, dynamic type support via the Theme text styles
 
 ---

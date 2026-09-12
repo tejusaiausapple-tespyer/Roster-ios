@@ -69,11 +69,11 @@ struct ReportAbsenceSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                 }
             }
         }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
+        .phoneSheetDetents([.medium, .large])
     }
 
     private func submit() async {

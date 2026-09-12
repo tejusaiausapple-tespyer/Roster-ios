@@ -229,7 +229,7 @@ App Launch
             └── All clear → ManagerMainView (manager) / MainTabView (staff)
 
 Mid-session: if the account becomes locked/inactive, RootView force-signs-out
-with a message shown on the login screen. (`ManagerBlockedView` is legacy/unused.)
+with a message shown on the login screen.
 ```
 
 ---

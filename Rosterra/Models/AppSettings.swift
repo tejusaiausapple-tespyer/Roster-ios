@@ -2,9 +2,7 @@ import Foundation
 
 /// Mirrors the `settings/app` document. `companyName` is shared with the PWA;
 /// the business-detail fields are manager-editable (Account → Company details)
-/// and surface on the dashboards today. NOTE (future): a staff-facing Payslip
-/// feature is planned that will render these business details (name, address,
-/// ABN/ACN, contact) on generated payslips — keep new fields on this document.
+/// and surface on dashboards and generated payslips (PayslipPDFService).
 struct AppSettings: Equatable {
     var companyName: String
     /// Composed display address ("Street, Suburb STATE") — derived from the

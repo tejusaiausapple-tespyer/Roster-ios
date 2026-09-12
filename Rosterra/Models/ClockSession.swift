@@ -76,17 +76,23 @@ struct ClockSession: Codable, Equatable {
 
     // MARK: Mutations
 
-    mutating func startBreak(at now: Date = Date()) {
+    // `at:` has no default here (unlike the read-only accessors above) —
+    // callers must pass ServerClock.shared.now explicitly, not the device
+    // clock, matching the unlock gate and the anti-tampering rationale
+    // documented above. (ServerClock is @MainActor-isolated, so it can't be
+    // a default-parameter expression on a non-isolated struct method; the
+    // three real call sites are all in RosterRepository, itself @MainActor.)
+    mutating func startBreak(at now: Date) {
         guard isActive, !isOnBreak else { return }
         breaks.append(BreakInterval(start: now, end: nil))
     }
 
-    mutating func endBreak(at now: Date = Date()) {
+    mutating func endBreak(at now: Date) {
         guard isOnBreak, let last = breaks.indices.last else { return }
         breaks[last].end = now
     }
 
-    mutating func clockOut(at now: Date = Date()) {
+    mutating func clockOut(at now: Date) {
         endBreak(at: now)
         clockOutAt = now
     }

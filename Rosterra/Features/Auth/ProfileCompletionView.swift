@@ -92,6 +92,7 @@ struct ProfileCompletionView: View {
                                                     .padding(.vertical, 8)
                                             }
                                             .buttonStyle(.plain)
+                                            .pointerHover()
                                             Divider().overlay(Theme.separator)
                                         }
                                     }
@@ -120,6 +121,7 @@ struct ProfileCompletionView: View {
 
                     Button("Sign out") { auth.logout() }
                         .buttonStyle(.plain)
+                        .pointerHover()
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Theme.textSecondary)
                         .frame(maxWidth: .infinity)

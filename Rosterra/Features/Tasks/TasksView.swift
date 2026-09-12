@@ -1,6 +1,7 @@
 import SwiftUI
 import FirebaseFirestore
 import FirebaseAuth
+import UniformTypeIdentifiers
 
 struct TasksView: View {
     @Environment(RosterRepository.self) private var repository
@@ -174,6 +175,7 @@ struct TasksView: View {
                                         }
                                     }
                                     .buttonStyle(.plain)
+                                    .pointerHover()
                                 }
                             }
                             .padding(.horizontal, Theme.screenPadding)
@@ -185,11 +187,7 @@ struct TasksView: View {
             }
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    ScreenTitlePill(title: "Tasks", icon: "list.bullet.clipboard")
-                }
-            }
+            .screenTitlePill("Tasks", icon: "list.bullet.clipboard", fraction: 0)
             .sheet(item: $selectedTask) { task in
                 TaskCompletionDetailSheet(task: task, dateKey: selectedDayKey)
             }
@@ -247,6 +245,7 @@ struct TaskCompletionDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     
     @State private var showingCamera = false
+    @State private var showingPhotoImporter = false
     @State private var capturedImages: [UIImage] = []
     @State private var cameraImage: UIImage? = nil
     @State private var noteText = ""
@@ -460,12 +459,16 @@ struct TaskCompletionDetailSheet: View {
 
                                     if capturedImages.count < RosterRepository.maxPhotosPerCompletion {
                                         Button {
+                                            #if targetEnvironment(macCatalyst)
+                                            showingPhotoImporter = true
+                                            #else
                                             showingCamera = true
+                                            #endif
                                         } label: {
                                             HStack {
-                                                Image(systemName: "camera.fill")
+                                                Image(systemName: Self.photoButtonIcon)
                                                 Text(capturedImages.isEmpty
-                                                     ? "Open Camera"
+                                                     ? Self.photoButtonTitle
                                                      : "Add Another Photo (\(capturedImages.count)/\(RosterRepository.maxPhotosPerCompletion))")
                                             }
                                             .font(.subheadline.weight(.semibold))
@@ -534,6 +537,18 @@ struct TaskCompletionDetailSheet: View {
             .sheet(isPresented: $showingCamera) {
                 CameraPicker(image: $cameraImage)
             }
+            // Mac Catalyst has no UIImagePickerController camera source, so
+            // `CameraPicker` would silently fall back to the photo library and
+            // a photo-required task could not be completed at all. Import an
+            // image file instead — Continuity Camera also lands straight in
+            // the open panel from a nearby iPhone.
+            .fileImporter(
+                isPresented: $showingPhotoImporter,
+                allowedContentTypes: [.image],
+                allowsMultipleSelection: false
+            ) { result in
+                importPhoto(result)
+            }
             .onChange(of: cameraImage) {
                 if let cameraImage {
                     capturedImages.append(cameraImage)
@@ -543,6 +558,34 @@ struct TaskCompletionDetailSheet: View {
             .sheet(item: $fullscreenImageURL) { url in
                 FullscreenImageView(url: url)
             }
+        }
+    }
+
+    private static var photoButtonIcon: String {
+        PlatformUI.isMac ? "photo.on.rectangle" : "camera.fill"
+    }
+
+    private static var photoButtonTitle: String {
+        PlatformUI.isMac ? "Choose Photo" : "Open Camera"
+    }
+
+    /// Reads a picked image file. The URL is security-scoped, so it has to be
+    /// opened before reading and released afterwards or the read fails under
+    /// the App Sandbox.
+    private func importPhoto(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            guard let data = try? Data(contentsOf: url), let image = UIImage(data: data) else {
+                errorMessage = "That file could not be read as an image. Try a JPEG or PNG."
+                return
+            }
+            errorMessage = nil
+            capturedImages.append(image)
+        case .failure(let error):
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -629,16 +672,6 @@ struct TaskPhotoView: View {
         .padding(.vertical, 8)
     }
 
-    private var submittedPlaceholder: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(Theme.accent)
-            Text("Photo submitted")
-                .font(.footnote)
-                .foregroundStyle(Theme.textSecondary)
-        }
-        .padding(.vertical, 8)
-    }
 }
 
 struct FullscreenImageView: View, Identifiable {

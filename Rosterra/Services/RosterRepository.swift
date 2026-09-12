@@ -17,7 +17,10 @@ final class RosterRepository {
     /// Index maintained on assignment so `shift(id:)` is O(1) instead of an
     /// O(n) first-match scan per call (list rows call it repeatedly).
     var shifts: [Shift] = [] {
-        didSet { shiftsById = Dictionary(shifts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }) }
+        didSet {
+            shiftsById = Dictionary(shifts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            reconcileClockSessionFromServerIfNeeded()
+        }
     }
     private(set) var shiftsById: [String: Shift] = [:]
     /// Cache maintained on assignment so manager list views can resolve a
@@ -34,6 +37,8 @@ final class RosterRepository {
     /// (manager-only listener) + shift-scoped assignments (both roles).
     var dailyJobTemplates: [DailyJobTemplate] = []
     var dailyJobAssignments: [DailyJobAssignment] = []
+    /// Per-staff "repeat these jobs daily" preferences, keyed by staffId.
+    var dailyJobRepeatRules: [String: DailyJobRepeatRule] = [:]
     /// Same O(1) treatment for staff-by-id, the most common manager lookup.
     var allUsers: [AppUser] = [] {
         didSet { usersById = Dictionary(allUsers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }) }
@@ -68,11 +73,25 @@ final class RosterRepository {
     /// see ClockSession for why this can't be written to Firestore live).
     var clockSession: ClockSession?
 
+    /// True from the moment a Start Shift tap begins (before the GPS fix
+    /// resolves) until it commits or fails. `clockSession` only becomes
+    /// non-nil once that round trip finishes, and `ClockInCard.capture`
+    /// awaits `LocationService.currentLocation()` first — without this flag,
+    /// two different today's-shift cards each disable only their own local
+    /// `isWorking` state, so both Start buttons stay tappable during that
+    /// gap and a rapid double-tap (e.g. a split shift) can start two shifts
+    /// concurrently. Every ClockInCard consults this in addition to its own
+    /// state so the whole Today section locks together.
+    var isStartingClockSession = false
+
     /// Verified shift attendance records (`shift_attendance` collection):
     /// server-authoritative clock-in/out timestamps + GPS fixes. Staff stream
     /// their own; managers stream all records in the shift window.
     var attendanceRecords: [ShiftAttendance] = [] {
-        didSet { attendanceByShiftId = Dictionary(attendanceRecords.map { ($0.shiftId, $0) }, uniquingKeysWith: { first, _ in first }) }
+        didSet {
+            attendanceByShiftId = Dictionary(attendanceRecords.map { ($0.shiftId, $0) }, uniquingKeysWith: { first, _ in first })
+            reconcileClockSessionFromServerIfNeeded()
+        }
     }
     /// O(1) attendance-by-shift lookup (doc id == shiftId, so unique).
     private(set) var attendanceByShiftId: [String: ShiftAttendance] = [:]
@@ -123,21 +142,19 @@ final class RosterRepository {
                     self.currentUser = user
                     // Dynamically start shifts/timesheets queries based on roles
                     self.startRoleSpecificListeners(uid: uid, role: user.role)
+                } else {
+                    // No profile doc (deleted, or a signed-in Auth account
+                    // whose Firestore doc never got created) or a decode
+                    // failure. "shifts"/"timesheets" are only ever marked
+                    // arrived from inside startRoleSpecificListeners, which
+                    // never runs on this path — without this, isLoading
+                    // would stay true forever with no explanation.
+                    self.loadError = "We couldn't load your profile. Please sign out and back in, or contact your manager."
+                    self.markArrived("shifts")
+                    self.markArrived("timesheets")
                 }
                 self.markArrived("users")
             }
-        )
-
-        // tasks (active)
-        listeners.append(
-            db.collection("tasks")
-                .whereField("active", isEqualTo: true)
-                .addSnapshotListener { [weak self] snap, error in
-                    guard let self else { return }
-                    if let error { self.handleError(error, label: "tasks"); return }
-                    self.tasks = (snap?.documents ?? []).compactMap { try? $0.data(as: RosterTask.self) }
-                    self.markArrived("tasks")
-                }
         )
 
         // task completions (in window)
@@ -195,6 +212,27 @@ final class RosterRepository {
         
         roleListenersInitialized = true
         currentRole = role
+
+        // Managers need inactive definitions too, otherwise pausing a task
+        // removes the only UI capable of resuming it. Staff continue to receive
+        // active tasks only.
+        let taskQuery: Query
+        if role == .manager {
+            taskQuery = db.collection("tasks")
+        } else {
+            taskQuery = db.collection("tasks")
+                .whereField("active", isEqualTo: true)
+        }
+        roleListeners.append(
+            taskQuery.addSnapshotListener { [weak self] snap, error in
+                guard let self else { return }
+                if let error { self.handleError(error, label: "tasks"); return }
+                self.tasks = (snap?.documents ?? []).compactMap {
+                    try? $0.data(as: RosterTask.self)
+                }
+                self.markArrived("tasks")
+            }
+        )
 
         // Photo retention sweeps (photo lifecycle — see docs/tasks-feature.md):
         // staff lose local task photos once their week ends; managers keep a
@@ -278,7 +316,7 @@ final class RosterRepository {
                     .whereField("active", isEqualTo: true)
                     .addSnapshotListener { [weak self] snap, error in
                         guard let self else { return }
-                        if let error { self.handleError(error, label: "daily_job_templates"); return }
+                        if let error { self.handleSecondaryError(error, label: "daily_job_templates"); return }
                         self.dailyJobTemplates = (snap?.documents ?? [])
                             .compactMap { try? $0.data(as: DailyJobTemplate.self) }
                             .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
@@ -290,9 +328,22 @@ final class RosterRepository {
                     .whereField("date", isLessThanOrEqualTo: range.end)
                     .addSnapshotListener { [weak self] snap, error in
                         guard let self else { return }
-                        if let error { self.handleError(error, label: "daily_job_assignments"); return }
+                        if let error { self.handleSecondaryError(error, label: "daily_job_assignments"); return }
                         self.dailyJobAssignments = (snap?.documents ?? [])
                             .compactMap { try? $0.data(as: DailyJobAssignment.self) }
+                    }
+            )
+            roleListeners.append(
+                db.collection("daily_job_repeats")
+                    .addSnapshotListener { [weak self] snap, error in
+                        guard let self else { return }
+                        if let error { self.handleSecondaryError(error, label: "daily_job_repeats"); return }
+                        let rules = (snap?.documents ?? [])
+                            .compactMap { try? $0.data(as: DailyJobRepeatRule.self) }
+                        self.dailyJobRepeatRules = Dictionary(
+                            rules.compactMap { rule in rule.id.map { ($0, rule) } },
+                            uniquingKeysWith: { first, _ in first }
+                        )
                     }
             )
 
@@ -302,7 +353,7 @@ final class RosterRepository {
                 db.collection("wages")
                     .addSnapshotListener { [weak self] snap, error in
                         guard let self else { return }
-                        if let error { self.handleError(error, label: "wages"); return }
+                        if let error { self.handleSecondaryError(error, label: "wages"); return }
                         let docs = snap?.documents ?? []
                         self.wageAwards = docs.compactMap { WageAward(id: $0.documentID, data: $0.data()) }
                             .sorted { $0.name < $1.name }
@@ -365,6 +416,7 @@ final class RosterRepository {
                         }
                         // Keep local shift reminders in step with the roster.
                         self.resyncLocalShiftReminders()
+                        self.resyncLocalDailyJobReminders()
                     }
             )
 
@@ -408,9 +460,14 @@ final class RosterRepository {
                     .whereField("date", isLessThanOrEqualTo: range.end)
                     .addSnapshotListener { [weak self] snap, error in
                         guard let self else { return }
-                        if let error { self.handleError(error, label: "daily_job_assignments"); return }
+                        if let error { self.handleSecondaryError(error, label: "daily_job_assignments"); return }
                         self.dailyJobAssignments = (snap?.documents ?? [])
                             .compactMap { try? $0.data(as: DailyJobAssignment.self) }
+                        // Reschedule "check your daily jobs" reminders — this is
+                        // also the trigger for repeat-daily auto-assigned jobs
+                        // landing on a brand new shift, and for cancelling the
+                        // rest of today's reminders once everything's completed.
+                        self.resyncLocalDailyJobReminders()
                     }
             )
 
@@ -494,7 +551,35 @@ final class RosterRepository {
 
     func startClockSession(shiftId: String) {
         guard let uid = activeUID, clockSession == nil else { return }
-        clockSession = ClockSession(shiftId: shiftId, staffId: uid, clockInAt: Date())
+        // ServerClock, not the device clock — the unlock gate and the
+        // verified ShiftAttendance record already use it; the locally
+        // displayed elapsed/worked time should match rather than diverge on
+        // a skewed device.
+        clockSession = ClockSession(shiftId: shiftId, staffId: uid, clockInAt: ServerClock.shared.now)
+        persistClockSession()
+    }
+
+    /// Repairs a lost local `ClockSession` from the server-verified
+    /// attendance record instead of leaving `isClockable` free to offer
+    /// Start again — which would overwrite the real `clockInAt` with a
+    /// fresh one and lose the true start time from the audit trail (the
+    /// local/server split has no other reconciliation point: the device
+    /// local session can vanish on reinstall, device change, or a cleared
+    /// `UserDefaults`, while the shift is still genuinely active server-side).
+    /// Break history isn't recoverable — `ShiftAttendance` doesn't track
+    /// breaks — so the rebuilt session starts with none; the user can still
+    /// log/edit breaks before submitting hours.
+    private func reconcileClockSessionFromServerIfNeeded() {
+        guard clockSession == nil, let uid = activeUID else { return }
+        let todayKey = RosterCalendar.todayKey()
+        guard let activeShift = shifts.first(where: { shift in
+            shift.staffId == uid &&
+            shift.date == todayKey &&
+            timesheet(forShift: shift.id) == nil &&
+            attendanceByShiftId[shift.id]?.clockInAt != nil &&
+            attendanceByShiftId[shift.id]?.clockOutAt == nil
+        }), let clockInAt = attendanceByShiftId[activeShift.id]?.clockInAt else { return }
+        clockSession = ClockSession(shiftId: activeShift.id, staffId: uid, clockInAt: clockInAt)
         persistClockSession()
     }
 
@@ -558,17 +643,17 @@ final class RosterRepository {
     }
 
     func startClockBreak() {
-        clockSession?.startBreak()
+        clockSession?.startBreak(at: ServerClock.shared.now)
         persistClockSession()
     }
 
     func endClockBreak() {
-        clockSession?.endBreak()
+        clockSession?.endBreak(at: ServerClock.shared.now)
         persistClockSession()
     }
 
     func endClockSession() {
-        clockSession?.clockOut()
+        clockSession?.clockOut(at: ServerClock.shared.now)
         persistClockSession()
     }
 
@@ -585,6 +670,17 @@ final class RosterRepository {
 
     private func handleError(_ error: Error, label: String) {
         loadError = error.localizedDescription
+        markArrived(label)
+    }
+
+    /// For listeners secondary to the core shifts/timesheets/roster data
+    /// (Daily Jobs, Wages) — a transient rules/index issue on one of these
+    /// shouldn't surface a generic "failed to load" error for the whole
+    /// manager portal when the primary data loaded fine. Mirrors the
+    /// existing precedent for the payslips listener just below. Still
+    /// logged (not truly silent) so a systematic failure isn't invisible.
+    private func handleSecondaryError(_ error: Error, label: String) {
+        Self.log.error("\(label, privacy: .public) listener failed: \(error.localizedDescription, privacy: .public)")
         markArrived(label)
     }
 
@@ -644,6 +740,14 @@ final class RosterRepository {
             clockedInShiftId: clocked,
             filedShiftIds: filedTimesheetShiftIds
         )
+    }
+
+    /// Rebuild device-local "check your daily jobs" reminders from the live
+    /// roster + assignments. See DailyJobReminderScheduler's doc comment —
+    /// purely local, no server/Firebase involvement beyond the listener
+    /// that was already streaming this data anyway.
+    func resyncLocalDailyJobReminders() {
+        DailyJobReminderScheduler.sync(shifts: shifts, assignments: dailyJobAssignments)
     }
 
     func timesheet(forShift shiftId: String) -> Timesheet? {
@@ -789,10 +893,10 @@ final class RosterRepository {
     /// the new uid.
     func createStaff(fullName: String, email: String, password: String,
                      employmentType: EmploymentType,
-                     phone: String?, startDate: Date?) async throws -> String {
+                     phone: String?, startDate: Date?, defaultDepartment: String? = nil) async throws -> String {
         let localId = try await WorkerAPIClient.shared.createAuthUser(email: email, password: password)
         let t = nowISO()
-        let data: [String: Any] = [
+        var data: [String: Any] = [
             "id": localId,
             "fullName": fullName,
             "email": email,
@@ -805,7 +909,26 @@ final class RosterRepository {
             "createdAt": t,
             "updatedAt": t,
         ]
-        try await db.collection("users").document(localId).setData(data)
+        if let defaultDepartment, !defaultDepartment.isEmpty {
+            data["defaultDepartment"] = defaultDepartment
+        }
+        do {
+            try await db.collection("users").document(localId).setData(data)
+        } catch {
+            // The Auth account above was already created server-side. If the
+            // profile write fails, that account is orphaned — a live
+            // credential with no Firestore doc, invisible to the caller's
+            // duplicate-email guard (which only checks synced profiles) and
+            // otherwise unrecoverable from this UI. Best-effort clean it up
+            // so a retry with the same email can succeed, and always surface
+            // an actionable message even if the cleanup itself fails.
+            await bestEffort("rollback orphaned Auth user \(localId)") {
+                try await WorkerAPIClient.shared.deleteStaffUsers(staffUserIds: [localId])
+            }
+            throw WorkerAPIError.server(
+                "Couldn't finish creating this staff member's profile, so nothing was saved. Please try again — if it keeps failing, contact support and mention the email \(email)."
+            )
+        }
         // Audit entry in the web client's user-management shape (NOT the
         // payroll shape) so both apps read one consistent CREATE_USER trail.
         if let actorId = currentUser?.id {
@@ -1036,39 +1159,153 @@ final class RosterRepository {
         try await db.collection("daily_job_templates").document(id).delete()
     }
 
-    /// Replace a shift's job assignments with the given template selection.
-    /// Deterministic doc IDs make re-saving idempotent; deselected jobs are
-    /// removed, already-assigned jobs keep their completion state.
-    func setDailyJobs(for shift: Shift, templateIds: Set<String>) async throws {
-        guard let uid = activeUID else { throw AuthError.notAuthenticated }
+    /// Rename a job in the template library. Existing shift assignments keep
+    /// their already-snapshotted title (same "history never rewrites" rule as
+    /// delete) — only future assignments of this template pick up the new name.
+    func renameDailyJobTemplate(id: String, title: String) async throws {
+        try await db.collection("daily_job_templates").document(id).updateData(["title": title])
+    }
+
+    /// Replace a shift's job assignments with the given template selection,
+    /// in `templateIds`' order — callers pass an already-ordered array (not a
+    /// Set: Swift's Set has no defined iteration order, which previously made
+    /// a newly-created day's job order essentially random instead of
+    /// following whatever the manager last arranged). Deterministic doc IDs
+    /// make re-saving idempotent; deselected jobs are removed, already-
+    /// assigned jobs keep their completion state.
+    func setDailyJobs(for shift: Shift, templateIds: [String]) async throws {
         let existing = dailyJobAssignments.filter { $0.shiftId == shift.id }
+        let addedAny = try await applyDailyJobs(
+            shiftId: shift.id, staffId: shift.staffId, date: shift.date,
+            templateIds: templateIds, existing: existing
+        )
+        if addedAny {
+            let staffId = shift.staffId
+            Task { await WorkerAPIClient.shared.sendNotification(event: "job-assigned", recipientIds: [staffId]) }
+        }
+    }
+
+    /// Shared batch-write behind `setDailyJobs` and the new-shift auto-repeat
+    /// hook in `saveShift` — same idempotent diff-against-`existing` logic
+    /// either way. Returns whether any assignment was newly added.
+    @discardableResult
+    private func applyDailyJobs(
+        shiftId: String, staffId: String, date: String,
+        templateIds: [String], existing: [DailyJobAssignment]
+    ) async throws -> Bool {
+        guard let uid = activeUID else { throw AuthError.notAuthenticated }
         let batch = db.batch()
 
         for assignment in existing where !templateIds.contains(assignment.templateId) {
             batch.deleteDocument(db.collection("daily_job_assignments").document(assignment.id))
         }
         var addedAny = false
+        // New assignments are appended after whatever's already ordered —
+        // arranging them relative to each other is what drag-reorder is for.
+        var nextOrder = (existing.compactMap(\.order).max() ?? -1) + 1
         for templateId in templateIds {
             guard !existing.contains(where: { $0.templateId == templateId }),
                   let template = dailyJobTemplates.first(where: { $0.id == templateId }) else { continue }
-            let docId = DailyJobAssignment.docId(shiftId: shift.id, templateId: templateId)
+            let docId = DailyJobAssignment.docId(shiftId: shiftId, templateId: templateId)
             batch.setData([
                 "id": docId,
-                "shiftId": shift.id,
-                "staffId": shift.staffId,
+                "shiftId": shiftId,
+                "staffId": staffId,
                 "templateId": templateId,
                 "title": template.title,
-                "date": shift.date,
+                "date": date,
+                "order": nextOrder,
                 "assignedAt": FieldValue.serverTimestamp(),
                 "assignedBy": uid,
                 "completed": false
             ], forDocument: db.collection("daily_job_assignments").document(docId))
+            nextOrder += 1
             addedAny = true
         }
         try await batch.commit()
-        if addedAny {
-            let staffId = shift.staffId
-            Task { await WorkerAPIClient.shared.sendNotification(event: "job-assigned", recipientIds: [staffId]) }
+        return addedAny
+    }
+
+    /// Persist a manager's drag-to-reorder of one shift's job assignments —
+    /// staff then work through the jobs on their end in this exact order.
+    /// Also refreshes this staff member's repeat rule (if one exists) to the
+    /// same order, best-effort — otherwise a drag done AFTER the initial Save
+    /// (the common case: assign, then reorder) would never be reflected in
+    /// tomorrow's auto-repeated jobs, which is exactly the bug this fixes.
+    func reorderDailyJobs(orderedAssignmentIds: [String], staffId: String) async throws {
+        let batch = db.batch()
+        for (index, id) in orderedAssignmentIds.enumerated() {
+            batch.updateData(["order": index], forDocument: db.collection("daily_job_assignments").document(id))
+        }
+        try await batch.commit()
+
+        if let rule = dailyJobRepeatRules[staffId], rule.enabled {
+            let orderedTemplateIds = orderedAssignmentIds.compactMap { id in
+                dailyJobAssignments.first(where: { $0.id == id })?.templateId
+            }
+            guard Set(orderedTemplateIds) == Set(rule.templateIds) else { return }
+            try? await setDailyJobRepeat(staffId: staffId, templateIds: orderedTemplateIds, enabled: true)
+        }
+    }
+
+    /// Turn "repeat these jobs daily" on/off for a staff member, in
+    /// `templateIds`' order. `templateIds` is saved even when disabling, so
+    /// re-enabling later restores the same selection (and order) instead of
+    /// starting from an empty picker.
+    func setDailyJobRepeat(staffId: String, templateIds: [String], enabled: Bool) async throws {
+        guard let uid = activeUID else { throw AuthError.notAuthenticated }
+        try await db.collection("daily_job_repeats").document(staffId).setData([
+            "templateIds": templateIds,
+            "enabled": enabled,
+            "updatedAt": FieldValue.serverTimestamp(),
+            "updatedBy": uid
+        ])
+    }
+
+    /// Backfill "repeat daily" onto this staff member's *already-existing*
+    /// upcoming shifts the moment the toggle turns on. Without this, the
+    /// repeat rule only takes effect for shifts created AFTER the toggle
+    /// (via the auto-repeat hook in `saveShift`) — but a manager typically
+    /// rosters days/weeks ahead of time, so tomorrow's shift usually already
+    /// exists when the toggle is flipped, and would otherwise silently sit
+    /// without jobs until it happened to be recreated. Covers drafts too —
+    /// jobs are waiting once published, matching the new-shift auto-repeat
+    /// hook's own "even to a draft" behavior. Skips any shift that already
+    /// has at least one job assigned (a shift the manager deliberately
+    /// customized differently is never overwritten), and the shift the
+    /// manager is currently editing (already handled by `setDailyJobs`).
+    ///
+    /// Concurrent, not sequential — same "backgrounding mid-batch must not
+    /// strand the rest" reasoning as `bulkApprove` (ManagerTimesheetsView.swift).
+    /// Best-effort per shift and never throws, so one transient failure can't
+    /// block the primary Save action this rides alongside.
+    func backfillDailyJobRepeat(staffId: String, templateIds: [String], excludingShiftId: String) async {
+        guard !templateIds.isEmpty else { return }
+        let today = RosterCalendar.todayKey()
+        let shiftIdsWithAssignments = Set(dailyJobAssignments.map(\.shiftId))
+        let candidates = shifts.filter {
+            $0.staffId == staffId &&
+            $0.id != excludingShiftId &&
+            $0.date >= today &&
+            ($0.status == .published || $0.status == .draft) &&
+            !shiftIdsWithAssignments.contains($0.id)
+        }
+        guard !candidates.isEmpty else { return }
+
+        await withTaskGroup(of: Void.self) { group in
+            for shift in candidates {
+                group.addTask { [weak self] in
+                    guard let self else { return }
+                    do {
+                        try await self.applyDailyJobs(
+                            shiftId: shift.id, staffId: staffId, date: shift.date,
+                            templateIds: templateIds, existing: []
+                        )
+                    } catch {
+                        await Self.log.error("backfillDailyJobRepeat failed for shift \(shift.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    }
+                }
+            }
         }
     }
 
@@ -1097,21 +1334,41 @@ final class RosterRepository {
         }
     }
 
-    /// Assignments for a shift. Sorted by title only — completing a job must
-    /// NOT reorder the list (rows jumping under a tapped button reads as the
-    /// tap having failed and invites accidental taps on the next row).
-    func dailyJobs(forShift shiftId: String) -> [DailyJobAssignment] {
-        dailyJobAssignments
-            .filter { $0.shiftId == shiftId }
-            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    /// Sorted by the manager's drag-arranged `order` (legacy assignments with
+    /// no `order` sort after, alphabetically). Completing a job must NOT
+    /// reorder the list (rows jumping under a tapped button reads as the tap
+    /// having failed and invites accidental taps on the next row) — `order`
+    /// only changes via an explicit reorder, never on completion toggle.
+    private func sortedByOrder(_ list: [DailyJobAssignment]) -> [DailyJobAssignment] {
+        list.sorted { lhs, rhs in
+            switch (lhs.order, rhs.order) {
+            case let (l?, r?) where l != r: return l < r
+            case (.some, .none): return true
+            case (.none, .some): return false
+            default: return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            }
+        }
     }
 
-    /// Staff bell feed: assignments for today (Adelaide calendar day).
-    /// Title-sorted, stable across complete/undo — see dailyJobs(forShift:).
+    /// Assignments for a shift, in manager-arranged order.
+    func dailyJobs(forShift shiftId: String) -> [DailyJobAssignment] {
+        sortedByOrder(dailyJobAssignments.filter { $0.shiftId == shiftId })
+    }
+
+    /// Today's shifts, sorted by rostered start — shared by the manager
+    /// Dashboard and the Daily Jobs overview page so their definition of
+    /// "today" can't drift apart from each other.
+    func todaysShifts(now: Date = Date()) -> [Shift] {
+        let todayKey = RosterCalendar.todayKey(now)
+        return shifts
+            .filter { $0.date == todayKey }
+            .sorted { $0.rosteredStart < $1.rosteredStart }
+    }
+
+    /// Staff bell feed: assignments for today (Adelaide calendar day), in
+    /// manager-arranged order — see dailyJobs(forShift:).
     var activeDailyJobsForStaff: [DailyJobAssignment] {
-        dailyJobAssignments
-            .filter { $0.isVisibleToStaff() }
-            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        sortedByOrder(dailyJobAssignments.filter { $0.isVisibleToStaff() })
     }
 
     /// Incomplete visible jobs — feeds the bell badge alongside unread messages.
@@ -1139,6 +1396,7 @@ final class RosterRepository {
     ) async throws {
         guard let uid = activeUID else { throw AuthError.notAuthenticated }
         let docRef = id.map { db.collection("tasks").document($0) } ?? db.collection("tasks").document()
+        let previousTask = id.flatMap { tid in tasks.first(where: { $0.id == tid }) }
 
         var fields: [String: Any] = [
             "title": title,
@@ -1151,7 +1409,10 @@ final class RosterRepository {
             "priority": priority,
             "requiresPhoto": requiresPhoto,
             "endDate": endDate ?? NSNull(),
-            "active": true
+            // Preserve the existing pause state on edit — only default to
+            // active on create. Editing a task must never silently undo a
+            // manager's pause (setTaskActive is the sole intentional writer).
+            "active": previousTask?.active ?? true
         ]
         if id == nil {
             fields["createdAt"] = FieldValue.serverTimestamp()
@@ -1172,7 +1433,7 @@ final class RosterRepository {
             fields["managerPhotoUrl"] = try await storageRef.downloadURL().absoluteString
         }
 
-        let previousAssignedTo = id.flatMap { tid in tasks.first(where: { $0.id == tid })?.assignedTo }
+        let previousAssignedTo = previousTask?.assignedTo
         let isCreate = id == nil
         let shouldNotify = isCreate || RosterTask.assigneesChanged(from: previousAssignedTo, to: assignedTo)
 
@@ -1347,6 +1608,25 @@ final class RosterRepository {
 
     /// Delete any wages-collection document (award or earnings line).
     func deleteWageDocument(id: String) async throws {
+        // If this is an earnings line, drop it from every staff profile that
+        // references it first — otherwise a profile's earningsLineIds keeps
+        // a dangling id. Rate resolution already degrades gracefully (falls
+        // through to the next precedence tier), but it's a data-hygiene gap
+        // a manager auditing a staff profile could be confused by: a line
+        // "assigned" there that no longer exists in the Wages tab.
+        if earningsLines.contains(where: { $0.id == id }) {
+            let affectedProfiles = staffWageProfiles.filter { $0.earningsLineIds.contains(id) }
+            if !affectedProfiles.isEmpty {
+                let batch = db.batch()
+                for profile in affectedProfiles {
+                    batch.updateData(
+                        ["earningsLineIds": profile.earningsLineIds.filter { $0 != id }],
+                        forDocument: db.collection("wages").document(profile.id)
+                    )
+                }
+                try await batch.commit()
+            }
+        }
         try await db.collection("wages").document(id).delete()
     }
 
@@ -1415,13 +1695,9 @@ final class RosterRepository {
         let periodStart = RosterCalendar.dayFormatter.string(from: RosterCalendar.weekStart(weekStart))
         let periodEnd = RosterCalendar.dayFormatter.string(from: RosterCalendar.addDays(6, to: RosterCalendar.weekStart(weekStart)))
 
-        // Approved worked hours per staff per date within the period.
-        var hoursByStaff: [String: [String: Double]] = [:]
-        for ts in timesheets where ts.status == .approved && ts.workedHours > 0 {
-            guard let shift = shiftsById[ts.shiftId],
-                  shift.date >= periodStart, shift.date <= periodEnd else { continue }
-            hoursByStaff[ts.staffId, default: [:]][shift.date, default: 0] += ts.workedHours
-        }
+        // Fresh from the server, not the live shifts/timesheets cache — see
+        // fetchApprovedWorkedHours.
+        let hoursByStaff = try await fetchApprovedWorkedHours(periodStart: periodStart, periodEnd: periodEnd)
 
         var created = 0
         for user in allUsers where user.role == .staff && user.status == .active {
@@ -1446,6 +1722,42 @@ final class RosterRepository {
                                        detail: "\(created) draft payslip(s) for week \(periodStart)")
         }
         return created
+    }
+
+    /// Approved worked hours per staff per date within `periodStart...periodEnd`,
+    /// fetched fresh from the server rather than the live, listener-fed
+    /// `shifts`/`timesheets` caches.
+    ///
+    /// Payroll generation is money-critical and is often the very next
+    /// action after a destructive one (e.g. a manager deletes a shift, then
+    /// regenerates payslips for that week) — trusting the in-memory cache
+    /// here risks recreating pay for hours that were just removed, if the
+    /// listener hasn't caught up yet. Root cause of the 2026-08-01 bug:
+    /// deleting a staff member's only shift for a week, then regenerating,
+    /// recreated their payslip with the deleted shift's hours intact.
+    /// `.server` (not the default cache-fallback source) so a connectivity
+    /// problem fails loudly instead of silently generating from stale data.
+    private func fetchApprovedWorkedHours(periodStart: String, periodEnd: String) async throws -> [String: [String: Double]] {
+        let shiftsSnap = try await db.collection("shifts")
+            .whereField("date", isGreaterThanOrEqualTo: periodStart)
+            .whereField("date", isLessThanOrEqualTo: periodEnd)
+            .getDocuments(source: .server)
+        let periodShiftsById = Dictionary(
+            shiftsSnap.documents.compactMap { Shift(id: $0.documentID, data: $0.data()) }.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first })
+        guard !periodShiftsById.isEmpty else { return [:] }
+
+        let timesheetsSnap = try await db.collection("timesheets")
+            .whereField("submittedAt", isGreaterThanOrEqualTo: BusinessRules.managerTimesheetCutoff())
+            .getDocuments(source: .server)
+        let periodTimesheets = timesheetsSnap.documents.compactMap { Timesheet(id: $0.documentID, data: $0.data()) }
+
+        var hoursByStaff: [String: [String: Double]] = [:]
+        for ts in periodTimesheets where ts.status == .approved && ts.workedHours > 0 {
+            guard let shift = periodShiftsById[ts.shiftId] else { continue }
+            hoursByStaff[ts.staffId, default: [:]][shift.date, default: 0] += ts.workedHours
+        }
+        return hoursByStaff
     }
 
     /// Assemble a draft payslip snapshot from the wage profile + approved hours.
@@ -1490,7 +1802,26 @@ final class RosterRepository {
             }
         }
 
-        return Payslip(
+        // Resolve overtime rate from an assigned overtime-category earnings
+        // line's multiplier when the manager configured one (e.g. an
+        // "Overtime 2x" double-time line), otherwise fall back to the 1.5x
+        // default. Previously this was always the flat default even after
+        // assigning such a line to the staff profile — the assignment had
+        // no effect on generation.
+        let overtimeLine = (profile?.earningsLineIds ?? []).compactMap { lineId in
+            earningsLines.first(where: { $0.id == lineId && $0.category == .overtime && $0.active })
+        }.first
+        let overtimeRate: Double = {
+            guard let overtimeLine else { return PayrollCalculator.round2(baseRate * 1.5) }
+            switch overtimeLine.rateType {
+            case .multipleOfOrdinary:
+                return PayrollCalculator.round2(baseRate * overtimeLine.multiplier)
+            case .ratePerUnit, .fixedAmount:
+                return overtimeLine.fixedRate > 0 ? overtimeLine.fixedRate : PayrollCalculator.round2(baseRate * 1.5)
+            }
+        }()
+
+        var slip = Payslip(
             id: docId,
             staffId: user.id,
             staffName: user.fullName,
@@ -1513,17 +1844,24 @@ final class RosterRepository {
                     ? explicit!
                     : PayrollCalculator.round2(baseRate * 1.5)
             }(),
-            publicHolidayRate: {
-                let explicit = profile?.resolvedWeekendRate(award: award, earningsLines: earningsLines)
-                return (explicit ?? 0) > 0
-                    ? explicit!
-                    : PayrollCalculator.round2(baseRate * 2.25)
-            }(),
-            overtimeRate: PayrollCalculator.round2(baseRate * 1.5),
+            // There is no dedicated public-holiday-rate field on
+            // AwardClassification/EarningsLine yet (only weekendHourlyRate),
+            // so — unlike weekendRate just above — this always uses the
+            // 2.25x default multiplier rather than resolvedWeekendRate.
+            // Reusing that weekend resolver here was a bug: the moment a
+            // classification had an explicit weekend override, PH hours
+            // would silently price at the (lower) weekend rate instead of
+            // the correct PH loading. A manager can still override the
+            // generated value per-payslip in the Hours section before
+            // publishing. TODO: add a real publicHolidayHourlyRate field +
+            // resolver once the Wages module supports one.
+            publicHolidayRate: PayrollCalculator.round2(baseRate * 2.25),
+            overtimeRate: overtimeRate,
             extraEarnings: extras,
+            claimsTaxFreeThreshold: profile?.claimsTaxFreeThreshold ?? true,
             // Profile controls super: OFF (e.g. under-18) ⇒ 0%, payslip and
             // PDF then omit the super block entirely.
-            superRate: profile?.resolvedSuperRate(userDefault: user.superRate) ?? (user.superRate ?? 12.0),
+            superRate: profile?.resolvedSuperRate(userDefault: user.superRate) ?? (user.superRate ?? BusinessRules.defaultSuperRatePercent),
             generatedAt: Date(),
             audit: [PayslipAuditEntry(action: "generated", userId: manager.id,
                                       userName: manager.fullName,
@@ -1531,15 +1869,23 @@ final class RosterRepository {
                                         ? "Auto-generated from approved timesheets"
                                         : "Auto-generated — no wage rate resolved: assign an award classification, a rate override, or an ordinary-hours line with a $ rate, then Regenerate")]
         )
+        // ATO Schedule 1 (NAT 1004) weekly formula — see PAYGCalculator. Still
+        // manager-editable afterwards for declarations the formula doesn't
+        // model (HELP/STSL debt, foreign residency, etc).
+        slip.payg = PayrollCalculator.calculatedPAYG(for: slip)
+        return slip
     }
 
     /// Persist manager edits to a payslip (draft/under-review only — callers
     /// guard on `status.isEditable`; submitted payroll is immutable).
-    func savePayslip(_ slip: Payslip, editedBy editor: AppUser, editDetail: String = "Edited") async throws {
+    /// `original` is the pre-edit snapshot this editing session started
+    /// from — used to log one field-level audit entry per changed value
+    /// (see `PayrollCalculator.auditDiff`) instead of one generic "edited"
+    /// blob. No entry is appended if nothing actually changed.
+    func savePayslip(_ slip: Payslip, original: Payslip, editedBy editor: AppUser) async throws {
         var updated = slip
         updated.updatedAt = Date()
-        updated.audit.append(PayslipAuditEntry(action: "edited", userId: editor.id,
-                                               userName: editor.fullName, detail: editDetail))
+        updated.audit.append(contentsOf: PayrollCalculator.auditDiff(from: original, to: slip, editor: editor))
         try await db.collection("payslips").document(slip.id).setData(updated.asDictionary)
     }
 
@@ -1579,17 +1925,71 @@ final class RosterRepository {
                                    detail: "\(slip.staffName) · week \(slip.periodStart)")
     }
 
+    /// Bulk-delete DRAFT/UNDER-REVIEW payslips in one atomic batch — e.g. "Delete
+    /// all drafts" after a batch generation the manager wants to redo. Silently
+    /// skips any approved/submitted/archived payslip passed in: those are
+    /// official records, same protection as the single-delete above.
+    func deleteDraftPayslips(_ slips: [Payslip]) async throws {
+        let deletable = slips.filter { $0.status == .draft || $0.status == .underReview }
+        guard !deletable.isEmpty else { return }
+        let batch = db.batch()
+        for slip in deletable {
+            batch.deleteDocument(db.collection("payslips").document(slip.id))
+        }
+        try await batch.commit()
+        await writePayrollAuditLog(action: "payslip-drafts-bulk-deleted",
+                                   detail: "\(deletable.count) draft payslip(s) · week \(deletable.first?.periodStart ?? "")")
+    }
+
+    /// Publish (submit) one or more payslips in a single batch — the fast
+    /// path individual/bulk "Publish" uses, jumping straight from whatever
+    /// pre-submit status a payslip is in (draft/underReview/approved) to
+    /// submitted. Deliberately bypasses the granular Start Review → Approve
+    /// → Submit workflow in `ManagerPayslipDetailSheet`, which stays
+    /// available separately for managers who still want that control.
+    @discardableResult
+    func publishPayslips(_ slips: [Payslip], by actor: AppUser) async throws -> Int {
+        // Re-filter against live state right before building the batch — a
+        // selection captured when the bulk sheet opened could be stale by
+        // the time "Publish Selected" is tapped (e.g. deleted elsewhere).
+        // `updateData` throws on a missing doc and the batch is atomic, so
+        // one stale id would otherwise fail every other selected payslip too.
+        let ids = Set(slips.map(\.id))
+        let eligible = payslips.filter { ids.contains($0.id) && $0.status != .submitted && $0.status != .archived }
+        guard !eligible.isEmpty else { return 0 }
+
+        let batch = db.batch()
+        let now = Date()
+        for slip in eligible {
+            let entry = PayslipAuditEntry(action: "submitted", userId: actor.id,
+                                          userName: actor.fullName, detail: "Published")
+            batch.updateData([
+                "status": PayslipStatus.submitted.rawValue,
+                "submittedBy": actor.id,
+                "submittedAt": now,
+                "updatedAt": now,
+                "audit": FieldValue.arrayUnion([entry.asDictionary]),
+            ], forDocument: db.collection("payslips").document(slip.id))
+        }
+        try await batch.commit()
+        await writePayrollAuditLog(action: "payslips-published",
+                                   detail: "\(eligible.count) payslip(s) published")
+        // The moment staff visibility flips on for each of these — mirrors
+        // the single-payslip notification in setPayslipStatus, batched.
+        await WorkerAPIClient.shared.sendNotification(event: "payslip-generated",
+                                                       recipientIds: eligible.map(\.staffId))
+        return eligible.count
+    }
+
     /// Regenerate a draft from current timesheet + wage data, REPLACING the
     /// existing draft's amounts (explicit manager action; keeps the audit trail).
     func regenerateDraftPayslip(_ slip: Payslip) async throws {
         guard slip.status.isEditable, let manager = currentUser,
               let user = usersById[slip.staffId] else { return }
-        var byDate: [String: Double] = [:]
-        for ts in timesheets where ts.status == .approved && ts.staffId == slip.staffId && ts.workedHours > 0 {
-            guard let shift = shiftsById[ts.shiftId],
-                  shift.date >= slip.periodStart, shift.date <= slip.periodEnd else { continue }
-            byDate[shift.date, default: 0] += ts.workedHours
-        }
+        // Fresh from the server, not the live shifts/timesheets cache — see
+        // fetchApprovedWorkedHours.
+        let hoursByStaff = try await fetchApprovedWorkedHours(periodStart: slip.periodStart, periodEnd: slip.periodEnd)
+        let byDate = hoursByStaff[slip.staffId] ?? [:]
         var fresh = buildDraftPayslip(docId: slip.id, user: user,
                                       profile: staffWageProfile(for: slip.staffId),
                                       periodStart: slip.periodStart, periodEnd: slip.periodEnd,
@@ -1731,6 +2131,7 @@ final class RosterRepository {
                             publicHolidayRate: slip.publicHolidayRate,
                             overtimeHours: slip.overtimeHours, overtimeRate: slip.overtimeRate,
                             extraEarnings: slip.extraEarnings,
+                            claimsTaxFreeThreshold: slip.claimsTaxFreeThreshold,
                             payg: slip.payg, otherDeductions: slip.otherDeductions,
                             salarySacrifice: slip.salarySacrifice,
                             deductionNotes: slip.deductionNotes, superRate: slip.superRate,
@@ -1840,6 +2241,26 @@ final class RosterRepository {
         }
 
         try await docRef.setData(data, merge: true)
+
+        // New shift for a staff member with "repeat daily jobs" enabled —
+        // carry their standing job selection onto this shift so the manager
+        // doesn't have to reopen Daily Jobs and re-pick every day. Applied
+        // even to a draft (so the jobs are already there once published);
+        // best-effort so a failure here never blocks shift creation itself.
+        if !isUpdate, let rule = dailyJobRepeatRules[staffId], rule.enabled, !rule.templateIds.isEmpty {
+            let shiftId = docRef.documentID
+            do {
+                let addedAny = try await applyDailyJobs(
+                    shiftId: shiftId, staffId: staffId, date: date,
+                    templateIds: rule.templateIds, existing: []
+                )
+                if addedAny, status == .published {
+                    Task { await WorkerAPIClient.shared.sendNotification(event: "job-assigned", recipientIds: [staffId]) }
+                }
+            } catch {
+                Self.log.error("applyDailyJobs(repeat) failed for shift \(shiftId, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
 
         // Only notify for a published shift's start-time change — a draft
         // edit is invisible to staff.
@@ -1977,9 +2398,40 @@ final class RosterRepository {
         ])
     }
 
+    /// Runs `updateData` inside a transaction that first reads the
+    /// timesheet's current status and aborts if it isn't one of
+    /// `actionableStatuses` — without this, two managers (or the detail
+    /// sheet racing the grid's context menu / a bulk-approve) acting on the
+    /// same doc could silently overwrite each other's decision with no
+    /// conflict surfaced to either party.
+    private func updateTimesheetIfActionable(
+        id: String, actionableStatuses: Set<TimesheetStatus>, data: [String: Any]
+    ) async throws {
+        let docRef = db.collection("timesheets").document(id)
+        _ = try await db.runTransaction { transaction, errorPointer -> Any? in
+            let snapshot: DocumentSnapshot
+            do {
+                snapshot = try transaction.getDocument(docRef)
+            } catch let fetchError as NSError {
+                errorPointer?.pointee = fetchError
+                return nil
+            }
+            let currentStatus = (snapshot.data()?["status"] as? String).flatMap(TimesheetStatus.init(rawValue:))
+            guard let currentStatus, actionableStatuses.contains(currentStatus) else {
+                errorPointer?.pointee = NSError(
+                    domain: "RosterRepository", code: 409,
+                    userInfo: [NSLocalizedDescriptionKey: "This timesheet was already handled — refresh and try again."]
+                )
+                return nil
+            }
+            transaction.updateData(data, forDocument: docRef)
+            return nil
+        }
+    }
+
     func approveTimesheet(id: String, managerNotes: String?) async throws {
         guard let currentUserId = currentUser?.id else { return }
-        
+
         let data: [String: Any] = [
             "status": TimesheetStatus.approved.rawValue,
             "managerNotes": managerNotes ?? "",
@@ -1988,7 +2440,7 @@ final class RosterRepository {
             "updatedAt": nowISO()
         ]
 
-        try await db.collection("timesheets").document(id).updateData(data)
+        try await updateTimesheetIfActionable(id: id, actionableStatuses: [.pending], data: data)
         await WorkerAPIClient.shared.sendNotification(event: "timesheet-approved", timesheetId: id)
     }
 
@@ -2007,7 +2459,7 @@ final class RosterRepository {
             "updatedAt": nowISO()
         ]
 
-        try await db.collection("timesheets").document(id).updateData(data)
+        try await updateTimesheetIfActionable(id: id, actionableStatuses: [.absentReported], data: data)
     }
 
     /// Reject a timesheet — sets status = .rejected, managerNotes, and rejectedReason.
@@ -2024,7 +2476,9 @@ final class RosterRepository {
             "rejectionReminderCount": 0
         ]
 
-        try await db.collection("timesheets").document(id).updateData(data)
+        // A rejection can apply to either a regular submission or an
+        // absence report — both are pre-decision, actionable states.
+        try await updateTimesheetIfActionable(id: id, actionableStatuses: [.pending, .absentReported], data: data)
         await WorkerAPIClient.shared.sendNotification(event: "timesheet-rejected", timesheetId: id)
     }
 }

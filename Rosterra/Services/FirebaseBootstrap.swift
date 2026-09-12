@@ -25,7 +25,16 @@ enum FirebaseBootstrap {
         Crashlytics.crashlytics().setCrashlyticsCollectionEnabled(true)
 
         let settings = FirestoreSettings()
+        #if targetEnvironment(macCatalyst)
+        // Persistent LevelDB allows only one process. Xcode "Run" while an older
+        // Catalyst instance is still alive crashes with:
+        //   Failed to open DB … LOCK: Resource temporarily unavailable
+        // Catalyst also cannot use Process / NSWorkspace to quit the other copy.
+        // In-memory cache avoids the lock; Mac managers have reliable network.
+        settings.cacheSettings = MemoryCacheSettings()
+        #else
         settings.cacheSettings = PersistentCacheSettings(sizeBytes: NSNumber(value: FirestoreCacheSizeUnlimited))
+        #endif
         Firestore.firestore().settings = settings
 
         isConfigured = true

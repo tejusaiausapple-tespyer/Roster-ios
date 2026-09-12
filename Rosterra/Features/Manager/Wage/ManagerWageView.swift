@@ -154,13 +154,12 @@ struct ManagerWageView: View {
             .scrollContentBackground(.hidden)
             .environment(\.defaultMinListRowHeight, 1)
         }
+        .contentLane()
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("Wage")
         .navigationBarTitleDisplayMode(.inline)
+        .screenTitlePill("Wage Setup", icon: "dollarsign.circle.fill", fraction: 0)
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                ScreenTitlePill(title: "Wage Setup", icon: "dollarsign.circle.fill")
-            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     activeSheet = segment == .awards ? .newAward : .newLine
@@ -254,6 +253,15 @@ struct ManagerWageView: View {
                             Label("Delete", systemImage: "trash")
                         }
                     }
+                    // Right-click equivalent — a swipe reveal needs a trackpad
+                    // on Mac Catalyst, so this is the only path for a mouse.
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            pendingDelete = .award(award)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
                 }
             } footer: {
                 Text("Tap to edit, swipe left to delete. Assign awards to staff in the Staff tab.")
@@ -280,6 +288,13 @@ struct ManagerWageView: View {
                         classificationRow(entry)
                     }
                     .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            pendingDelete = .classification(entry)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                    .contextMenu {
                         Button(role: .destructive) {
                             pendingDelete = .classification(entry)
                         } label: {
@@ -316,6 +331,13 @@ struct ManagerWageView: View {
                         }
                     }
                     .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            pendingDelete = .payItem(line)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                    .contextMenu {
                         Button(role: .destructive) {
                             pendingDelete = .payItem(line)
                         } label: {
@@ -486,10 +508,35 @@ struct ManagerWageView: View {
     }
 
     private func delete(ids: [String], successMessage: String = "Classification level deleted.") {
+        var bgTask: UIBackgroundTaskIdentifier = .invalid
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "BulkDeleteWageDocs") {
+            UIApplication.shared.endBackgroundTask(bgTask)
+            bgTask = .invalid
+        }
+
         Task {
-            var failed = false
-            for id in ids {
-                do { try await repo.deleteWageDocument(id: id) } catch { failed = true }
+            defer {
+                if bgTask != .invalid {
+                    UIApplication.shared.endBackgroundTask(bgTask)
+                    bgTask = .invalid
+                }
+            }
+            let failed = await withTaskGroup(of: Bool.self, returning: Bool.self) { group in
+                for id in ids {
+                    group.addTask {
+                        do {
+                            try await repo.deleteWageDocument(id: id)
+                            return true
+                        } catch {
+                            return false
+                        }
+                    }
+                }
+                var anyFailed = false
+                for await succeeded in group {
+                    if !succeeded { anyFailed = true }
+                }
+                return anyFailed
             }
             if failed {
                 toast = ToastMessage(kind: .error, text: "Couldn't delete some items.")
@@ -555,6 +602,7 @@ private struct WageAwardEditorSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -568,6 +616,7 @@ private struct WageAwardEditorSheet: View {
                         ))
                         dismiss()
                     }
+                        .keyboardShortcut(.defaultAction)
                     .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
@@ -745,12 +794,14 @@ private struct EarningsLineEditorSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         onSave(buildLine())
                         dismiss()
                     }
+                        .keyboardShortcut(.defaultAction)
                     .disabled(!canSave)
                 }
             }
@@ -791,11 +842,15 @@ private struct EarningsLineEditorSheet: View {
                 .prefix(8)
                 .description
         }
-        let baseRate = Double(baseRateText) ?? 0
-        let weekendRate = Double(weekendRateText) ?? 0
+        // canSave only checks baseRateText > 0 for classification mode —
+        // weekend/fixed/multiplier had no sign check at all, so a negative
+        // value typed here would previously flow straight into every
+        // payslip generated against this classification/line.
+        let baseRate = max(0, Double(baseRateText) ?? 0)
+        let weekendRate = max(0, Double(weekendRateText) ?? 0)
         let effectiveCategory = isClassificationMode ? .ordinaryHours : category
         let effectiveRateType = isClassificationMode ? .fixedAmount : rateType
-        let effectiveFixed = isClassificationMode ? baseRate : (Double(fixedRateText) ?? 0)
+        let effectiveFixed = max(0, isClassificationMode ? baseRate : (Double(fixedRateText) ?? 0))
 
         return EarningsLine(
             id: line?.id ?? "",
@@ -803,7 +858,7 @@ private struct EarningsLineEditorSheet: View {
             displayName: displayName.trimmingCharacters(in: .whitespaces),
             category: effectiveCategory,
             rateType: effectiveRateType,
-            multiplier: Double(multiplierText) ?? 1.0,
+            multiplier: max(0, Double(multiplierText) ?? 1.0),
             fixedRate: effectiveFixed,
             unitName: unitName.trimmingCharacters(in: .whitespaces),
             exemptFromSuper: exemptFromSuper,

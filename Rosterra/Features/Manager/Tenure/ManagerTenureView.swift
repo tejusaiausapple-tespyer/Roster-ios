@@ -78,12 +78,8 @@ struct ManagerTenureView: View {
         }
         .navigationTitle("Tenure & Hours")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                ScreenTitlePill(title: "Tenure & Hours", icon: "rosette")
-            }
-        }
-        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search name")
+        .screenTitlePill("Tenure & Hours", icon: "rosette", fraction: 0)
+        .platformSearchable(text: $searchText, prompt: "Search name")
         .sheet(item: $selected) { row in
             ManagerTenureDetailSheet(row: row)
         }
@@ -153,11 +149,12 @@ struct ManagerTenureView: View {
                         card(row)
                     }
                     .buttonStyle(.plain)
+                    .pointerHover()
                 }
             }
             .padding(16)
         }
-        .refreshable { await repo.refreshFromServer() }
+        .macRefreshable { await repo.refreshFromServer() }
     }
 
     private func card(_ row: TenureMetrics.StaffTenure) -> some View {
@@ -246,6 +243,7 @@ struct ManagerTenureDetailSheet: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
+                        .keyboardShortcut(.defaultAction)
                 }
             }
         }

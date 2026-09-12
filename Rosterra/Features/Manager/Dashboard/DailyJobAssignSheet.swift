@@ -15,6 +15,15 @@ struct DailyJobAssignSheet: View {
     @State private var isSaving = false
     @State private var errorMessage: String? = nil
     @State private var templatePendingDelete: DailyJobTemplate? = nil
+    @State private var templatePendingRename: DailyJobTemplate? = nil
+    @State private var renameText = ""
+    /// "Keep repeating these jobs for this staff member" — when on, every new
+    /// shift created for them auto-gets this same selection assigned.
+    @State private var repeatDaily = false
+    /// Scoped to this sheet's List only — toggled by the "Reorder" button to
+    /// reveal drag handles on the Progress section without affecting the
+    /// Job library section below it (which has no `.onMove`/`.onDelete`).
+    @State private var editMode: EditMode = .inactive
 
     private var staffName: String {
         repo.user(id: shift.staffId)?.fullName ?? "Staff Member"
@@ -30,15 +39,46 @@ struct DailyJobAssignSheet: View {
         return repo.dailyJobTemplates.filter { $0.title.localizedCaseInsensitiveContains(trimmed) }
     }
 
+    /// `selectedIds` as an order-preserving array instead of a Set (which has
+    /// no defined iteration order) — this is what actually gets carried into
+    /// the repeat rule and any newly-created day's assignments, so an
+    /// already-assigned job keeps the position the manager dragged it to,
+    /// and a freshly-checked one lands in the same order it's shown in the
+    /// library list below (rather than an arbitrary Set order).
+    private var orderedSelectedIds: [String] {
+        let alreadyAssigned = assignments.map(\.templateId).filter { selectedIds.contains($0) }
+        let newlyChecked = repo.dailyJobTemplates
+            .compactMap(\.id)
+            .filter { selectedIds.contains($0) && !alreadyAssigned.contains($0) }
+        return alreadyAssigned + newlyChecked
+    }
+
     var body: some View {
         NavigationStack {
             List {
                 if !assignments.isEmpty {
-                    Section("Progress — \(assignments.filter(\.completed).count)/\(assignments.count) done") {
-                        ForEach(assignments) { assignment in
+                    Section {
+                        ForEach(Array(assignments.enumerated()), id: \.element.id) { index, assignment in
                             HStack {
-                                Image(systemName: assignment.completed ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(assignment.completed ? Theme.accent : Theme.textTertiary)
+                                // Position in the manager-arranged order, not a
+                                // stored field — always recomputed from
+                                // `assignments`' current (order-sorted) index,
+                                // so it stays sequential immediately as rows
+                                // are dragged, before the reorder write even
+                                // round-trips through Firestore.
+                                Text("\(index + 1)")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(Theme.textSecondary)
+                                    .frame(width: 20, height: 20)
+                                    .background(Circle().fill(Theme.textTertiary.opacity(0.12)))
+                                // No checkmark once completed — the "Completed
+                                // [time]" text below already says so; matches
+                                // the same redundant-icon removal on the staff
+                                // Daily Jobs list (NotificationsSheet.swift).
+                                if !assignment.completed {
+                                    Image(systemName: "circle")
+                                        .foregroundStyle(Theme.textTertiary)
+                                }
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(assignment.title)
                                         .foregroundStyle(Theme.textPrimary)
@@ -53,6 +93,21 @@ struct DailyJobAssignSheet: View {
                                     }
                                 }
                             }
+                        }
+                        .onMove(perform: moveAssignment)
+                    } header: {
+                        HStack {
+                            Text("Progress — \(assignments.filter(\.completed).count)/\(assignments.count) done")
+                            Spacer()
+                            if assignments.count > 1 {
+                                EditButton()
+                                    .font(.footnote)
+                                    .textCase(nil)
+                            }
+                        }
+                    } footer: {
+                        if assignments.count > 1 {
+                            Text("Tap Edit, then drag \(Image(systemName: "line.3.horizontal")) to set the order staff should work through these jobs.")
                         }
                     }
                 }
@@ -82,6 +137,21 @@ struct DailyJobAssignSheet: View {
                                 }
                             }
                             .buttonStyle(.plain)
+                            .pointerHover()
+
+                            Button {
+                                renameText = template.title
+                                templatePendingRename = template
+                            } label: {
+                                Image(systemName: "pencil")
+                                    .font(.body.weight(.medium))
+                                    .foregroundStyle(Theme.brand)
+                                    .padding(6)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Rename \(template.title)")
+                            .help("Rename \(template.title)")
 
                             Button {
                                 templatePendingDelete = template
@@ -94,6 +164,7 @@ struct DailyJobAssignSheet: View {
                             }
                             .buttonStyle(.borderless)
                             .accessibilityLabel("Delete \(template.title)")
+                            .help("Delete \(template.title)")
                         }
                     }
 
@@ -114,6 +185,14 @@ struct DailyJobAssignSheet: View {
                     }
                 }
 
+                Section {
+                    Toggle("Repeat daily for \(staffName)", isOn: $repeatDaily)
+                } footer: {
+                    Text(repeatDaily
+                         ? "Every new shift created for \(staffName) will automatically get this same selection — no need to reassign each day."
+                         : "Off by default: each new shift starts with no jobs assigned until you pick them here.")
+                }
+
                 if let errorMessage {
                     Section {
                         Text(errorMessage)
@@ -122,6 +201,7 @@ struct DailyJobAssignSheet: View {
                     }
                 }
             }
+            .environment(\.editMode, $editMode)
             .searchable(text: $searchText, prompt: "Search jobs")
             .navigationTitle("Daily Jobs — \(staffName)")
             .navigationBarTitleDisplayMode(.inline)
@@ -140,6 +220,7 @@ struct DailyJobAssignSheet: View {
             }
             .onAppear {
                 selectedIds = Set(assignments.map(\.templateId))
+                repeatDaily = repo.dailyJobRepeatRules[shift.staffId]?.enabled ?? false
             }
             .alert(
                 "Delete job?",
@@ -163,6 +244,26 @@ struct DailyJobAssignSheet: View {
                     Text("Remove this job from the library? Existing shift assignments keep their history.")
                 }
             }
+            .alert(
+                "Rename job",
+                isPresented: Binding(
+                    get: { templatePendingRename != nil },
+                    set: { if !$0 { templatePendingRename = nil } }
+                )
+            ) {
+                TextField("Job title", text: $renameText)
+                Button("Cancel", role: .cancel) {
+                    templatePendingRename = nil
+                }
+                Button("Save") {
+                    if let template = templatePendingRename {
+                        renameTemplate(template)
+                    }
+                }
+                .disabled(renameText.trimmingCharacters(in: .whitespaces).isEmpty)
+            } message: {
+                Text("Already-assigned shifts keep their existing title — only new assignments use the new name.")
+            }
         }
     }
 
@@ -174,6 +275,19 @@ struct DailyJobAssignSheet: View {
             do {
                 try await repo.addDailyJobTemplate(title: title)
                 showingNewJob = false
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func renameTemplate(_ template: DailyJobTemplate) {
+        let title = renameText.trimmingCharacters(in: .whitespaces)
+        guard !title.isEmpty, let id = template.id else { return }
+        templatePendingRename = nil
+        Task {
+            do {
+                try await repo.renameDailyJobTemplate(id: id, title: title)
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -193,12 +307,50 @@ struct DailyJobAssignSheet: View {
         }
     }
 
+    /// Drag reorder in the Progress section — persists immediately (not
+    /// batched into Save) so the new order sticks even if the manager just
+    /// dismisses the sheet afterward instead of tapping Save.
+    private func moveAssignment(from source: IndexSet, to destination: Int) {
+        var reordered = assignments
+        reordered.move(fromOffsets: source, toOffset: destination)
+        Task {
+            do {
+                try await repo.reorderDailyJobs(orderedAssignmentIds: reordered.map(\.id), staffId: shift.staffId)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     private func save() {
         isSaving = true
         errorMessage = nil
+
+        // The backfill below can touch many shifts concurrently — same
+        // "don't strand an in-flight batch if the app gets backgrounded"
+        // protection as bulkApprove (ManagerTimesheetsView.swift).
+        var bgTask: UIBackgroundTaskIdentifier = .invalid
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "BackfillDailyJobRepeat") {
+            UIApplication.shared.endBackgroundTask(bgTask)
+            bgTask = .invalid
+        }
+
         Task {
+            defer {
+                if bgTask != .invalid {
+                    UIApplication.shared.endBackgroundTask(bgTask)
+                    bgTask = .invalid
+                }
+            }
             do {
-                try await repo.setDailyJobs(for: shift, templateIds: selectedIds)
+                let orderedIds = orderedSelectedIds
+                try await repo.setDailyJobs(for: shift, templateIds: orderedIds)
+                try await repo.setDailyJobRepeat(staffId: shift.staffId, templateIds: orderedIds, enabled: repeatDaily)
+                if repeatDaily {
+                    await repo.backfillDailyJobRepeat(
+                        staffId: shift.staffId, templateIds: orderedIds, excludingShiftId: shift.id
+                    )
+                }
                 Haptics.submitSuccess()
                 dismiss()
             } catch {

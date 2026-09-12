@@ -44,14 +44,18 @@ struct ClockInCard: View {
 
     var body: some View {
         Card {
-            if let session {
-                if session.isActive {
-                    activeBody(session)
+            TimelineView(.periodic(from: .now, by: 5)) { _ in
+                if let session {
+                    if session.isActive {
+                        activeBody(session)
+                    } else {
+                        endedBody(session)
+                    }
+                } else if ServerClock.shared.now > shift.endDateTime {
+                    missedBody
                 } else {
-                    endedBody(session)
+                    idleBody
                 }
-            } else {
-                idleBody
             }
         }
         .confirmationDialog(
@@ -70,7 +74,7 @@ struct ClockInCard: View {
             }
             Button("Keep Working", role: .cancel) {}
         } message: {
-            if Date() < shift.endDateTime {
+            if ServerClock.shared.now < shift.endDateTime {
                 Text("Your rostered shift runs until \(RosterFormat.time(shift.rosteredEnd)). Ending now can't be undone.")
             } else {
                 Text("Ending your shift can't be undone.")
@@ -179,7 +183,7 @@ struct ClockInCard: View {
                     Button {
                         Task { await startShift() }
                     } label: {
-                        if isWorking {
+                        if isWorking || repo.isStartingClockSession {
                             ProgressView().tint(Theme.brand)
                         } else {
                             Label("Start Shift", systemImage: "play.fill")
@@ -188,13 +192,46 @@ struct ClockInCard: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Theme.brand)
-                    .disabled(isWorking)
+                    // repo.isStartingClockSession disables every today's-shift
+                    // card's Start button the moment any one of them begins,
+                    // not just the tapped card's own isWorking.
+                    .disabled(isWorking || repo.isStartingClockSession)
                 } else {
                     Image(systemName: "lock.fill")
                         .font(.body)
                         .foregroundStyle(Theme.textTertiary)
                 }
             }
+        }
+    }
+
+    // MARK: Missed clock-in
+
+    /// Shown once the shift's rostered end has passed with no clock-in at all — starting now
+    /// would produce a meaningless near-zero session, so skip straight to manual submission.
+    private var missedBody: some View {
+        let submittable = shift.isSubmittable(at: ServerClock.shared.now)
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Missed clocking in")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(submittable
+                     ? "This shift ended without a clock-in. You can still submit your hours directly."
+                     : "This shift ended without a clock-in. Hours can be submitted after \(RosterFormat.time(shift.rosteredEnd)).")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            Spacer()
+            Button {
+                onSubmitHours()
+            } label: {
+                Label("Submit hours", systemImage: "square.and.pencil")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Theme.brand)
+            .disabled(!submittable)
         }
     }
 
@@ -221,6 +258,20 @@ struct ClockInCard: View {
                             Text("Started \(RosterFormat.time(TimeConvert.hhmm(from: session.clockInAt)))")
                                 .font(.caption)
                                 .foregroundStyle(Theme.textSecondary)
+                        }
+                        // startShift writes the local session before the
+                        // server attendance record; a network failure at
+                        // that point leaves the local timer running with
+                        // nothing verified server-side yet. Surfacing it
+                        // here at least makes the gap visible — the write
+                        // itself gets a fresh attempt automatically the
+                        // moment End Shift is tapped (endShift's setData
+                        // merge doesn't require the doc, or clockInAt, to
+                        // already exist).
+                        if repo.attendance(forShift: shift.id)?.clockInAt == nil {
+                            Text("Clock-in hasn't synced to the server yet.")
+                                .font(.caption2)
+                                .foregroundStyle(Theme.warning)
                         }
                     }
                     Spacer()
@@ -279,6 +330,13 @@ struct ClockInCard: View {
         // check waits for the server's confirmation via the live listener,
         // so the button unlocks moments after a successful early clock-out.
         TimelineView(.periodic(from: .now, by: 5)) { _ in
+            // A verified clockOutAt still missing here (unlike clockInAt,
+            // which start's local mutation always precedes a write for)
+            // means the end-shift write never reached the server — offline,
+            // a transient failure, etc. Ending isn't itself restricted, so
+            // there was previously no way back to a button that retries it
+            // once the UI has already moved to this "ended" state.
+            let syncPending = repo.attendance(forShift: shift.id)?.clockOutAt == nil
             let submittable = shift.isSubmittable(at: ServerClock.shared.now)
                 || repo.attendance(forShift: shift.id)?.clockOutAt != nil
             HStack(spacing: 12) {
@@ -290,22 +348,42 @@ struct ClockInCard: View {
                     Text("\(RosterFormat.decimalHours(session.paidWorkedSeconds(rosterStart: shift.startDateTime) / 3600))h worked · \(brk > 0 ? "\(brk)m break" : "no break")")
                         .font(.caption)
                         .foregroundStyle(Theme.textSecondary)
-                    if !submittable {
+                    if syncPending {
+                        Text("Your clock-out hasn't synced to the server yet.")
+                            .font(.caption)
+                            .foregroundStyle(Theme.warning)
+                    } else if !submittable {
                         Text("Hours can be submitted after \(RosterFormat.time(shift.rosteredEnd)).")
                             .font(.caption)
                             .foregroundStyle(Theme.textTertiary)
                     }
                 }
                 Spacer()
-                Button {
-                    onSubmitHours()
-                } label: {
-                    Label("Submit hours", systemImage: "square.and.pencil")
-                        .font(.subheadline.weight(.semibold))
+                if syncPending {
+                    Button {
+                        Task { await retryEndSync() }
+                    } label: {
+                        if isWorking {
+                            ProgressView().tint(Theme.brand)
+                        } else {
+                            Label("Retry sync", systemImage: "arrow.clockwise")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.brand)
+                    .disabled(isWorking)
+                } else {
+                    Button {
+                        onSubmitHours()
+                    } label: {
+                        Label("Submit hours", systemImage: "square.and.pencil")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.brand)
+                    .disabled(!submittable)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.brand)
-                .disabled(!submittable)
             }
         }
     }
@@ -320,6 +398,14 @@ struct ClockInCard: View {
         await capture(action: .end)
     }
 
+    /// Re-attempts the end-shift server write after it failed to sync the
+    /// first time. Ending has no gating restriction, so this is exactly the
+    /// same flow as a fresh End Shift tap — a new GPS fix, then the same
+    /// `shift_attendance` write `commit(action: .end, fix:)` already does.
+    private func retryEndSync() async {
+        await capture(action: .end)
+    }
+
     /// Lenient allowance for starting a shift when the location's geofence
     /// is not enforced.
     private static let lenientStartRadius: Double = 250
@@ -331,8 +417,19 @@ struct ClockInCard: View {
     /// - END: never restricted — the fix is recorded for the audit trail
     ///   only, so staff can end from home without prompts.
     private func capture(action: GeofencePrompt.Action) async {
+        // Closes the double-start race window: starting awaits a GPS fix
+        // before repo.clockSession is ever set, so without a shared guard
+        // two different today's-shift cards could both proceed. Scoped to
+        // .start only — ending has no such restriction (see doc comment above).
+        if action == .start {
+            guard !repo.isStartingClockSession else { return }
+            repo.isStartingClockSession = true
+        }
         isWorking = true
-        defer { isWorking = false }
+        defer {
+            isWorking = false
+            if action == .start { repo.isStartingClockSession = false }
+        }
 
         let workplace = repo.workplace(for: shift)
         let enforced = workplace?.geofenceEnforced ?? false

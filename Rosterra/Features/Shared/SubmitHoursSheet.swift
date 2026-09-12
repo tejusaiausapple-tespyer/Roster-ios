@@ -131,6 +131,7 @@ struct SubmitHoursSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                 }
             }
             .alert("Pending Tasks", isPresented: $showingUncompletedTasksAlert) {
@@ -143,8 +144,7 @@ struct SubmitHoursSheet: View {
                 Text("You have \(pendingTasksCount) uncompleted task(s) for today. Have you completed all of your duties?")
             }
         }
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+        .phoneSheetDetents([.large])
     }
 
     private var summaryHeader: some View {
@@ -217,6 +217,7 @@ struct SubmitHoursSheet: View {
                 .background(Circle().fill(Theme.brand.opacity(0.12)))
         }
         .buttonStyle(.plain)
+        .pointerHover()
     }
 
     /// Editable-until-approved: pending/draft edits and rejected resubmissions

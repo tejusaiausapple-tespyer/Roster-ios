@@ -21,6 +21,7 @@ struct ChangeEmailView: View {
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Cancel") { dismiss() }
+                            .keyboardShortcut(.cancelAction)
                     }
                 }
         }
@@ -91,40 +92,25 @@ struct ChangeEmailView: View {
             let credential = EmailAuthProvider.credential(withEmail: currentUser.email ?? "", password: password)
             try await currentUser.reauthenticate(with: credential)
             
-            // 2. Send email verification to new email (updates once user clicks link)
+            // 2. Send verification to the new address. Auth.email (and therefore
+            //    Firestore / Face ID / passkey stores) only change after the
+            //    user clicks that link — do not write the new email or clear
+            //    quick-login secrets here.
             try await currentUser.sendEmailVerification(beforeUpdatingEmail: newEmail)
-            
-            // 3. Sync the Firestore user document. Two separate writes on
-            //    purpose: the deployed rules allow staff to self-update
-            //    `email`, but `emailChangeRequired` is NOT in the self-update
-            //    allowlist — combining them made the whole update fail with
-            //    permission-denied for staff. The flag clear is best-effort
-            //    (works for managers; for staff it needs the rules allowlist
-            //    to include 'emailChangeRequired', otherwise the manager can
-            //    clear it via "Cancel request").
-            //    NOTE: the email write is optimistic — Auth only changes after
-            //    the verification link is clicked. This mirrors how the web
-            //    app keeps Firestore in sync and is the only sync mechanism
-            //    for self-service changes.
-            let db = Firestore.firestore()
-            let isoFormatter = ISO8601DateFormatter()
-            let updatedAt = isoFormatter.string(from: Date())
-            try await db.collection("users").document(currentUser.uid).updateData([
-                "email": newEmail,
-                "updatedAt": updatedAt
-            ])
-            try? await db.collection("users").document(currentUser.uid).updateData([
+
+            PendingEmailChange.store(uid: currentUser.uid, email: newEmail)
+
+            // Best-effort: clear the manager-requested banner so staff aren't
+            // stuck after they've started the change. Staff may lack write
+            // permission for this field; that's fine.
+            let updatedAt = ISO8601DateFormatter().string(from: Date())
+            try? await Firestore.firestore().collection("users").document(currentUser.uid).updateData([
                 "emailChangeRequired": false,
                 "updatedAt": updatedAt
             ])
             
-            // 4. Clear biometric credentials to prevent logging in with stale credentials
-            BiometricCredentialStore.clear()
-            PasskeyStore.clear()
-            auth.refreshDeviceAuthEnabled()
-            
             Haptics.success()
-            onSuccess("Verification email sent to \(newEmail)!")
+            onSuccess("Verification email sent to \(newEmail). Tap the link to finish — your sign-in email updates after that.")
             dismiss()
         } catch {
             errors = [(error as? LocalizedError)?.errorDescription ?? error.localizedDescription]
@@ -136,6 +122,49 @@ struct ChangeEmailView: View {
         let emailRegEx = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,64}"
         let emailPred = NSPredicate(format:"SELF MATCHES %@", emailRegEx)
         return emailPred.evaluate(with: email)
+    }
+}
+
+/// Tracks an in-flight Auth email change so Firestore + Face ID / passkey
+/// stores update only after the user clicks the verification link.
+enum PendingEmailChange {
+    private static let emailKey = "roster_pending_email_change"
+    private static let uidKey = "roster_pending_email_change_uid"
+
+    static func store(uid: String, email: String) {
+        UserDefaults.standard.set(uid, forKey: uidKey)
+        UserDefaults.standard.set(email, forKey: emailKey)
+    }
+
+    static func clear() {
+        UserDefaults.standard.removeObject(forKey: uidKey)
+        UserDefaults.standard.removeObject(forKey: emailKey)
+    }
+
+    /// If Auth.email now matches the pending address, sync Firestore + local
+    /// quick-login emails. No-op until the verification link is clicked.
+    @MainActor
+    static func reconcileIfNeeded() async {
+        guard let uid = Auth.auth().currentUser?.uid,
+              let pending = UserDefaults.standard.string(forKey: emailKey),
+              UserDefaults.standard.string(forKey: uidKey) == uid else { return }
+
+        try? await Auth.auth().currentUser?.reload()
+        let current = Auth.auth().currentUser?.email?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard current == pending.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+            return
+        }
+
+        let updatedAt = ISO8601DateFormatter().string(from: Date())
+        try? await Firestore.firestore().collection("users").document(uid).updateData([
+            "email": pending,
+            "updatedAt": updatedAt
+        ])
+        BiometricCredentialStore.updateSavedEmail(pending)
+        PasskeyStore.updateSavedEmail(pending)
+        clear()
     }
 }
 

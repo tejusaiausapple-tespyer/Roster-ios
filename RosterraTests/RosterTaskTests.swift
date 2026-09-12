@@ -46,6 +46,7 @@ final class RosterTaskTests: XCTestCase {
     func testInactiveTaskNeverActive() {
         let task = makeTask(frequency: "daily", active: false)
         XCTAssertFalse(task.isActive(onDayKey: "2026-07-06", weekday: 1))
+        XCTAssertTrue(task.isScheduled(onDayKey: "2026-07-06", weekday: 1))
     }
 
     func testEndDateStopsRecurringTask() {

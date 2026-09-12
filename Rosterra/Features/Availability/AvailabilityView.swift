@@ -53,10 +53,8 @@ struct AvailabilityView: View {
             }
             .navigationTitle("Availability")
             .navigationBarTitleDisplayMode(.inline)
+            .screenTitlePill("Availability", icon: "calendar.badge.clock", fraction: 0)
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    ScreenTitlePill(title: "Availability", icon: "calendar.badge.clock")
-                }
                 if !isLocked {
                     ToolbarItem(placement: .topBarTrailing) {
                         ToolbarSaveButton(
@@ -149,6 +147,7 @@ struct AvailabilityView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .disabled(weekOffset == 0)
             .glassCapsule()
             .accessibilityLabel(weekOffset == 0 ? "This week" : "Jump to this week")
@@ -178,6 +177,7 @@ struct AvailabilityView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerHover()
         .disabled(!enabled)
         .glassCapsule(interactive: true)
         // Matches the shared WeekSelector's wording (Roster uses that component
@@ -232,6 +232,7 @@ struct AvailabilityView: View {
             .background(RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous).fill(Theme.card))
         }
         .buttonStyle(.plain)
+        .pointerHover()
         .opacity(isLocked ? 0.55 : 1)
         .disabled(isLocked)
     }

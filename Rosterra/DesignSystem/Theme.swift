@@ -53,6 +53,15 @@ enum Theme {
     static let card = Color.dynamic(light: 0xFFFFFF, dark: 0x1C1C1E)
     static let separator = Color.dynamic(light: 0xE5E7EB, dark: 0x2C2C2E)
 
+    /// Opaque iPad/Mac sidebar column — solid white in light mode.
+    static let sidebar = Color.dynamic(light: 0xFFFFFF, dark: 0x1C1C1E)
+    /// Pointer hover fill for unselected source-list rows.
+    static let sidebarRowHover = Color.dynamic(light: 0xF2F3F7, dark: 0x2A2A2E)
+    /// Recessed well behind an unselected sidebar icon.
+    static let sidebarIconWell = Color.dynamic(light: 0xF2F3F7, dark: 0x2C2C30)
+    /// Solid selected-row fill. Always the strong indigo so white labels stay readable.
+    static let sidebarSelection = Color(hex: 0x4F46E5)
+
     // MARK: Text
     static let textPrimary = Color.dynamic(light: 0x0F172A, dark: 0xF3F4F6)
     static let textSecondary = Color.dynamic(light: 0x5B6472, dark: 0x9CA7B8)

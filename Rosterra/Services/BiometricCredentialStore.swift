@@ -31,6 +31,13 @@ enum BiometricCredentialStore {
         UserDefaults.standard.string(forKey: emailKey)
     }
 
+    /// Update only the stored email (password Keychain item unchanged). Used
+    /// after Auth email verification completes for a pending change.
+    static func updateSavedEmail(_ email: String) {
+        guard hasCredential else { return }
+        UserDefaults.standard.set(email, forKey: emailKey)
+    }
+
     /// Save the credential behind a biometric-gated Keychain item.
     static func save(email: String, password: String) {
         guard let access = SecAccessControlCreateWithFlags(

@@ -8,17 +8,46 @@ struct RootView: View {
     @Environment(AuthViewModel.self) private var auth
     @Environment(\.scenePhase) private var scenePhase
 
+    @State private var versionCheck = AppVersionCheckViewModel()
+
     var body: some View {
         content
             .background(Theme.background.ignoresSafeArea())
             .animation(.easeInOut(duration: 0.28), value: route)
             .onAppear { auth.bind(repository: repo) }
+            // scenePhase transitions to .active on cold launch too (there's
+            // no separate "first activation" case), so this alone already
+            // covers launch — a `.task { await versionCheck.check() }`
+            // alongside it fired a second, redundant check on every cold
+            // launch instead of only on genuine return-from-background.
             .onChange(of: scenePhase) { _, newPhase in
                 switch newPhase {
-                case .active: auth.handleScenePhase(.active)
+                case .active:
+                    auth.handleScenePhase(.active)
+                    Task { await versionCheck.check() }
                 case .inactive: auth.handleScenePhase(.inactive)
                 case .background: auth.handleScenePhase(.background)
                 @unknown default: break
+                }
+            }
+            .fullScreenCover(isPresented: Binding(
+                get: { versionCheck.isUpdateRequired },
+                set: { _ in }
+            )) {
+                if case .required(let minimumVersion) = versionCheck.status {
+                    UpdateRequiredView(minimumVersion: minimumVersion)
+                }
+            }
+            .sheet(isPresented: Binding(
+                get: { versionCheck.isUpdateAvailable },
+                set: { isPresented in
+                    if !isPresented { versionCheck.dismissOptionalUpdate() }
+                }
+            )) {
+                if case .optional(let latestVersion) = versionCheck.status {
+                    UpdateAvailableSheet(latestVersion: latestVersion) {
+                        versionCheck.dismissOptionalUpdate()
+                    }
                 }
             }
             .onChange(of: repo.currentUser?.status) { _, status in

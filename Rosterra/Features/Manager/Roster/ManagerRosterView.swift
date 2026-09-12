@@ -66,8 +66,19 @@ struct ManagerRosterView: View {
     /// or change mid-session. nil = all staff.
     @State private var selectedStaffFilterId: String? = nil
     @State private var selectedStatusFilter: String = "All statuses"
+    /// Day whose availability breakdown is open in a popover, if any.
+    @State private var coverageDayKey: String? = nil
 
     private var hasStaff: Bool { repo.allUsers.contains { $0.role == .staff } }
+
+    private var staffMembers: [AppUser] { repo.allUsers.filter { $0.role == .staff } }
+
+    /// Who is free / booked / unavailable on a day. Deliberately reads the
+    /// unfiltered `repo.shifts`: coverage is a fact about the day, not about
+    /// whatever staff/status filter the manager happens to be looking through.
+    private func dayCoverage(_ dayKey: String) -> DayCoverage {
+        ShiftFit.coverage(staff: staffMembers, dateKey: dayKey, shifts: repo.shifts)
+    }
 
     private var now: Date { Date() }
     private var bounds: (min: Int, max: Int) { BusinessRules.shiftWeekOffsetBounds(at: now) }
@@ -170,6 +181,12 @@ struct ManagerRosterView: View {
         Set(weekShifts.map { $0.staffId }).count
     }
 
+    /// Roster-forecast cost — a quick "what will this week cost" glance, NOT
+    /// authoritative payroll. It's `scheduledHours * liveHourlyRate` with no
+    /// weekend/PH loading, overtime multipliers, or earnings-line exemptions
+    /// applied — only `PayrollCalculator.totals` (used by the actual Payroll
+    /// tab) accounts for those. Keep this simplified on purpose; just don't
+    /// let anyone mistake it for the real number.
     private var grossWages: Double {
         weekShifts.reduce(0.0) { sum, shift in
             let rate = repo.liveHourlyRate(forStaffId: shift.staffId, shiftDateKey: shift.date)
@@ -177,8 +194,12 @@ struct ManagerRosterView: View {
         }
     }
 
+    /// Same forecast-only caveat as `grossWages` — re-implements a simplified
+    /// `ote * rate / 100` independently of `PayrollCalculator`'s super-exemption
+    /// handling for extras, so it can drift from the authoritative Payroll
+    /// number if that exemption logic changes. Per-staff super where set,
+    /// otherwise the SG default.
     private var superannuation: Double {
-        // Per-staff super where set, otherwise the SG default (12%).
         weekShifts.reduce(0.0) { sum, shift in
             let user = repo.user(id: shift.staffId)
             let rate = repo.liveHourlyRate(forStaffId: shift.staffId, shiftDateKey: shift.date)
@@ -190,6 +211,8 @@ struct ManagerRosterView: View {
     private var totalLabourCost: Double {
         grossWages + superannuation
     }
+
+    private static let forecastHelpText = "Forecast from scheduled hours and live rates — excludes overtime multipliers and earnings-line exemptions. See Payroll for the authoritative total."
 
     private var weeklyDraftsCount: Int {
         weekShifts.filter { $0.status == .draft }.count
@@ -225,7 +248,7 @@ struct ManagerRosterView: View {
     }
 
     private var isPhone: Bool {
-        UIDevice.current.userInterfaceIdiom == .phone
+        PlatformUI.isPhone
     }
 
     private func layoutMode(for width: CGFloat) -> RosterLayoutMode {
@@ -264,11 +287,7 @@ struct ManagerRosterView: View {
             }
             .navigationTitle("Roster Planner")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    ScreenTitlePill(title: "Roster Planner", icon: "calendar.circle.fill")
-                }
-            }
+            .screenTitlePill("Roster Planner", icon: "calendar.circle.fill", fraction: 0)
             .confirmationDialog(
                 "Manage Shift",
                 isPresented: Binding(
@@ -371,7 +390,11 @@ struct ManagerRosterView: View {
 
             weekGrid(containerWidth: containerWidth)
         }
-        .frame(maxWidth: Theme.maxContentWidth)
+        // No Theme.maxContentWidth cap here (unlike the list/form screens
+        // that use it) — this is a 7-day data grid, not prose, so it should
+        // use all the width the window actually has (e.g. once the sidebar
+        // is collapsed) rather than stay pinned to a fixed width with dead
+        // space on both sides.
         .frame(maxWidth: .infinity)
         .safeAreaInset(edge: .bottom) {
             metricsBar
@@ -424,8 +447,10 @@ struct ManagerRosterView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .disabled(weekOffset <= bounds.min)
             .accessibilityLabel("Previous week")
+            .help("Previous week")
 
             Button {
                 weekOffset = 0
@@ -446,6 +471,7 @@ struct ManagerRosterView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .disabled(weekOffset == 0)
             .accessibilityLabel(weekOffset == 0 ? "This week" : "Back to this week")
 
@@ -459,8 +485,10 @@ struct ManagerRosterView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .disabled(weekOffset >= bounds.max)
             .accessibilityLabel("Next week")
+            .help("Next week")
         }
         .padding(.horizontal, 4)
         .glassCapsule()
@@ -504,6 +532,7 @@ struct ManagerRosterView: View {
                     .glassCapsule(interactive: true)
             }
             .accessibilityLabel("Delete shifts")
+            .help("Delete shifts")
         }
     }
 
@@ -574,6 +603,7 @@ struct ManagerRosterView: View {
                 .glassCapsule(interactive: true)
         }
         .accessibilityLabel("More actions")
+        .help("More actions")
     }
 
     private var addShiftButton: some View {
@@ -595,8 +625,10 @@ struct ManagerRosterView: View {
             .glassProminentSurface(in: Capsule(style: .continuous), tint: Theme.brandStrong)
         }
         .buttonStyle(.plain)
+        .pointerHover()
         .disabled(!hasStaff)
         .accessibilityLabel("Add shift")
+        .help("Add shift")
     }
 
     // MARK: Week grid (pinned headers + shared vertical scroll)
@@ -604,7 +636,8 @@ struct ManagerRosterView: View {
     private func weekGrid(containerWidth: CGFloat) -> some View {
         let hPad: CGFloat = 24
         let dividerAllowance: CGFloat = 6 // ~6 hairline dividers between 7 columns
-        let available = min(containerWidth, Theme.maxContentWidth) - hPad * 2 - dividerAllowance
+        // Not capped at Theme.maxContentWidth — see weekGridLayout.
+        let available = containerWidth - hPad * 2 - dividerAllowance
         // The 7 day columns always fit the width — no horizontal scrolling.
         let colWidth = available / 7
 
@@ -624,15 +657,17 @@ struct ManagerRosterView: View {
 
             // Shared vertical scroll — all columns scroll together
             ScrollView(.vertical, showsIndicators: false) {
-                TitlePillCollapseReporter()
-                HStack(alignment: .top, spacing: 0) {
-                    ForEach(0..<7, id: \.self) { i in
-                        dayColumn(index: i).frame(width: colWidth)
-                        if i < 6 { Divider().overlay(Theme.separator) }
+                VStack(spacing: 0) {
+                    TitlePillCollapseReporter()
+                    HStack(alignment: .top, spacing: 0) {
+                        ForEach(0..<7, id: \.self) { i in
+                            dayColumn(index: i).frame(width: colWidth)
+                            if i < 6 { Divider().overlay(Theme.separator) }
+                        }
                     }
                 }
             }
-            .refreshable { await repo.refreshFromServer() }
+            .macRefreshable { await repo.refreshFromServer() }
         }
         .background(Theme.card)
         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerLarge, style: .continuous))
@@ -685,16 +720,91 @@ struct ManagerRosterView: View {
                         .glassCapsule(interactive: true)
                 }
                 .buttonStyle(.plain)
+                .pointerHover()
                 .disabled(!hasStaff)
                 .accessibilityLabel("Add shift on \(RosterFormat.date(dayKey))")
+                .help("Add shift on \(RosterFormat.date(dayKey))")
             }
 
-            Text(count == 0 ? "—" : "\(count) shift\(count == 1 ? "" : "s")")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(Theme.textTertiary)
+            coveragePill(dayKey: dayKey, shiftCount: count)
         }
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity)
+    }
+
+    /// "2 shifts · 4 free" under each day number — the answer to "who can I
+    /// still use on this day", visible while planning, without opening a sheet
+    /// or leaving for the Availability tab. Tap for the names.
+    private func coveragePill(dayKey: String, shiftCount: Int) -> some View {
+        let coverage = dayCoverage(dayKey)
+        let freeCount = coverage.free.count
+
+        return Button {
+            coverageDayKey = dayKey
+        } label: {
+            HStack(spacing: 4) {
+                Text(shiftCount == 0 ? "—" : "\(shiftCount) shift\(shiftCount == 1 ? "" : "s")")
+                    .foregroundStyle(Theme.textTertiary)
+                Text("·")
+                    .foregroundStyle(Theme.textTertiary.opacity(0.5))
+                Text("\(freeCount) free")
+                    .foregroundStyle(freeCount == 0 ? Theme.warning : Theme.accent)
+            }
+            .font(.caption2.weight(.medium))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointerHover()
+        .popover(isPresented: Binding(
+            get: { coverageDayKey == dayKey },
+            set: { if !$0, coverageDayKey == dayKey { coverageDayKey = nil } }
+        )) {
+            coveragePopover(dayKey: dayKey, coverage: coverage)
+        }
+        .accessibilityLabel("\(RosterFormat.date(dayKey)): \(shiftCount) shifts, \(freeCount) staff free")
+    }
+
+    private func coveragePopover(dayKey: String, coverage: DayCoverage) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(RosterFormat.date(dayKey))
+                .font(.headline)
+                .foregroundStyle(Theme.textPrimary)
+
+            coverageGroup("Free", coverage.free,
+                          tint: Theme.accent, icon: "checkmark.circle.fill", dayKey: dayKey)
+            coverageGroup("Already rostered", coverage.rostered,
+                          tint: Theme.textSecondary, icon: "clock.arrow.circlepath", dayKey: dayKey)
+            coverageGroup("Unavailable", coverage.unavailable,
+                          tint: Theme.error, icon: "xmark.circle.fill", dayKey: dayKey)
+        }
+        .padding(16)
+        .frame(minWidth: 280, maxWidth: 340, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func coverageGroup(_ title: String, _ users: [AppUser],
+                               tint: Color, icon: String, dayKey: String) -> some View {
+        if !users.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 5) {
+                    Image(systemName: icon).font(.caption2).foregroundStyle(tint)
+                    Text("\(title) · \(users.count)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(tint)
+                }
+                ForEach(users) { user in
+                    HStack(spacing: 6) {
+                        Text(user.fullName)
+                            .font(.caption)
+                            .foregroundStyle(Theme.textPrimary)
+                        Spacer(minLength: 8)
+                        Text(user.dayAvailability(onKey: dayKey).summary)
+                            .font(.caption2)
+                            .foregroundStyle(Theme.textTertiary)
+                    }
+                }
+            }
+        }
     }
 
     private func dayColumn(index: Int) -> some View {
@@ -714,7 +824,12 @@ struct ManagerRosterView: View {
             }
         }
         .padding(10)
-        .frame(maxWidth: .infinity, minHeight: 260, alignment: .top)
+        // maxHeight: .infinity, not just minHeight — otherwise each column
+        // sizes to its own content (max(content, 260)) independently of its
+        // siblings in the row, so days with fewer shifts fall short of the
+        // tallest day and the Divider()s between columns (which do stretch)
+        // end up looking like they stop partway down.
+        .frame(maxWidth: .infinity, minHeight: 260, maxHeight: .infinity, alignment: .top)
         .background(isTargeted ? Theme.brand.opacity(0.08) : Color.clear)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: isTargeted)
         .contentShape(Rectangle())
@@ -756,8 +871,10 @@ struct ManagerRosterView: View {
             )
         }
         .buttonStyle(.plain)
+        .pointerHover()
         .disabled(!hasStaff)
         .accessibilityLabel("Add shift on \(RosterFormat.date(dayKey))")
+        .help("Add shift on \(RosterFormat.date(dayKey))")
     }
 
     // Shift card — CONTENT layer, deliberately solid (no glass) for legibility.
@@ -799,12 +916,18 @@ struct ManagerRosterView: View {
                         .font(.footnote.weight(.bold))
                         .foregroundStyle(Theme.textPrimary)
 
-                    if let dept = shift.department, !dept.isEmpty {
-                        Text(dept.uppercased())
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(Theme.textTertiary)
-                            .lineLimit(1)
-                    }
+                    // Always reserve this line's height, even with no
+                    // department — otherwise cards without one render a
+                    // row shorter than cards with one, breaking the grid's
+                    // uniform card shape (a placeholder space + zero opacity,
+                    // not a conditional view).
+                    let dept = shift.department
+                    let hasDept = dept?.isEmpty == false
+                    Text(hasDept ? dept!.uppercased() : " ")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                        .opacity(hasDept ? 1 : 0)
                 }
 
                 HStack {
@@ -837,6 +960,7 @@ struct ManagerRosterView: View {
             )
         }
         .buttonStyle(.plain)
+        .pointerHover()
         // Only draft shifts can be dragged (moved/copied). Once a shift is
         // published it is locked in place — but new shifts can still be added.
         .draggableIf(isDraft, shift.id)
@@ -873,7 +997,11 @@ struct ManagerRosterView: View {
                        text: "\(weeklyDraftsCount) draft\(weeklyDraftsCount == 1 ? "" : "s")",
                        tint: weeklyDraftsCount > 0 ? Theme.warning : Theme.textPrimary)
             metricChip(icon: "dollarsign.circle", text: "Gross $\(String(format: "%.0f", grossWages))")
+                .help(Self.forecastHelpText)
+                .accessibilityHint(Self.forecastHelpText)
             metricChip(icon: "chart.bar", text: "Total $\(String(format: "%.0f", totalLabourCost)) inc. Super")
+                .help(Self.forecastHelpText)
+                .accessibilityHint(Self.forecastHelpText)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 10)
@@ -924,7 +1052,7 @@ struct ManagerRosterView: View {
                     .padding(.bottom, 80)
                     .tracksTitlePillCollapse()
                 }
-                .refreshable {
+                .macRefreshable {
                     await repo.refreshFromServer()
                 }
             }
@@ -1020,8 +1148,11 @@ struct ManagerRosterView: View {
 
                     HStack(spacing: 12) {
                         Label(shift.rosteredStart + " - " + shift.rosteredEnd, systemImage: "clock")
+                            .lineLimit(1)
                         if let dept = shift.department, !dept.isEmpty {
                             Label(dept, systemImage: "briefcase")
+                                .lineLimit(1)
+                                .truncationMode(.tail)
                         }
                     }
                     .font(.caption)
@@ -1053,6 +1184,7 @@ struct ManagerRosterView: View {
             )
         }
         .buttonStyle(.plain)
+        .pointerHover()
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
                 deleteShift(shift)
@@ -1075,6 +1207,30 @@ struct ManagerRosterView: View {
                     Label("Publish", systemImage: "paperplane")
                 }
                 .tint(Theme.accent)
+            }
+        }
+        // Right-click equivalent of the swipe actions above (mirrors
+        // gridShiftCard's contextMenu) — a swipe reveal needs a trackpad on
+        // Mac Catalyst, so this is the only path for a mouse-only user.
+        .contextMenu {
+            Button {
+                activeSheet = .edit(shift)
+            } label: {
+                Label("Edit Shift", systemImage: "pencil")
+            }
+
+            if isDraft {
+                Button {
+                    pendingPublishShift = shift
+                } label: {
+                    Label("Publish Shift", systemImage: "paperplane")
+                }
+            }
+
+            Button(role: .destructive) {
+                deleteShift(shift)
+            } label: {
+                Label("Delete Shift", systemImage: "trash")
             }
         }
     }
@@ -1112,6 +1268,7 @@ struct ManagerRosterView: View {
                     )
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .disabled(!hasStaff)
         }
         .frame(maxWidth: .infinity)
@@ -1142,6 +1299,7 @@ struct ManagerRosterView: View {
                         .shadow(color: Theme.brandStrong.opacity(0.3), radius: 8, x: 0, y: 4)
                 }
                 .buttonStyle(.plain)
+                .pointerHover()
                 .disabled(!hasStaff)
                 .padding(.trailing, 20)
                 .padding(.bottom, 20)
@@ -1151,11 +1309,33 @@ struct ManagerRosterView: View {
 
     // MARK: - Actions
 
+    /// Dedup key for idempotency: a shift is considered "already copied" if
+    /// another shift exists for the same staff member, target date, and
+    /// start time. This makes retrying an interrupted copy (backgrounded or
+    /// killed mid-batch) safe — already-copied rows are skipped rather than
+    /// duplicated.
+    private func copyDedupKey(staffId: String, date: String, start: String) -> String {
+        "\(staffId)|\(date)|\(start)"
+    }
+
     private func copyLastWeek() {
         guard !isCopyingWeek else { return }
         isCopyingWeek = true
+
+        var bgTask: UIBackgroundTaskIdentifier = .invalid
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "CopyLastWeekRoster") {
+            UIApplication.shared.endBackgroundTask(bgTask)
+            bgTask = .invalid
+        }
+
         Task {
-            defer { isCopyingWeek = false }
+            defer {
+                isCopyingWeek = false
+                if bgTask != .invalid {
+                    UIApplication.shared.endBackgroundTask(bgTask)
+                    bgTask = .invalid
+                }
+            }
             do {
                 let lastWeekMonday = RosterCalendar.addDays(-7, to: monday)
                 let lastWeekDays = RosterCalendar.weekDays(for: lastWeekMonday)
@@ -1174,27 +1354,79 @@ struct ManagerRosterView: View {
                     return
                 }
 
-                for oldShift in lastWeekShifts {
-                    guard let oldDate = RosterCalendar.dateFromKey(oldShift.date) else { continue }
+                // Idempotency guard: look up shifts already present in the
+                // target week (this week) so a retried/duplicate tap of
+                // "Copy Last Week" — e.g. after the app was backgrounded
+                // mid-copy — doesn't create duplicate shifts for days that
+                // already succeeded.
+                let thisWeekKeys = RosterCalendar.weekDays(for: monday).map { RosterCalendar.dayFormatter.string(from: $0) }
+                guard let thisWeekFirstKey = thisWeekKeys.first, let thisWeekLastKey = thisWeekKeys.last else { return }
+                let existingSnap = try await db.collection("shifts")
+                    .whereField("date", isGreaterThanOrEqualTo: thisWeekFirstKey)
+                    .whereField("date", isLessThanOrEqualTo: thisWeekLastKey)
+                    .getDocuments()
+                let existingShifts = existingSnap.documents.compactMap { Shift(id: $0.documentID, data: $0.data()) }
+                var existingKeys = Set(existingShifts.map {
+                    copyDedupKey(staffId: $0.staffId, date: $0.date, start: $0.rosteredStart)
+                })
+
+                let toCopy: [(staffId: String, date: String, start: String, end: String, breakMinutes: Int, location: String?, department: String?, notes: String?)] = lastWeekShifts.compactMap { oldShift in
+                    guard let oldDate = RosterCalendar.dateFromKey(oldShift.date) else { return nil }
                     let newDate = RosterCalendar.addDays(7, to: oldDate)
                     let newDateKey = RosterCalendar.dayFormatter.string(from: newDate)
-
-                    try await repo.saveShift(
-                        id: nil,
-                        staffId: oldShift.staffId,
-                        date: newDateKey,
-                        start: oldShift.rosteredStart,
-                        end: oldShift.rosteredEnd,
-                        breakMinutes: oldShift.breakMinutes,
-                        location: oldShift.location,
-                        department: oldShift.department,
-                        notes: oldShift.notes,
-                        status: .draft
-                    )
+                    let key = copyDedupKey(staffId: oldShift.staffId, date: newDateKey, start: oldShift.rosteredStart)
+                    guard !existingKeys.contains(key) else { return nil }
+                    existingKeys.insert(key)
+                    return (oldShift.staffId, newDateKey, oldShift.rosteredStart, oldShift.rosteredEnd,
+                            oldShift.breakMinutes, oldShift.location, oldShift.department, oldShift.notes)
                 }
-                toast = ToastMessage(kind: .success,
-                                     text: "Copied \(lastWeekShifts.count) shift\(lastWeekShifts.count == 1 ? "" : "s") as drafts")
-                Haptics.success()
+
+                guard !toCopy.isEmpty else {
+                    toast = ToastMessage(kind: .info, text: "Last week's shifts are already copied to this week")
+                    return
+                }
+
+                let failedCount = await withTaskGroup(of: Bool.self, returning: Int.self) { group in
+                    for shift in toCopy {
+                        group.addTask {
+                            do {
+                                try await repo.saveShift(
+                                    id: nil,
+                                    staffId: shift.staffId,
+                                    date: shift.date,
+                                    start: shift.start,
+                                    end: shift.end,
+                                    breakMinutes: shift.breakMinutes,
+                                    location: shift.location,
+                                    department: shift.department,
+                                    notes: shift.notes,
+                                    status: .draft
+                                )
+                                return true
+                            } catch {
+                                return false
+                            }
+                        }
+                    }
+                    var failures = 0
+                    for await succeeded in group {
+                        if !succeeded { failures += 1 }
+                    }
+                    return failures
+                }
+
+                let copiedCount = toCopy.count - failedCount
+                if failedCount == 0 {
+                    Haptics.success()
+                    toast = ToastMessage(kind: .success,
+                                         text: "Copied \(copiedCount) shift\(copiedCount == 1 ? "" : "s") as drafts")
+                } else if copiedCount == 0 {
+                    Haptics.error()
+                    toast = ToastMessage(kind: .error, text: "Copy failed. Please try again.")
+                } else {
+                    Haptics.error()
+                    toast = ToastMessage(kind: .error, text: "\(copiedCount) copied, \(failedCount) failed. Tap Copy Last Week again to retry.")
+                }
             } catch {
                 toast = ToastMessage(kind: .error, text: "Copy failed. \(error.localizedDescription)")
                 Haptics.error()
@@ -1301,14 +1533,44 @@ struct ManagerRosterView: View {
             ? allWeekShifts
             : allWeekShifts.filter { $0.staffId == request.staffId }
 
+        var bgTask: UIBackgroundTaskIdentifier = .invalid
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "BulkDeleteShifts") {
+            UIApplication.shared.endBackgroundTask(bgTask)
+            bgTask = .invalid
+        }
+
         Task {
-            var failures = 0
-            for shift in targets {
-                do { try await repo.deleteShift(id: shift.id) } catch { failures += 1 }
+            defer {
+                if bgTask != .invalid {
+                    UIApplication.shared.endBackgroundTask(bgTask)
+                    bgTask = .invalid
+                }
+            }
+            let failures = await withTaskGroup(of: Bool.self, returning: Int.self) { group in
+                for shift in targets {
+                    group.addTask {
+                        do {
+                            try await repo.deleteShift(id: shift.id)
+                            return true
+                        } catch {
+                            return false
+                        }
+                    }
+                }
+                var failureCount = 0
+                for await succeeded in group {
+                    if !succeeded { failureCount += 1 }
+                }
+                return failureCount
             }
             if failures > 0 {
+                // No separate retry list needed: `targets` is recomputed
+                // from the live `allWeekShifts` on every call, so a
+                // successfully-deleted shift simply won't be in it next
+                // time — retrying the same bulk action naturally retries
+                // only the ones that are still there (the failures).
                 toast = ToastMessage(kind: .error,
-                                     text: "Deleted \(targets.count - failures) of \(targets.count) shifts — \(failures) failed")
+                                     text: "Deleted \(targets.count - failures) of \(targets.count) shifts — \(failures) failed. Retry to try those again.")
                 Haptics.error()
             } else {
                 toast = ToastMessage(kind: .success,

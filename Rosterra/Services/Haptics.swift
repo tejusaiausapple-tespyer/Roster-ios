@@ -19,8 +19,12 @@ enum Haptics {
     static func rigid() { impact(.rigid) }
 
     static func selection() {
+        #if targetEnvironment(macCatalyst)
+        return
+        #else
         let generator = UISelectionFeedbackGenerator()
         generator.selectionChanged()
+        #endif
     }
 
     static func success() { notify(.success) }
@@ -73,14 +77,22 @@ enum Haptics {
     // MARK: - Generators
 
     private static func impact(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
+        #if targetEnvironment(macCatalyst)
+        return
+        #else
         let generator = UIImpactFeedbackGenerator(style: style)
         generator.prepare()
         generator.impactOccurred()
+        #endif
     }
 
     private static func notify(_ type: UINotificationFeedbackGenerator.FeedbackType) {
+        #if targetEnvironment(macCatalyst)
+        return
+        #else
         let generator = UINotificationFeedbackGenerator()
         generator.prepare()
         generator.notificationOccurred(type)
+        #endif
     }
 }

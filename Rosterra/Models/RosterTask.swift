@@ -52,16 +52,22 @@ struct RosterTask: Identifiable, Codable {
         return Set(ids.filter { !$0.isEmpty })
     }
 
-    /// Whether the task is scheduled on the given day.
+    /// Whether the task's recurrence pattern places it on the given day,
+    /// independent of its paused state. Managers use this to keep paused tasks
+    /// visible and resumable; staff should use `isActive`.
     /// `weekday` uses 1=Monday...7=Sunday (RosterCalendar convention).
-    func isActive(onDayKey dayKey: String, weekday: Int) -> Bool {
-        guard active else { return false }
+    func isScheduled(onDayKey dayKey: String, weekday: Int) -> Bool {
         if let endDate, dayKey > endDate { return false }
         switch frequency {
         case "once":   return date == dayKey
         case "weekly": return dayOfWeek?.contains(weekday) ?? false
         default:       return true // "daily"
         }
+    }
+
+    /// Whether the task is active and scheduled on the given day.
+    func isActive(onDayKey dayKey: String, weekday: Int) -> Bool {
+        active && isScheduled(onDayKey: dayKey, weekday: weekday)
     }
 }
 

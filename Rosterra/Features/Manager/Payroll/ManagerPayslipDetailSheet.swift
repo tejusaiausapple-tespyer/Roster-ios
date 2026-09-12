@@ -14,6 +14,13 @@ struct ManagerPayslipDetailSheet: View {
     let payslipId: String
 
     @State private var slip: Payslip?
+    /// The snapshot this editing session's edits are diffed against for
+    /// field-level audit entries (see `save()`) — kept in sync with `slip`
+    /// both by `seedFromRepo` AND explicitly after every successful save
+    /// (the live-listener reseed alone can lag behind a just-completed save
+    /// by enough for a second back-to-back save to diff against a stale
+    /// baseline; see `save()`/`transition()`).
+    @State private var originalSlip: Payslip?
     @State private var seeded = false
     @State private var isDirty = false
     @State private var isWorking = false
@@ -22,8 +29,19 @@ struct ManagerPayslipDetailSheet: View {
     @State private var showPDFPreview = false
 
     enum WorkflowAction: Identifiable {
-        case approve, submit, correct
+        case approve, submit, correct, publish, regenerateOutsideWindow
         var id: String { String(describing: self) }
+    }
+
+    /// Manager timesheets older than `managerTimesheetWindowDaysBack` (90
+    /// days) fall outside `fetchApprovedWorkedHours`'s query — regenerating
+    /// a draft for a period that old would recompute it down to zero hours
+    /// even though the original approved hours are still real, just outside
+    /// the window. Route through a confirmation instead of silently wiping
+    /// a previously-correct draft.
+    private func isPeriodOutsideTimesheetWindow(_ slip: Payslip) -> Bool {
+        guard let periodEnd = RosterCalendar.dateFromKey(slip.periodEnd) else { return false }
+        return periodEnd < BusinessRules.managerTimesheetCutoff()
     }
 
     var body: some View {
@@ -41,12 +59,14 @@ struct ManagerPayslipDetailSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if isWorking {
                         ProgressView()
                     } else if isDirty, slip?.status.isEditable == true {
                         Button("Save") { save() }
+                            .keyboardShortcut(.defaultAction)
                     }
                 }
             }
@@ -80,7 +100,7 @@ struct ManagerPayslipDetailSheet: View {
             employeeSection(slip)
             hoursSection(editable: editable)
             earningsSection(slip, editable: editable)
-            deductionsSection(editable: editable)
+            deductionsSection(slip, editable: editable)
             superSection(slip, totals: totals)
             summarySection(totals)
             pdfSection(slip)
@@ -150,17 +170,25 @@ struct ManagerPayslipDetailSheet: View {
         }
     }
 
+    /// Clamps a numeric-field binding to `>= 0` — hours, rates, and money
+    /// amounts have no valid negative value, but a bare `TextField` binding
+    /// otherwise accepts one (typed directly, or via a pasted value), which
+    /// would flow straight into PayrollCalculator's totals unguarded.
+    private func nonNegative(_ binding: Binding<Double>) -> Binding<Double> {
+        Binding(get: { binding.wrappedValue }, set: { binding.wrappedValue = max(0, $0) })
+    }
+
     private func hoursRow(_ label: String, hours: Binding<Double>, rate: Binding<Double>, editable: Bool) -> some View {
         HStack {
             Text(label).font(.subheadline)
             Spacer()
-            TextField("0", value: hours, format: .number.precision(.fractionLength(0...2)))
+            TextField("0", value: nonNegative(hours), format: .number.precision(.fractionLength(0...2)))
                 .keyboardType(.decimalPad)
                 .multilineTextAlignment(.trailing)
                 .frame(width: 64)
                 .disabled(!editable)
             Text("h ×").font(.caption).foregroundStyle(Theme.textTertiary)
-            TextField("0.00", value: rate, format: .number.precision(.fractionLength(2)))
+            TextField("0.00", value: nonNegative(rate), format: .number.precision(.fractionLength(2)))
                 .keyboardType(.decimalPad)
                 .multilineTextAlignment(.trailing)
                 .frame(width: 72)
@@ -222,24 +250,45 @@ struct ManagerPayslipDetailSheet: View {
         }
     }
 
-    private func deductionsSection(editable: Bool) -> some View {
+    private func deductionsSection(_ slip: Payslip, editable: Bool) -> some View {
         Section {
+            Toggle("Claims tax-free threshold", isOn: binding(\.claimsTaxFreeThreshold))
+                .tint(Theme.brand)
+                .disabled(!editable)
+                .onChange(of: slip.claimsTaxFreeThreshold) { markDirty() }
             moneyRow("PAYG withholding", value: binding(\.payg), editable: editable)
+            if editable {
+                Button {
+                    recalculatePAYG()
+                } label: {
+                    Label("Recalculate from ATO tax table", systemImage: "arrow.clockwise")
+                }
+            }
             moneyRow("Other deductions", value: binding(\.otherDeductions), editable: editable)
             moneyRow("Salary sacrifice", value: binding(\.salarySacrifice), editable: editable)
             TextField("Deduction notes", text: binding(\.deductionNotes), axis: .vertical)
                 .font(.subheadline)
                 .disabled(!editable)
-                .onChange(of: slip?.deductionNotes ?? "") { markDirty() }
+                .onChange(of: slip.deductionNotes) { markDirty() }
             TextField("Payslip notes", text: binding(\.notes), axis: .vertical)
                 .font(.subheadline)
                 .disabled(!editable)
-                .onChange(of: slip?.notes ?? "") { markDirty() }
+                .onChange(of: slip.notes) { markDirty() }
         } header: {
             Text("Deductions & notes")
         } footer: {
-            Text("PAYG is entered manually from the ATO tax tables for the employee's declaration.")
+            Text("PAYG auto-calculates from the ATO weekly tax table (Schedule 1) using the threshold declaration above, whenever a draft is (re)generated or you tap Recalculate. It stays editable — adjust it for a HELP/STSL debt, foreign residency, or other declaration the standard formula doesn't cover.")
         }
+    }
+
+    /// Re-derives PAYG from current hours/rates/extras via the ATO formula —
+    /// an explicit action (not live-recalculated on every keystroke) so it
+    /// never silently clobbers a manager's deliberate override.
+    private func recalculatePAYG() {
+        guard var current = slip else { return }
+        current.payg = PayrollCalculator.calculatedPAYG(for: current)
+        slip = current
+        markDirty()
     }
 
     private func moneyRow(_ label: String, value: Binding<Double>, editable: Bool) -> some View {
@@ -247,7 +296,7 @@ struct ManagerPayslipDetailSheet: View {
             Text(label).font(.subheadline)
             Spacer()
             Text("$").foregroundStyle(Theme.textTertiary)
-            TextField("0.00", value: value, format: .number.precision(.fractionLength(2)))
+            TextField("0.00", value: nonNegative(value), format: .number.precision(.fractionLength(2)))
                 .keyboardType(.decimalPad)
                 .multilineTextAlignment(.trailing)
                 .frame(width: 90)
@@ -261,7 +310,7 @@ struct ManagerPayslipDetailSheet: View {
             HStack {
                 Text("Super guarantee").font(.subheadline)
                 Spacer()
-                TextField("12", value: binding(\.superRate), format: .number.precision(.fractionLength(0...2)))
+                TextField("12", value: nonNegative(binding(\.superRate)), format: .number.precision(.fractionLength(0...2)))
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
                     .frame(width: 56)
@@ -318,13 +367,25 @@ struct ManagerPayslipDetailSheet: View {
         Section("Workflow") {
             switch slip.status {
             case .draft:
+                Button { confirmAction = .publish } label: {
+                    Label("Publish now", systemImage: "paperplane")
+                }
                 Button { transition(to: .underReview) } label: {
                     Label("Start review", systemImage: "eye")
                 }
-                Button { transition(to: .draft, regenerate: true) } label: {
+                Button {
+                    if isPeriodOutsideTimesheetWindow(slip) {
+                        confirmAction = .regenerateOutsideWindow
+                    } else {
+                        transition(to: .draft, regenerate: true)
+                    }
+                } label: {
                     Label("Regenerate from timesheets", systemImage: "arrow.clockwise")
                 }
             case .underReview:
+                Button { confirmAction = .publish } label: {
+                    Label("Publish now", systemImage: "paperplane")
+                }
                 Button { confirmAction = .approve } label: {
                     Label("Approve", systemImage: "checkmark.seal")
                 }
@@ -384,6 +445,8 @@ struct ManagerPayslipDetailSheet: View {
         case .approve: return "Approve payslip?"
         case .submit: return "Submit payslip?"
         case .correct: return "Issue corrected copy?"
+        case .publish: return "Publish payslip?"
+        case .regenerateOutsideWindow: return "Regenerate this old period?"
         case nil: return ""
         }
     }
@@ -393,6 +456,8 @@ struct ManagerPayslipDetailSheet: View {
         case .approve: return "Approving locks the amounts. You can reopen the review before submitting."
         case .submit: return "Submitting publishes this payslip to \(slip?.staffName ?? "the staff member") and locks the pay period. This can't be undone — corrections require a new copy."
         case .correct: return "The submitted payslip is archived and an editable draft copy is created."
+        case .publish: return "This publishes the payslip straight to \(slip?.staffName ?? "the staff member") — they can see it immediately, skipping the review/approve steps. This can't be undone — corrections require a new copy."
+        case .regenerateOutsideWindow: return "This pay period is more than \(BusinessRules.managerTimesheetWindowDaysBack) days old — approved timesheets that far back are outside the lookup window, so regenerating will recompute this draft down to zero hours instead of refreshing it. Are you sure?"
         case nil: return ""
         }
     }
@@ -406,6 +471,10 @@ struct ManagerPayslipDetailSheet: View {
             Button("Submit to staff") { transition(to: .submitted) }
         case .correct:
             Button("Create corrected copy") { correct() }
+        case .publish:
+            Button("Publish") { publish() }
+        case .regenerateOutsideWindow:
+            Button("Regenerate anyway", role: .destructive) { transition(to: .draft, regenerate: true) }
         case nil:
             EmptyView()
         }
@@ -451,6 +520,7 @@ struct ManagerPayslipDetailSheet: View {
         guard force else { return }
         if let fresh = repo.payslips.first(where: { $0.id == payslipId }) {
             slip = fresh
+            originalSlip = fresh
             isDirty = false
         }
     }
@@ -468,7 +538,8 @@ struct ManagerPayslipDetailSheet: View {
         Task {
             defer { isWorking = false }
             do {
-                try await repo.savePayslip(slip, editedBy: manager)
+                try await repo.savePayslip(slip, original: originalSlip ?? slip, editedBy: manager)
+                originalSlip = slip
                 isDirty = false
                 toast = ToastMessage(kind: .success, text: "Payslip saved.")
                 Haptics.success()
@@ -491,9 +562,18 @@ struct ManagerPayslipDetailSheet: View {
                     toast = ToastMessage(kind: .success, text: "Recalculated from current timesheets.")
                 } else {
                     // Persist pending edits with the transition so nothing is lost.
-                    if isDirty { try await repo.savePayslip(slip, editedBy: manager) }
-                    let latest = repo.payslips.first(where: { $0.id == slip.id }) ?? slip
-                    try await repo.setPayslipStatus(latest, to: status, by: manager)
+                    if isDirty {
+                        try await repo.savePayslip(slip, original: originalSlip ?? slip, editedBy: manager)
+                        originalSlip = slip
+                    }
+                    // Use the just-saved local copy directly rather than
+                    // re-reading repo.payslips — savePayslip already
+                    // succeeded with exactly this data, and the local
+                    // Firestore cache reflecting a pending write back before
+                    // its own completion handler resolves isn't guaranteed,
+                    // so re-reading here risked building the status
+                    // transition from a stale pre-edit snapshot.
+                    try await repo.setPayslipStatus(slip, to: status, by: manager)
                     toast = ToastMessage(kind: .success, text: status == .submitted
                         ? "Submitted — now visible to \(slip.staffName)."
                         : "Moved to \(status.label).")
@@ -502,6 +582,38 @@ struct ManagerPayslipDetailSheet: View {
                 Haptics.success()
             } catch {
                 toast = ToastMessage(kind: .error, text: "Couldn't update. \(error.localizedDescription)")
+                Haptics.error()
+            }
+        }
+    }
+
+    /// Fast-path publish — jumps straight from draft/underReview/approved to
+    /// submitted in one action, bypassing the granular Start Review/Approve
+    /// steps above (which remain available for managers who want them).
+    private func publish() {
+        guard let slip, let manager = repo.currentUser else { return }
+        confirmAction = nil
+        guard slip.baseHourlyRate > 0 else {
+            toast = ToastMessage(kind: .error, text: "Set an hourly rate before publishing — this payslip currently has none.")
+            Haptics.error()
+            return
+        }
+        isWorking = true
+        Task {
+            defer { isWorking = false }
+            do {
+                if isDirty {
+                    try await repo.savePayslip(slip, original: originalSlip ?? slip, editedBy: manager)
+                    originalSlip = slip
+                }
+                // slip is already the just-saved data (see transition(to:)
+                // for why re-reading repo.payslips here is the wrong call).
+                try await repo.publishPayslips([slip], by: manager)
+                isDirty = false
+                toast = ToastMessage(kind: .success, text: "Published — now visible to \(slip.staffName).")
+                Haptics.success()
+            } catch {
+                toast = ToastMessage(kind: .error, text: "Couldn't publish. \(error.localizedDescription)")
                 Haptics.error()
             }
         }
@@ -553,6 +665,7 @@ struct PayslipPDFSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     if let pdfURL {
@@ -560,32 +673,53 @@ struct PayslipPDFSheet: View {
                             Image(systemName: "square.and.arrow.up")
                         }
                         .accessibilityLabel("Share, save or print payslip")
+                        .help("Share, save or print payslip")
                         .simultaneousGesture(TapGesture().onEnded {
                             if isManager { Task { await repo.recordPayslipDownload(slip) } }
                         })
                     }
                 }
             }
-            .task { renderPDF() }
+            .task { await renderPDF() }
+            .onDisappear {
+                // The rendered file lives in the temp directory purely for
+                // this sheet's PDFKit view + ShareLink; nothing else reads
+                // it, so clean it up rather than letting every payslip a
+                // manager views accumulate there for the OS to eventually
+                // reap on its own schedule.
+                if let pdfURL {
+                    try? FileManager.default.removeItem(at: pdfURL)
+                }
+            }
         }
     }
 
-    private func renderPDF() {
+    private func renderPDF() async {
         // Older payslips have no employeeId snapshot — fill from the user doc
         // so a newly assigned ID still shows on them.
         var slipForRender = slip
         if slipForRender.employeeId.isEmpty {
             slipForRender.employeeId = repo.displayEmployeeId(for: slip)
         }
-        let data = PayslipPDFService.render(slipForRender, settings: repo.appSettings)
-        let name = "Payslip-\(slip.staffName.replacingOccurrences(of: " ", with: ""))-\(slip.periodStart).pdf"
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-        do {
-            try data.write(to: url)
-            pdfURL = url
-        } catch {
-            // Extremely unlikely (temp dir); leave the spinner with no crash.
-        }
+        let settings = repo.appSettings
+        let staffName = slip.staffName
+        let periodStart = slip.periodStart
+        // CGContext PDF drawing is real work for a full payslip layout —
+        // run it off the main thread instead of blocking it for the
+        // duration of the .task, then hop back to set state.
+        let url: URL? = await Task.detached(priority: .userInitiated) {
+            let data = PayslipPDFService.render(slipForRender, settings: settings)
+            let name = "Payslip-\(staffName.replacingOccurrences(of: " ", with: ""))-\(periodStart).pdf"
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+            do {
+                try data.write(to: url)
+                return url
+            } catch {
+                // Extremely unlikely (temp dir); leave the spinner with no crash.
+                return nil
+            }
+        }.value
+        pdfURL = url
     }
 }
 

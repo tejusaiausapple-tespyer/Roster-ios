@@ -4,10 +4,16 @@ import SwiftUI
 struct PrivacyPolicyView: View {
     var body: some View {
         List {
-            TitlePillCollapseReporter()
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
+            // Zero-footprint scroll probe: own section with no spacing —
+            // a loose row would form an implicit section (44pt min row
+            // height + section spacing) and push the first card ~100pt down.
+            Section {
+                TitlePillCollapseReporter()
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
+            .listSectionSpacing(0)
 
             Section {
                 VStack(alignment: .leading, spacing: 8) {
@@ -41,11 +47,7 @@ struct PrivacyPolicyView: View {
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("Privacy Policy")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                ScreenTitlePill(title: "Privacy Policy", icon: "hand.raised.fill")
-            }
-        }
+        .screenTitlePill("Privacy Policy", icon: "hand.raised.fill", fraction: 0)
     }
 }
 

@@ -112,11 +112,7 @@ struct ManagerReportsView: View {
         }
         .navigationTitle("Reports")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                ScreenTitlePill(title: "Reports", icon: "chart.bar.fill")
-            }
-        }
+        .screenTitlePill("Reports", icon: "chart.bar.fill", fraction: 0)
     }
 
     // MARK: - Control bar
@@ -154,6 +150,7 @@ struct ManagerReportsView: View {
                 .padding(.horizontal, 10).frame(height: 34).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .disabled(weekOffset == 0)
             navArrow("chevron.right", enabled: weekOffset < bounds.max) {
                 if weekOffset < bounds.max { weekOffset += 1 }
@@ -172,6 +169,7 @@ struct ManagerReportsView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerHover()
         .disabled(!enabled)
     }
 
@@ -187,7 +185,7 @@ struct ManagerReportsView: View {
             .padding(16)
             .tracksTitlePillCollapse()
         }
-        .refreshable { await repo.refreshFromServer() }
+        .macRefreshable { await repo.refreshFromServer() }
     }
 
     private var metricsGrid: some View {

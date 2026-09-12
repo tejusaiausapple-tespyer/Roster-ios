@@ -12,7 +12,7 @@ struct CameraPicker: UIViewControllerRepresentable {
         if UIImagePickerController.isSourceTypeAvailable(.camera) {
             picker.sourceType = .camera
         } else {
-            picker.sourceType = .photoLibrary // Simulator fallback
+            picker.sourceType = .photoLibrary // Mac Catalyst / Simulator fallback
         }
         return picker
     }

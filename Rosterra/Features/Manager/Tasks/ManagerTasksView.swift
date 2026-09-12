@@ -89,15 +89,15 @@ struct ManagerTasksView: View {
                             .padding(.bottom, 24)
                             .tracksTitlePillCollapse()
                         }
+                        .platformScrollIndicators()
                     }
                 }
+                .contentLane()
             }
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
+            .screenTitlePill("Tasks", icon: "list.bullet.clipboard", fraction: 0)
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    ScreenTitlePill(title: "Tasks", icon: "list.bullet.clipboard")
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         activeSheet = .editor(nil)
@@ -106,6 +106,7 @@ struct ManagerTasksView: View {
                             .foregroundStyle(Theme.brand)
                     }
                     .accessibilityLabel("New task")
+                    .help("New task")
                 }
             }
             .sheet(item: $activeSheet) { sheet in
@@ -126,7 +127,7 @@ struct ManagerTasksView: View {
     private var header: some View {
         VStack(spacing: 8) {
             VStack(spacing: 12) {
-                HStack(spacing: 10) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 10)], spacing: 10) {
                     miniStat(value: "\(tasksForDay.count)", label: "Tasks")
                     miniStat(value: "\(tasksForDay.filter { isCompleted($0) }.count)", label: "Done", tint: Theme.accent)
                     miniStat(value: "\(tasksForDay.filter { !isCompleted($0) }.count)", label: "Pending",
@@ -242,6 +243,7 @@ struct ManagerTasksView: View {
             }
         }
         .buttonStyle(.plain)
+        .pointerHover()
     }
 
     // MARK: - Helpers

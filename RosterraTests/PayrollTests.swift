@@ -14,6 +14,7 @@ final class PayrollTests: XCTestCase {
         publicHolidayHours: Double = 0, publicHolidayRate: Double = 0,
         overtimeHours: Double = 0, overtimeRate: Double = 0,
         extras: [PayslipEarning] = [],
+        claimsTaxFreeThreshold: Bool = true,
         payg: Double = 0, other: Double = 0, sacrifice: Double = 0,
         superRate: Double = 12.0
     ) -> Payslip {
@@ -25,6 +26,7 @@ final class PayrollTests: XCTestCase {
                 publicHolidayHours: publicHolidayHours, publicHolidayRate: publicHolidayRate,
                 overtimeHours: overtimeHours, overtimeRate: overtimeRate,
                 extraEarnings: extras,
+                claimsTaxFreeThreshold: claimsTaxFreeThreshold,
                 payg: payg, otherDeductions: other, salarySacrifice: sacrifice,
                 superRate: superRate)
     }
@@ -76,6 +78,181 @@ final class PayrollTests: XCTestCase {
         let slip = makeSlip(ordinaryHours: 7.37, baseRate: 26.18)
         // 7.37 * 26.18 = 192.9466 → 192.95
         XCTAssertEqual(slip.totals.ordinaryAmount, 192.95)
+    }
+
+    // MARK: - PAYG withholding (ATO Schedule 1, weekly, 2026–27)
+    //
+    // Expected values cross-checked against the ATO's own published weekly
+    // withholding lookup table for 2026–27 (independent of this formula/
+    // coefficient implementation) — not just re-deriving the same numbers.
+
+    func testPAYGScale2ThresholdClaimedMatchesATOWeeklyTable() {
+        XCTAssertEqual(PAYGCalculator.weeklyWithholding(taxableEarnings: 0, claimsTaxFreeThreshold: true), 0)
+        XCTAssertEqual(PAYGCalculator.weeklyWithholding(taxableEarnings: 350, claimsTaxFreeThreshold: true), 0)
+        XCTAssertEqual(PAYGCalculator.weeklyWithholding(taxableEarnings: 361, claimsTaxFreeThreshold: true), 0)
+        XCTAssertEqual(PAYGCalculator.weeklyWithholding(taxableEarnings: 500, claimsTaxFreeThreshold: true), 21)
+        XCTAssertEqual(PAYGCalculator.weeklyWithholding(taxableEarnings: 1000, claimsTaxFreeThreshold: true), 138)
+        XCTAssertEqual(PAYGCalculator.weeklyWithholding(taxableEarnings: 2000, claimsTaxFreeThreshold: true), 459)
+        XCTAssertEqual(PAYGCalculator.weeklyWithholding(taxableEarnings: 3500, claimsTaxFreeThreshold: true), 1002)
+    }
+
+    func testPAYGScale1NoThresholdMatchesATOWeeklyTable() {
+        XCTAssertEqual(PAYGCalculator.weeklyWithholding(taxableEarnings: 350, claimsTaxFreeThreshold: false), 62)
+        XCTAssertEqual(PAYGCalculator.weeklyWithholding(taxableEarnings: 500, claimsTaxFreeThreshold: false), 90)
+        XCTAssertEqual(PAYGCalculator.weeklyWithholding(taxableEarnings: 1000, claimsTaxFreeThreshold: false), 249)
+        XCTAssertEqual(PAYGCalculator.weeklyWithholding(taxableEarnings: 3500, claimsTaxFreeThreshold: false), 1152)
+    }
+
+    func testPAYGTruncatesCentsBeforeApplyingFormula() {
+        // ATO method: truncate to whole dollars, add 99c, then apply a×x−b —
+        // so any cents on the input collapse to the same result as the whole
+        // dollar amount, NOT round-to-nearest-cent first.
+        let whole = PAYGCalculator.weeklyWithholding(taxableEarnings: 500, claimsTaxFreeThreshold: true)
+        let withCents = PAYGCalculator.weeklyWithholding(taxableEarnings: 500.50, claimsTaxFreeThreshold: true)
+        XCTAssertEqual(whole, 21)
+        XCTAssertEqual(withCents, 21)
+    }
+
+    func testPAYGNeverNegative() {
+        XCTAssertEqual(PAYGCalculator.weeklyWithholding(taxableEarnings: -50, claimsTaxFreeThreshold: true), 0)
+    }
+
+    func testTaxableEarningsExcludesExemptExtrasAndSalarySacrifice() {
+        let extras = [
+            PayslipEarning(name: "Bonus", amount: 30, exemptFromTax: false),
+            PayslipEarning(name: "Tax-exempt allowance", amount: 50, exemptFromTax: true),
+        ]
+        let slip = makeSlip(ordinaryHours: 40, baseRate: 25, extras: extras, sacrifice: 100)
+        // Gross includes both extras; taxable base excludes the exempt one
+        // and subtracts salary sacrifice (pre-tax): 1000 + 30 - 100 = 930.
+        XCTAssertEqual(slip.totals.gross, 1080)
+        XCTAssertEqual(PayrollCalculator.taxableEarnings(for: slip), 930)
+    }
+
+    func testCalculatedPAYGUsesTheSlipsThresholdDeclaration() {
+        let claimed = makeSlip(ordinaryHours: 20, baseRate: 25, claimsTaxFreeThreshold: true)
+        let notClaimed = makeSlip(ordinaryHours: 20, baseRate: 25, claimsTaxFreeThreshold: false)
+        XCTAssertEqual(PayrollCalculator.taxableEarnings(for: claimed), 500)
+        XCTAssertEqual(PayrollCalculator.calculatedPAYG(for: claimed), 21)
+        XCTAssertEqual(PayrollCalculator.calculatedPAYG(for: notClaimed), 90)
+    }
+
+    func testClaimsTaxFreeThresholdRoundTrips() {
+        let notClaimed = makeSlip(ordinaryHours: 1, baseRate: 1, claimsTaxFreeThreshold: false)
+        XCTAssertEqual(Payslip(id: notClaimed.id, data: notClaimed.asDictionary)?.claimsTaxFreeThreshold, false)
+
+        // Docs written before this field existed must still default to
+        // claimed (true) — the common case and the ATO's own default.
+        let legacy: [String: Any] = ["staffId": "s1", "periodStart": "2026-07-06", "periodEnd": "2026-07-12"]
+        XCTAssertEqual(Payslip(id: "x", data: legacy)?.claimsTaxFreeThreshold, true)
+    }
+
+    func testWageProfileClaimsTaxFreeThresholdRoundTrips() {
+        let profile = StaffWageProfile(staffId: "s1", claimsTaxFreeThreshold: false)
+        let parsed = StaffWageProfile(id: profile.id, data: profile.asDictionary)
+        XCTAssertEqual(parsed?.claimsTaxFreeThreshold, false)
+
+        // Pre-existing profiles (written before this field existed) default
+        // to claimed, same as a fresh TFN declaration would assume.
+        let legacy: [String: Any] = ["kind": "staffProfile", "staffId": "s1", "earningsLineIds": []]
+        XCTAssertEqual(StaffWageProfile(id: "staff_s1", data: legacy)?.claimsTaxFreeThreshold, true)
+    }
+
+    // MARK: - Field-level audit diff (bulk publish / payslip editing)
+
+    private var testEditor: AppUser {
+        TestSupport.user(id: "m1", fullName: "Manager One", role: "manager")
+    }
+
+    func testAuditDiffDetectsChangedScalarFields() {
+        let old = makeSlip(ordinaryHours: 20, baseRate: 25, payg: 50, superRate: 12)
+        var new = old
+        new.ordinaryHours = 25
+        new.payg = 60
+
+        let entries = PayrollCalculator.auditDiff(from: old, to: new, editor: testEditor)
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertTrue(entries.allSatisfy { $0.action == "edited" && $0.userId == "m1" && $0.userName == "Manager One" })
+        XCTAssertTrue(entries.contains {
+            $0.field == "Ordinary hours" && $0.previousValue == "20.00" && $0.newValue == "25.00"
+                && $0.detail == "Ordinary hours: 20.00 → 25.00"
+        })
+        XCTAssertTrue(entries.contains {
+            $0.field == "PAYG withholding" && $0.previousValue == RosterFormat.money(50) && $0.newValue == RosterFormat.money(60)
+        })
+    }
+
+    func testAuditDiffEmptyWhenNothingChanged() {
+        let slip = makeSlip(ordinaryHours: 20, baseRate: 25, payg: 50)
+        XCTAssertTrue(PayrollCalculator.auditDiff(from: slip, to: slip, editor: testEditor).isEmpty)
+    }
+
+    func testAuditDiffToleratesFloatNoiseViaRounding() {
+        // 7.365 and 7.37 both round to the same displayed 7.37 (round2) —
+        // must not fire a spurious entry over float-arithmetic noise.
+        let old = makeSlip(ordinaryHours: 7.37, baseRate: 26.18)
+        var new = old
+        new.ordinaryHours = 7.365
+        XCTAssertTrue(PayrollCalculator.auditDiff(from: old, to: new, editor: testEditor).isEmpty)
+    }
+
+    func testAuditDiffExcludesPayDate() {
+        // payDate is displayed but not wired to any editable control today —
+        // deliberately excluded from the diff.
+        var old = makeSlip(ordinaryHours: 20, baseRate: 25)
+        old.payDate = "2026-07-12"
+        var new = old
+        new.payDate = "2026-07-13"
+        XCTAssertTrue(PayrollCalculator.auditDiff(from: old, to: new, editor: testEditor).isEmpty)
+    }
+
+    func testAuditDiffHandlesExtraEarningsAddRemoveAndChange() {
+        let kept = PayslipEarning(id: "e1", name: "Tool allowance", amount: 50)
+        let removed = PayslipEarning(id: "e2", name: "Old bonus", amount: 20)
+        let old = makeSlip(extras: [kept, removed])
+
+        var changedKept = kept
+        changedKept.amount = 75
+        let added = PayslipEarning(id: "e3", name: "New bonus", amount: 30)
+        let new = makeSlip(extras: [changedKept, added])
+
+        let entries = PayrollCalculator.auditDiff(from: old, to: new, editor: testEditor)
+        XCTAssertEqual(entries.count, 3)
+        XCTAssertTrue(entries.contains { $0.detail == "Removed earnings row: Old bonus" })
+        XCTAssertTrue(entries.contains { $0.detail == "Added earnings row: New bonus (\(RosterFormat.money(30)))" })
+        XCTAssertTrue(entries.contains { $0.detail == "Tool allowance: \(RosterFormat.money(50)) → \(RosterFormat.money(75))" })
+    }
+
+    func testAuditDiffIgnoresUnchangedExtraEarningsQuantityOnlySync() {
+        // A quantity edit already resyncs `amount` (ManagerPayslipDetailSheet.extraBinding) —
+        // amount is the only thing diffed, so this must report exactly one entry, not two.
+        let old = makeSlip(extras: [PayslipEarning(id: "e1", name: "Laundry", quantity: 2, rate: 1.25, amount: 2.50)])
+        let new = makeSlip(extras: [PayslipEarning(id: "e1", name: "Laundry", quantity: 4, rate: 1.25, amount: 5.00)])
+        let entries = PayrollCalculator.auditDiff(from: old, to: new, editor: testEditor)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries.first?.detail, "Laundry: \(RosterFormat.money(2.50)) → \(RosterFormat.money(5.00))")
+    }
+
+    func testPayslipAuditEntryFieldLevelDataRoundTrips() {
+        let entry = PayslipAuditEntry(action: "edited", userId: "m1", userName: "Manager One",
+                                      detail: "Ordinary hours: 20.00 → 25.00",
+                                      field: "Ordinary hours", previousValue: "20.00", newValue: "25.00")
+        let parsed = PayslipAuditEntry(dict: entry.asDictionary)
+        XCTAssertEqual(parsed.field, "Ordinary hours")
+        XCTAssertEqual(parsed.previousValue, "20.00")
+        XCTAssertEqual(parsed.newValue, "25.00")
+        XCTAssertEqual(parsed.detail, entry.detail)
+    }
+
+    func testPayslipAuditEntryFieldDataNilForCoarseGrainedActions() {
+        // Existing coarse actions (generated/approved/submitted/regenerated/...)
+        // never set these — must default to nil, not crash or coerce to "".
+        let entry = PayslipAuditEntry(action: "generated", userId: "m1", userName: "Manager One", detail: "Auto-generated")
+        XCTAssertNil(entry.field)
+        let parsed = PayslipAuditEntry(dict: entry.asDictionary)
+        XCTAssertNil(parsed.field)
+        XCTAssertNil(parsed.previousValue)
+        XCTAssertNil(parsed.newValue)
     }
 
     // MARK: - Hours bucketing (Adelaide weekends)

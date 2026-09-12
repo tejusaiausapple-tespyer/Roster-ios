@@ -11,10 +11,16 @@ struct AppVersionHistoryView: View {
 
     var body: some View {
         List {
-            TitlePillCollapseReporter()
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
+            // Zero-footprint scroll probe: own section with no spacing —
+            // a loose row would form an implicit section (44pt min row
+            // height + section spacing) and push the first card ~100pt down.
+            Section {
+                TitlePillCollapseReporter()
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
+            .listSectionSpacing(0)
 
             Section { currentVersionHeader }
 
@@ -41,11 +47,7 @@ struct AppVersionHistoryView: View {
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("Version")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                ScreenTitlePill(title: "Version", icon: "info.circle.fill")
-            }
-        }
+        .screenTitlePill("Version", icon: "info.circle.fill", fraction: 0)
     }
 
     // MARK: - Current Version Header

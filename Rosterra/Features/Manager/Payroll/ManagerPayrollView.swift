@@ -11,10 +11,12 @@ struct ManagerPayrollView: View {
     enum ActiveSheet: Identifiable {
         case payslip(Payslip)
         case gaps([PayrollGapItem])
+        case bulkPublish([Payslip])
         var id: String {
             switch self {
             case .payslip(let slip): return "payslip-\(slip.id)"
             case .gaps: return "gaps"
+            case .bulkPublish: return "bulkPublish"
             }
         }
     }
@@ -27,6 +29,8 @@ struct ManagerPayrollView: View {
     @State private var toast: ToastMessage?
     @State private var isGenerating = false
     @State private var pendingDeleteSlip: Payslip?
+    @State private var confirmDeleteAllDrafts = false
+    @State private var pendingPublishSlip: Payslip?
 
     var embedInNavigationStack = true
 
@@ -48,6 +52,28 @@ struct ManagerPayrollView: View {
             .sorted { $0.staffName < $1.staffName }
     }
 
+    /// Drafts/under-review payslips in the period — the ones "Delete all
+    /// drafts" and swipe-to-delete can remove. Approved/submitted/archived
+    /// payslips are official records and are never included here.
+    private var deletableSlips: [Payslip] {
+        periodSlips.filter { $0.status == .draft || $0.status == .underReview }
+    }
+
+    /// Draft/under-review/approved payslips — eligible for the "Publish"
+    /// fast path (bulk or individual), which jumps straight to Submitted.
+    /// Drives whether the bulk-publish entry point shows at all.
+    private var publishableSlips: [Payslip] {
+        periodSlips.filter { $0.status == .draft || $0.status == .underReview || $0.status == .approved }
+    }
+
+    /// Everything the bulk-publish sheet lists: publishable rows (toggleable)
+    /// plus already-submitted ones (shown locked, for context). Archived is
+    /// excluded — it's superseded by a correction and shouldn't clutter
+    /// "this pay run".
+    private var publishSheetSlips: [Payslip] {
+        periodSlips.filter { $0.status != .archived }
+    }
+
     private var rootContent: some View {
         List {
             // Zero-footprint scroll probe: own section with no spacing +
@@ -62,21 +88,26 @@ struct ManagerPayrollView: View {
             }
             .listSectionSpacing(0)
 
-            weekSection
-            summarySection
+            // Grouped so the List's ViewBuilder has fewer top-level children
+            // to type-check at once — 6 direct statements here (vs. this
+            // group's 3) was enough to blow Swift's inference time budget.
+            Group {
+                weekSection
+                summarySection
+                publishBannerSection
+            }
             staffSection
             recentPeriodsSection
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 1)
+        .contentLane()
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("Payroll")
         .navigationBarTitleDisplayMode(.inline)
+        .screenTitlePill("Payroll", icon: "banknote.fill", fraction: 0)
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                ScreenTitlePill(title: "Payroll", icon: "banknote.fill")
-            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     generateDrafts()
@@ -89,6 +120,19 @@ struct ManagerPayrollView: View {
                 }
                 .disabled(isGenerating)
                 .accessibilityLabel("Generate draft payslips for this period")
+                .help("Generate draft payslips for this period")
+            }
+            if !deletableSlips.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        confirmDeleteAllDrafts = true
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .foregroundStyle(Theme.error)
+                    .accessibilityLabel("Delete all draft payslips for this period")
+                    .help("Delete all draft payslips for this period")
+                }
             }
         }
         .sheet(item: $activeSheet) { sheet in
@@ -101,6 +145,10 @@ struct ManagerPayrollView: View {
                     weekLabel: RosterFormat.weekRange(monday: weekMonday),
                     onGenerateAnyway: { runGeneration() }
                 )
+            case .bulkPublish(let slips):
+                PayslipBulkPublishSheet(slips: slips, weekMonday: weekMonday) { count in
+                    toast = ToastMessage(kind: .success, text: "Published \(count) payslip\(count == 1 ? "" : "s").")
+                }
             }
         }
         .toast($toast)
@@ -119,6 +167,28 @@ struct ManagerPayrollView: View {
         } message: { slip in
             Text("\(slip.staffName)'s draft payslip for this period will be permanently removed.")
         }
+        .alert(
+            "Delete all drafts?",
+            isPresented: $confirmDeleteAllDrafts
+        ) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete All", role: .destructive) { deleteAllDrafts() }
+        } message: {
+            Text("\(deletableSlips.count) draft payslip\(deletableSlips.count == 1 ? "" : "s") for \(RosterFormat.weekRange(monday: weekMonday)) will be permanently removed. Approved and submitted payslips are kept.")
+        }
+        .alert(
+            "Publish payslip?",
+            isPresented: Binding(
+                get: { pendingPublishSlip != nil },
+                set: { if !$0 { pendingPublishSlip = nil } }
+            ),
+            presenting: pendingPublishSlip
+        ) { slip in
+            Button("Cancel", role: .cancel) {}
+            Button("Publish") { publishOne(slip) }
+        } message: { slip in
+            Text("\(slip.staffName) will be able to see this payslip immediately.")
+        }
     }
 
     // MARK: Sections
@@ -135,6 +205,7 @@ struct ManagerPayrollView: View {
                         .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Previous pay period")
+                .help("Previous pay period")
                 Spacer()
                 VStack(spacing: 2) {
                     Text(RosterFormat.weekRange(monday: weekMonday))
@@ -159,8 +230,10 @@ struct ManagerPayrollView: View {
                         .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Next pay period")
+                .help("Next pay period")
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .foregroundStyle(Theme.brand)
         } header: {
             Text("Pay period")
@@ -194,6 +267,37 @@ struct ManagerPayrollView: View {
         }
     }
 
+    /// Entry point for bulk publishing — a full-width row rather than a 3rd
+    /// toolbar icon (already wand=generate + conditional trash=delete-drafts),
+    /// shown only once there's something eligible to publish.
+    @ViewBuilder
+    private var publishBannerSection: some View {
+        if !publishableSlips.isEmpty {
+            Section {
+                Button {
+                    activeSheet = .bulkPublish(publishSheetSlips)
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "paperplane.fill")
+                            .foregroundStyle(Theme.accent)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Publish Payslips")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Theme.textPrimary)
+                            Text("\(publishableSlips.count) ready to publish")
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Theme.textTertiary)
+                    }
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     private var staffSection: some View {
         Section {
@@ -223,6 +327,33 @@ struct ManagerPayrollView: View {
                                 Label("Delete", systemImage: "trash")
                             }
                         }
+                        if slip.status == .draft || slip.status == .underReview || slip.status == .approved {
+                            Button {
+                                pendingPublishSlip = slip
+                            } label: {
+                                Label("Publish", systemImage: "paperplane")
+                            }
+                            .tint(Theme.accent)
+                        }
+                    }
+                    // Right-click equivalent of the swipe actions above — on
+                    // Mac Catalyst (scaled-iPad idiom) a swipe reveal needs a
+                    // trackpad, so this is the only path for a mouse-only user.
+                    .contextMenu {
+                        if slip.status == .draft || slip.status == .underReview || slip.status == .approved {
+                            Button {
+                                pendingPublishSlip = slip
+                            } label: {
+                                Label("Publish", systemImage: "paperplane")
+                            }
+                        }
+                        if slip.status == .draft || slip.status == .underReview {
+                            Button(role: .destructive) {
+                                pendingDeleteSlip = slip
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
                     }
                 }
             }
@@ -230,7 +361,9 @@ struct ManagerPayrollView: View {
             Text("Staff payslips")
         } footer: {
             if !periodSlips.isEmpty {
-                Text("Tap a payslip to review, edit and approve. Swipe left on a draft or under-review payslip to delete. Staff can only see a payslip after you press Submit.")
+                Text(publishableSlips.isEmpty
+                     ? "Tap a payslip to review, edit and approve. Staff can only see a payslip after you press Submit."
+                     : "Tap a payslip to review, edit and approve. Swipe left to publish or delete one, or use Publish Payslips above for several at once. Staff can only see a payslip after you press Submit.")
             }
         }
     }
@@ -315,6 +448,40 @@ struct ManagerPayrollView: View {
             }
         }
     }
+
+    private func deleteAllDrafts() {
+        let slips = deletableSlips
+        guard !slips.isEmpty else { return }
+        Task {
+            do {
+                try await repo.deleteDraftPayslips(slips)
+                toast = ToastMessage(kind: .success, text: "Deleted \(slips.count) draft payslip\(slips.count == 1 ? "" : "s").")
+                Haptics.success()
+            } catch {
+                toast = ToastMessage(kind: .error, text: "Couldn't delete drafts. \(error.localizedDescription)")
+                Haptics.error()
+            }
+        }
+    }
+
+    private func publishOne(_ slip: Payslip) {
+        guard let manager = repo.currentUser else { return }
+        guard slip.baseHourlyRate > 0 else {
+            toast = ToastMessage(kind: .error, text: "\(slip.staffName)'s payslip has no hourly rate set — fix it before publishing.")
+            Haptics.error()
+            return
+        }
+        Task {
+            do {
+                try await repo.publishPayslips([slip], by: manager)
+                toast = ToastMessage(kind: .success, text: "Published — now visible to \(slip.staffName).")
+                Haptics.success()
+            } catch {
+                toast = ToastMessage(kind: .error, text: "Couldn't publish. \(error.localizedDescription)")
+                Haptics.error()
+            }
+        }
+    }
 }
 
 // MARK: - Row
@@ -345,11 +512,29 @@ private struct PayslipRow: View {
                 }
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(Theme.textTertiary)
+                if let caption = statusCaption {
+                    Text(caption)
+                        .font(.caption2)
+                        .foregroundStyle(Theme.textTertiary)
+                }
             }
             Spacer(minLength: 8)
             PayslipStatusPill(status: slip.status)
         }
         .padding(.vertical, 2)
+    }
+
+    /// "Published {date}" once submitted, else "Last edited {date}" once
+    /// touched since generation (`updatedAt` stays nil until the first save/
+    /// transition) — nil (no caption) for an untouched, freshly-generated draft.
+    private var statusCaption: String? {
+        if let submittedAt = slip.submittedAt {
+            return "Published \(RosterFormat.dateShort(RosterCalendar.dayFormatter.string(from: submittedAt)))"
+        }
+        if let updatedAt = slip.updatedAt {
+            return "Last edited \(RosterFormat.dateShort(RosterCalendar.dayFormatter.string(from: updatedAt)))"
+        }
+        return nil
     }
 
     private var avatar: some View {

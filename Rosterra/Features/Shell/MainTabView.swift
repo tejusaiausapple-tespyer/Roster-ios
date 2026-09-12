@@ -1,34 +1,127 @@
 import SwiftUI
 
-/// The main staff experience: five tabs using the native bottom tab bar.
-/// A standard `TabView` keeps thumb-reach, safe-area handling, and
-/// accessibility behaviour consistent with the rest of iOS — no bespoke
-/// floating chrome competing with content.
+/// The main staff experience.
+/// iPhone: native bottom tab bar.
+/// iPad / Mac Catalyst: sidebar so a pointer and a resized window have a
+/// stable navigation column instead of a phone-sized tab bar.
 struct MainTabView: View {
     @Environment(AppRouter.self) private var router
+    @Environment(RosterRepository.self) private var repo
+    @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
 
     var body: some View {
         @Bindable var router = router
 
-        TabView(selection: $router.selectedTab) {
-            HomeView()
-                .tabItem { Label("Home", systemImage: "house") }
-                .tag(AppRouter.Tab.home.rawValue)
-            RosterView()
-                .tabItem { Label("Roster", systemImage: "calendar") }
-                .tag(AppRouter.Tab.roster.rawValue)
-            TasksView()
-                .tabItem { Label("Tasks", systemImage: "list.bullet.clipboard") }
-                .tag(AppRouter.Tab.tasks.rawValue)
-            AvailabilityView()
-                .tabItem { Label("Availability", systemImage: "calendar.badge.clock") }
-                .tag(AppRouter.Tab.availability.rawValue)
-            AccountView()
-                .tabItem { Label("Account", systemImage: "person.crop.circle") }
-                .tag(AppRouter.Tab.account.rawValue)
+        Group {
+            if PlatformUI.isPhone {
+                phoneTabs
+            } else {
+                splitChrome
+            }
         }
         .tint(Theme.brand)
         .onChange(of: router.selectedTab) { Haptics.tabChange() }
+    }
+
+    private var phoneTabs: some View {
+        @Bindable var router = router
+        return TabView(selection: $router.selectedTab) {
+            HomeView()
+                .tabItem { Label(AppRouter.Tab.home.title, systemImage: AppRouter.Tab.home.icon) }
+                .tag(AppRouter.Tab.home.rawValue)
+            RosterView()
+                .tabItem { Label(AppRouter.Tab.roster.title, systemImage: AppRouter.Tab.roster.icon) }
+                .tag(AppRouter.Tab.roster.rawValue)
+            TasksView()
+                .tabItem { Label(AppRouter.Tab.tasks.title, systemImage: AppRouter.Tab.tasks.icon) }
+                .tag(AppRouter.Tab.tasks.rawValue)
+            AvailabilityView()
+                .tabItem { Label(AppRouter.Tab.availability.title, systemImage: AppRouter.Tab.availability.icon) }
+                .tag(AppRouter.Tab.availability.rawValue)
+            AccountView()
+                .tabItem { Label(AppRouter.Tab.account.title, systemImage: AppRouter.Tab.account.icon) }
+                .tag(AppRouter.Tab.account.rawValue)
+        }
+    }
+
+    private var splitChrome: some View {
+        @Bindable var router = router
+        return NavigationSplitView(columnVisibility: $columnVisibility) {
+            staffSidebar
+                .navigationSplitViewColumnWidth(min: 248, ideal: 280, max: 340)
+        } detail: {
+            switch AppRouter.Tab(rawValue: router.selectedTab) ?? .home {
+            case .home: HomeView()
+            case .roster: RosterView()
+            case .tasks: TasksView()
+            case .availability: AvailabilityView()
+            case .account: AccountView()
+            }
+        }
+    }
+
+    /// Floating source-list matching the manager Mac/iPad chrome. Account is
+    /// pinned in the profile footer rather than listed with the work tabs.
+    private var staffSidebar: some View {
+        @Bindable var router = router
+        return FloatingSidebarPanel {
+            VStack(spacing: 0) {
+                SidebarBrandHeader(
+                    companyName: repo.appSettings.companyName,
+                    roleLabel: "Staff"
+                )
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        SidebarSectionLabel(title: "Work")
+                        ForEach(staffWorkTabs) { tab in
+                            SidebarItemRow(
+                                title: tab.title,
+                                icon: tab.icon,
+                                isSelected: router.selectedTab == tab.rawValue,
+                                badge: tab == .home ? repo.unreadMessageCount : 0
+                            ) {
+                                router.select(tab)
+                            }
+                        }
+                        SidebarSectionLabel(title: "Planning")
+                        SidebarItemRow(
+                            title: AppRouter.Tab.availability.title,
+                            icon: AppRouter.Tab.availability.icon,
+                            isSelected: router.selectedTab == AppRouter.Tab.availability.rawValue
+                        ) {
+                            router.select(.availability)
+                        }
+                    }
+                    .padding(.bottom, 12)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                SidebarProfileFooter(
+                    name: repo.currentUser?.fullName ?? "—",
+                    email: repo.currentUser?.email ?? "",
+                    initials: repo.currentUser?.initials ?? "S",
+                    isSelected: router.selectedTab == AppRouter.Tab.account.rawValue
+                ) {
+                    router.select(.account)
+                }
+            }
+        }
+        .navigationTitle("Staff")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar)
+        .sidebarColumnFill()
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 30)
+                .onEnded { value in
+                    if value.translation.width < -40,
+                       abs(value.translation.width) > abs(value.translation.height) {
+                        withAnimation { columnVisibility = .detailOnly }
+                    }
+                }
+        )
+    }
+
+    private var staffWorkTabs: [AppRouter.Tab] {
+        [.home, .roster, .tasks]
     }
 }
 
@@ -45,9 +138,10 @@ struct TabScroll<Content: View>: View {
             .padding(.horizontal, Theme.screenPadding)
             .padding(.top, topPadding)
             .padding(.bottom, 24)
+            .contentLane()
             .tracksTitlePillCollapse()
         }
-        .scrollIndicators(.hidden)
+        .platformScrollIndicators()
         .background(Theme.background.ignoresSafeArea())
     }
 }

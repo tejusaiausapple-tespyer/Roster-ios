@@ -12,6 +12,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         return true
     }
 
+    // Mac window sizing and titlebar configuration now live in
+    // `Rosterra/Mac/Shell/MacWindow.swift`, applied by the Mac shell itself.
+
     // MARK: - Remote push registration (inert until AppConfig.pushEnabled)
 
     func application(_ application: UIApplication,

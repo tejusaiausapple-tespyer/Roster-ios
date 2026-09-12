@@ -4,8 +4,8 @@ import SwiftUI
 // flow: the Worker creates the Firebase Auth account with a temporary
 // password, we write the users/{uid} profile doc, and the new member signs in
 // once with the temporary password, is forced to set their own, then completes
-// their profile (DOB / address / phone) themselves. Wage assignment stays on
-// the web app until the Wage tab ships.
+// their profile (DOB / address / phone) themselves. Wage assignment is done
+// from the native Wage tab after create.
 struct ManagerAddStaffSheet: View {
     @Environment(RosterRepository.self) private var repo
     @Environment(\.dismiss) private var dismiss
@@ -14,6 +14,7 @@ struct ManagerAddStaffSheet: View {
     @State private var email = ""
     @State private var password = ""
     @State private var employmentType: EmploymentType = .casual
+    @State private var defaultDepartment: String = ""
     @State private var phone = ""
     @State private var includeStartDate = false
     @State private var startDate = Date()
@@ -69,6 +70,12 @@ struct ManagerAddStaffSheet: View {
                             Text(type.label).tag(type)
                         }
                     }
+                    Picker("Role", selection: $defaultDepartment) {
+                        Text("Not set").tag("")
+                        ForEach(ManagerShiftEditorSheet.roleOptions, id: \.self) { role in
+                            Text(role).tag(role)
+                        }
+                    }
                     Toggle("Set start date", isOn: $includeStartDate.animation())
                         .tint(Theme.brand)
                     if includeStartDate {
@@ -77,7 +84,7 @@ struct ManagerAddStaffSheet: View {
                 } header: {
                     Text("Employment")
                 } footer: {
-                    Text("Date of birth, address and phone are completed by the staff member on first login.")
+                    Text("Role fills in automatically when you roster this staff member onto a shift. Date of birth, address and phone are completed by the staff member on first login.")
                 }
 
                 if let errorMessage {
@@ -96,12 +103,14 @@ struct ManagerAddStaffSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if isCreating {
                         ProgressView()
                     } else {
                         Button("Create") { create() }
+                            .keyboardShortcut(.defaultAction)
                             .disabled(!canCreate)
                     }
                 }
@@ -128,7 +137,8 @@ struct ManagerAddStaffSheet: View {
                     password: password,
                     employmentType: employmentType,
                     phone: trimmedPhone.isEmpty ? nil : trimmedPhone,
-                    startDate: includeStartDate ? startDate : nil
+                    startDate: includeStartDate ? startDate : nil,
+                    defaultDepartment: defaultDepartment.isEmpty ? nil : defaultDepartment
                 )
                 Haptics.success()
                 dismiss()

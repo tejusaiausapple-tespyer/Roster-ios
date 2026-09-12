@@ -7,15 +7,31 @@ enum AppConfig {
     /// use the absolute production origin.
     static let apiBaseURL = URL(string: "https://sura-roster.com")!
 
-    /// URL of the web app, surfaced to managers who mistakenly sign in here.
-    static let webAppURL = URL(string: "https://sura-roster.com")!
-
     /// Support contact address for help, privacy, and account-deletion requests.
     static let supportEmail = "support@sura-roster.com"
 
-    /// Public legal pages hosted on the marketing site.
-    static let privacyPolicyURL = URL(string: "https://sura-roster.com/privacy")!
-    static let termsOfServiceURL = URL(string: "https://sura-roster.com/terms")!
+    /// App Store product page, opened from the update-required / update-available
+    /// screens. Apple ID `6791077796` (App Store Connect → App Information).
+    ///
+    /// On Mac the `macappstore:` scheme opens the Mac App Store app directly —
+    /// the https URL opens the *iOS* product page in a browser, which offers a
+    /// Mac user nothing to install.
+    static var appStoreURL: URL {
+        #if targetEnvironment(macCatalyst)
+        URL(string: "macappstore://apps.apple.com/app/id6791077796")!
+        #else
+        URL(string: "https://apps.apple.com/app/id6791077796")!
+        #endif
+    }
+
+    /// What to call the store in user-facing copy.
+    static var appStoreName: String {
+        #if targetEnvironment(macCatalyst)
+        "Mac App Store"
+        #else
+        "App Store"
+        #endif
+    }
 
     /// Remote push master switch. Local shift reminders work regardless of
     /// this flag.

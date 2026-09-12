@@ -51,8 +51,81 @@ enum ReleaseHistory {
 
     static let all: [AppRelease] = [
         AppRelease(
+            version: "1.2.1",
+            build: "35",
+            releaseDate: releaseDate(2026, 8, 13),
+            updateType: .minor,
+            summary: "A dedicated Daily Jobs page for staff, and a fix for a shared-device notification bug.",
+            features: [
+                "Daily Jobs has its own page for staff — a card right under Start Shift on Home opens the full list, instead of digging into the Notifications popup",
+            ],
+            bugFixes: [
+                "Fixed a bug where signing out and into a different account on the same device could still deliver push notifications meant for the previous account — the old account's device registration is now fully cleared before sign-out completes, instead of racing it",
+            ],
+            commitHash: "pending"
+        ),
+        AppRelease(
+            version: "1.1.2",
+            build: "34",
+            releaseDate: releaseDate(2026, 8, 13),
+            updateType: .patch,
+            summary: "A Role field for staff profiles, a Daily Jobs overview page, and several reliability fixes.",
+            features: [
+                "Staff profiles now have a Role field — set once and it auto-fills on every new shift for that staff member, instead of picking it every time",
+                "New \"Daily Jobs\" card on the Manager Dashboard opens a one-tap overview of every staff member's jobs for today",
+                "Daily Jobs: numbered ordering shown on both the manager assign sheet and the staff list, and job templates can now be renamed",
+            ],
+            bugFixes: [
+                "\"Repeat daily\" now also backfills jobs onto a staff member's already-scheduled upcoming shifts (including drafts), not just shifts created after the toggle is turned on",
+                "\"Repeat daily\" backfill runs concurrently with background-task protection, so backgrounding the app mid-batch no longer strands unprocessed shifts",
+                "Android: daily-jobs reminders no longer silently stop arming after midnight for a session that stays signed in",
+                "Staff directory and Timesheets staff filter now sort names consistently (locale-aware, case-insensitive) A–Z",
+                "Staff Role picker no longer silently overwrites a legacy or custom role value it doesn't recognize",
+                "Removed a redundant green checkmark on completed Daily Jobs rows where the card fill already showed completion",
+            ],
+            commitHash: "pending"
+        ),
+        AppRelease(
+            version: "1.1.0",
+            build: "33",
+            releaseDate: releaseDate(2026, 8, 10),
+            updateType: .minor,
+            summary: "Daily Jobs can now repeat for a staff member and be manually reordered, plus account-deletion compliance and dashboard fixes.",
+            features: [
+                "Daily Jobs: \"Repeat daily\" toggle per staff member — new shifts automatically get the same jobs assigned instead of requiring a fresh pick every day",
+                "Daily Jobs: drag-to-reorder the jobs assigned to a shift — staff see and complete them in the order set",
+                "Daily Jobs: local \"Please check your daily jobs\" reminders, roughly once an hour during a shift with incomplete jobs — fully on-device, no push notification or server round-trip involved",
+                "ATO-safe account deletion flow, a staff Tax File Number field, and an in-app Terms of Service page",
+            ],
+            bugFixes: [
+                "New shift's Publish toggle now defaults off instead of on, so a newly created shift starts as a draft until explicitly published",
+                "Manager Dashboard: the four metric cards (Active Staff, Hours Scheduled, Tasks Completed, Pending Timesheets) are now a consistent height regardless of label wrapping",
+                "Manager Dashboard: tapping Pending Timesheets now opens a list of exactly who's pending, instead of just showing a count",
+                "Bulk timesheet approval now runs concurrently instead of sequentially, so backgrounding the app mid-batch no longer strands the not-yet-started approvals",
+                "Push notifications now include the required APNs payload — previously iOS silently never displayed them",
+            ],
+            commitHash: "pending"
+        ),
+        AppRelease(
             version: "1.0.0",
-            build: "2",
+            build: "31",
+            releaseDate: releaseDate(2026, 8, 2),
+            updateType: .minor,
+            summary: "Real ATO PAYG tax calculation, bulk payslip publishing, and a payroll audit trail.",
+            features: [
+                "Manager Payroll: PAYG withholding auto-calculates from the ATO weekly tax table (Schedule 1) instead of manual entry, with a per-staff tax-free-threshold declaration",
+                "Manager Payroll: bulk \"Publish Payslips\" — select and publish any number of staff payslips in one action instead of one at a time",
+                "Manager Payroll: field-level audit trail on payslip edits — records which field changed, and the old and new values",
+                "Manager Payroll: bulk \"Delete all drafts\" for a pay period",
+            ],
+            bugFixes: [
+                "Payslip regeneration no longer recreates pay for hours from a shift that was just deleted — it now reads shifts/timesheets fresh from the server instead of a local cache that could lag behind a recent delete",
+            ],
+            commitHash: "pending"
+        ),
+        AppRelease(
+            version: "1.0.0",
+            build: "28",
             releaseDate: releaseDate(2026, 7, 16),
             updateType: .patch,
             summary: "App Store readiness — opaque icon, account deletion, Tenure & Hours, legal links.",

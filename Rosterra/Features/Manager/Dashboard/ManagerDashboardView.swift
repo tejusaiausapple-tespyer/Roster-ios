@@ -10,11 +10,13 @@ struct ManagerDashboardView: View {
         case newShift
         case newTask
         case assignJobs(Shift)
+        case pendingTimesheets
         var id: String {
             switch self {
             case .newShift: return "newShift"
             case .newTask: return "newTask"
             case .assignJobs(let shift): return "assignJobs-\(shift.id)"
+            case .pendingTimesheets: return "pendingTimesheets"
             }
         }
     }
@@ -36,9 +38,7 @@ struct ManagerDashboardView: View {
     // MARK: - Computed Properties (Live Data)
     
     private var todaysShifts: [Shift] {
-        repo.shifts
-            .filter { $0.date == todayKey }
-            .sorted { $0.rosteredStart < $1.rosteredStart }
+        repo.todaysShifts()
     }
 
     /// Lifecycle status per shift (Scheduled → In Progress → Pending →
@@ -65,10 +65,12 @@ struct ManagerDashboardView: View {
         }
     }
     
+    /// Staff genuinely clocked in right now — mirrors the "Today's Roster
+    /// Status" list below via the same lifecycleStatus(for:), rather than
+    /// the old "has any timesheet record at all" check (which kept counting
+    /// a shift as active long after it was approved/rejected).
     private var activeStaffCount: Int {
-        todaysShifts.filter { shift in
-            repo.timesheets.contains(where: { $0.shiftId == shift.id })
-        }.count
+        todaysShifts.filter { lifecycleStatus(for: $0) == .inProgress }.count
     }
     
     private var totalScheduledHours: Double {
@@ -97,6 +99,14 @@ struct ManagerDashboardView: View {
         repo.timesheets.filter { $0.status == .pending }.count
     }
     
+    private var todaysDailyJobAssignments: [DailyJobAssignment] {
+        repo.dailyJobAssignments.filter { $0.date == todayKey }
+    }
+
+    private var dailyJobsDoneCount: Int {
+        todaysDailyJobAssignments.filter(\.completed).count
+    }
+
     private var recentCompletions: [TaskCompletion] {
         repo.taskCompletions
             .filter { $0.date == todayKey }
@@ -105,69 +115,77 @@ struct ManagerDashboardView: View {
     
     var body: some View {
         NavigationStack {
-            ZStack {
-                Theme.background.ignoresSafeArea()
-                
-                ScrollView {
-                    VStack(spacing: 20) {
-                        // Data-layer errors (listener failures) were previously
-                        // silent — the dashboard is the manager's landing screen,
-                        // so surface them here.
-                        if let loadError = repo.loadError {
-                            Banner(kind: .error,
-                                   title: "Some data failed to load",
-                                   message: loadError)
-                        }
+            GeometryReader { proxy in
+                let compact = PlatformUI.isCompactLayout(width: proxy.size.width)
+                ZStack {
+                    Theme.background.ignoresSafeArea()
 
-                        // Hero Header Card
-                        headerCard
-                        
-                        // Live Metrics Grid
-                        metricsGrid
-                        
-                        // Main Sections: 2-column on iPad/Mac, 1-column on iPhone
-                        if UIDevice.current.userInterfaceIdiom == .phone {
-                            VStack(spacing: 20) {
-                                quickActionsSection
-                                activeRosterSection
-                                recentTasksSection
+                    ScrollView {
+                        VStack(spacing: 20) {
+                            // Data-layer errors (listener failures) were previously
+                            // silent — the dashboard is the manager's landing screen,
+                            // so surface them here.
+                            if let loadError = repo.loadError {
+                                Banner(kind: .error,
+                                       title: "Some data failed to load",
+                                       message: loadError)
                             }
-                        } else {
-                            HStack(alignment: .top, spacing: 20) {
+
+                            // Hero Header Card
+                            headerCard
+
+                            // Shortcut into today's Daily Jobs, right below the welcome card.
+                            dailyJobsCard
+
+                            // Live Metrics Grid
+                            metricsGrid
+
+                            // Main Sections: 2-column when the window is wide enough,
+                            // 1-column on iPhone and resized Mac / Split View.
+                            if compact {
                                 VStack(spacing: 20) {
                                     quickActionsSection
                                     activeRosterSection
-                                }
-                                .frame(maxWidth: .infinity)
-                                
-                                VStack(spacing: 20) {
                                     recentTasksSection
                                 }
-                                .frame(maxWidth: .infinity)
+                            } else {
+                                HStack(alignment: .top, spacing: 20) {
+                                    VStack(spacing: 20) {
+                                        quickActionsSection
+                                        activeRosterSection
+                                    }
+                                    .frame(maxWidth: .infinity)
+
+                                    VStack(spacing: 20) {
+                                        recentTasksSection
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                }
                             }
                         }
+                        .padding(.horizontal, Theme.screenPadding)
+                        .padding(.top, 12)
+                        .padding(.bottom, 32)
+                        .contentLane()
+                        .tracksTitlePillCollapse()
                     }
-                    .padding(.horizontal, Theme.screenPadding)
-                    .padding(.top, 12)
-                    .padding(.bottom, 32)
-                    .tracksTitlePillCollapse()
-                }
-                .refreshable {
-                    await repo.refreshFromServer()
+                    .platformScrollIndicators()
+                    .macRefreshable {
+                        await repo.refreshFromServer()
+                    }
                 }
             }
             .navigationTitle("Dashboard")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    ScreenTitlePill(title: "Dashboard", icon: "square.grid.2x2.fill")
-                }
-            }
+            .screenTitlePill("Dashboard", icon: "square.grid.2x2.fill", fraction: 0)
             .sheet(item: $activeSheet) { sheet in
                 switch sheet {
                 case .newShift: ManagerShiftEditorSheet(defaultDateKey: todayKey)
                 case .newTask: ManagerTaskEditorSheet(task: nil, defaultDateKey: todayKey)
                 case .assignJobs(let shift): DailyJobAssignSheet(shift: shift)
+                case .pendingTimesheets:
+                    PendingTimesheetsSheet()
+                        .phoneSheetDetents([.medium, .large])
                 }
             }
         }
@@ -212,11 +230,8 @@ struct ManagerDashboardView: View {
     }
     
     private var metricsGrid: some View {
-        let columns = [
-            GridItem(.flexible(), spacing: 12),
-            GridItem(.flexible(), spacing: 12)
-        ]
-        
+        let columns = [GridItem(.adaptive(minimum: 160), spacing: 12)]
+
         return LazyVGrid(columns: columns, spacing: 12) {
             metricCard(
                 value: "\(activeStaffCount) / \(todaysShifts.count)",
@@ -236,15 +251,27 @@ struct ManagerDashboardView: View {
                 icon: "checklist.checked",
                 color: Theme.accent
             )
-            metricCard(
-                value: "\(pendingTimesheetsCount) Awaiting",
-                label: "Pending Timesheets",
-                icon: "doc.badge.clock",
-                color: pendingTimesheetsCount > 0 ? Theme.warning : Theme.textSecondary
-            )
+            Button {
+                activeSheet = .pendingTimesheets
+            } label: {
+                metricCard(
+                    value: "\(pendingTimesheetsCount)",
+                    label: "Pending Timesheets",
+                    icon: "doc.badge.clock",
+                    color: pendingTimesheetsCount > 0 ? Theme.warning : Theme.textSecondary
+                )
+            }
+            .buttonStyle(.plain)
+            .pointerHover()
+            .accessibilityHint("Opens the list of staff with a pending timesheet")
         }
     }
-    
+
+    /// `minHeight` keeps all four cards the same height regardless of
+    /// whether a given label wraps to one or two lines ("ACTIVE STAFF" vs
+    /// "HOURS SCHEDULED") — without it each card's background sizes to its
+    /// own intrinsic content instead of the grid row, so the shorter-label
+    /// cards visibly shrink next to the wrapped ones.
     private func metricCard(value: String, label: String, icon: String, color: Color) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
@@ -253,19 +280,23 @@ struct ManagerDashboardView: View {
                 .frame(width: 40, height: 40)
                 .background(color.opacity(0.12))
                 .clipShape(RoundedRectangle(cornerRadius: Theme.cornerMedium))
-            
+
             VStack(alignment: .leading, spacing: 3) {
                 Text(value)
                     .font(.title3.weight(.bold))
                     .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                 Text(label)
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(Theme.textTertiary)
                     .textCase(.uppercase)
+                    .lineLimit(2)
             }
             Spacer()
         }
         .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous)
                 .fill(Theme.card)
@@ -278,7 +309,7 @@ struct ManagerDashboardView: View {
                 .font(.headline)
                 .foregroundStyle(Theme.textPrimary)
             
-            HStack(spacing: 12) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 12)], spacing: 12) {
                 actionButton(title: "New Shift", icon: "calendar.badge.plus", color: Theme.brand) {
                     activeSheet = .newShift
                 }
@@ -291,6 +322,7 @@ struct ManagerDashboardView: View {
                     actionLabel(title: "Staff Directory", icon: "person.2.fill", color: Theme.textSecondary)
                 }
                 .buttonStyle(.plain)
+                .pointerHover()
             }
         }
     }
@@ -300,8 +332,13 @@ struct ManagerDashboardView: View {
             actionLabel(title: title, icon: icon, color: color)
         }
         .buttonStyle(.plain)
+        .pointerHover()
     }
 
+    /// `minHeight` matches every quick-action card to the tallest possible
+    /// title ("Staff Directory" wraps to 2 lines at the grid's narrower
+    /// widths; "New Shift"/"New Task" don't) — without it, the wrapped card
+    /// grows taller than its 1-line siblings in the same grid row.
     private func actionLabel(title: String, icon: String, color: Color) -> some View {
         VStack(spacing: 8) {
             Image(systemName: icon)
@@ -311,8 +348,9 @@ struct ManagerDashboardView: View {
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .multilineTextAlignment(.center)
+                .lineLimit(2)
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, minHeight: 92)
         .padding(.vertical, 14)
         .background(
             RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous)
@@ -337,8 +375,11 @@ struct ManagerDashboardView: View {
                             .fill(Theme.card)
                     )
             } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(todaysShifts.enumerated()), id: \.element.id) { index, shift in
+                // Each shift is its own white card, rather than one shared
+                // card with divider lines between rows — makes staff easier
+                // to visually scan/separate at a glance.
+                VStack(spacing: 10) {
+                    ForEach(todaysShifts, id: \.id) { shift in
                         let staffMember = repo.user(id: shift.staffId)
                         let status = lifecycleStatus(for: shift)
 
@@ -356,69 +397,114 @@ struct ManagerDashboardView: View {
                             )
                         }
                         .buttonStyle(.plain)
+                        .pointerHover()
                         .accessibilityHint("Opens Daily Jobs assignment")
-
-                        if index < todaysShifts.count - 1 {
-                            Divider().overlay(Theme.separator)
-                        }
                     }
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous)
-                        .fill(Theme.card)
-                )
-                // Clip the stacked rows to the card's rounded shape so a
-                // highlighted row's full-bleed background/accent bar follows the
-                // rounded corners instead of poking past them (which read as a
-                // doubled edge on the top/bottom row).
-                .clipShape(RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous))
             }
         }
     }
-    
+
+    /// Shortcut into today's Daily Jobs across every staff member — without
+    /// this, the only way in was clicking a specific staff row under Today's
+    /// Roster Status and scrolling to find it.
+    private var dailyJobsCard: some View {
+        NavigationLink {
+            ManagerDailyJobsOverviewView()
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "checklist")
+                    .font(.title3)
+                    .foregroundStyle(Theme.brand)
+                    .frame(width: 40, height: 40)
+                    .background(Theme.brand.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerMedium))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Daily Jobs")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(todaysDailyJobAssignments.isEmpty
+                         ? "No jobs assigned today"
+                         : "\(dailyJobsDoneCount)/\(todaysDailyJobAssignments.count) done across today's shifts")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous)
+                    .fill(Theme.card)
+            )
+        }
+        .buttonStyle(.plain)
+        .pointerHover()
+    }
+
     private func rosterRow(name: String, role: String, time: String, status: String,
                            tint: Color, inProgress: Bool = false,
                            jobs: [DailyJobAssignment] = []) -> some View {
-        // The in-progress shift takes visual priority: brand bar + tinted row.
-        HStack(spacing: 12) {
-            Circle()
-                .fill(tint)
-                .frame(width: 8, height: 8)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(name)
-                    .font(.subheadline.weight(inProgress ? .bold : .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                Text("\(role) • \(time)")
-                    .font(.caption)
-                    .foregroundStyle(Theme.textSecondary)
-                if !jobs.isEmpty {
-                    let done = jobs.filter(\.completed).count
-                    HStack(spacing: 3) {
-                        Image(systemName: done == jobs.count ? "checkmark.circle.fill" : "checklist")
-                            .font(.caption2)
-                        Text("Jobs \(done)/\(jobs.count)")
-                            .font(.caption2.weight(.semibold))
-                    }
-                    .foregroundStyle(done == jobs.count ? Theme.accent : Theme.warning)
-                }
-            }
-
-            Spacer()
-
-            Text(status)
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(tint)
-                .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(Capsule().fill(tint.opacity(0.12)))
-        }
-        .padding(14)
-        .background(inProgress ? Theme.brand.opacity(0.08) : Color.clear)
-        .overlay(alignment: .leading) {
+        // Each row is its own white card. The in-progress shift still takes
+        // visual priority, but via a bold name + inset brand accent stripe
+        // rather than a tinted background wash — the card stays white.
+        HStack(spacing: 0) {
             if inProgress {
-                Rectangle().fill(Theme.brand).frame(width: 3)
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(Theme.brand)
+                    .frame(width: 4)
+                    .padding(.vertical, 14)
+                    .padding(.leading, 10)
             }
+
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(tint)
+                    .frame(width: 8, height: 8)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                        .font(.subheadline.weight(inProgress ? .bold : .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("\(role) • \(time)")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                    if !jobs.isEmpty {
+                        let done = jobs.filter(\.completed).count
+                        HStack(spacing: 3) {
+                            Image(systemName: done == jobs.count ? "checkmark.circle.fill" : "checklist")
+                                .font(.caption2)
+                            Text("Jobs \(done)/\(jobs.count)")
+                                .font(.caption2.weight(.semibold))
+                        }
+                        .foregroundStyle(done == jobs.count ? Theme.accent : Theme.warning)
+                    }
+                }
+
+                Spacer()
+
+                Text(status)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(tint)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(Capsule().fill(tint.opacity(0.12)))
+            }
+            .padding(14)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous)
+                .fill(Theme.card)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous)
+                .strokeBorder(Theme.separator, lineWidth: 1)
+        )
     }
     
     private var recentTasksSection: some View {

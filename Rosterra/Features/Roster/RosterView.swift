@@ -45,10 +45,17 @@ struct RosterView: View {
         NavigationStack {
             ScrollViewReader { proxy in
                 List {
-                    TitlePillCollapseReporter()
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
+                    // Zero-footprint scroll probe: own section with no
+                    // spacing — a loose row would form an implicit section
+                    // (44pt min row height + section spacing) and push the
+                    // first card ~100pt down.
+                    Section {
+                        TitlePillCollapseReporter()
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                    }
+                    .listSectionSpacing(0)
                     if !actionNeeded.isEmpty {
                         actionNeededSection
                     }
@@ -69,12 +76,8 @@ struct RosterView: View {
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle("Roster")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    ScreenTitlePill(title: "Roster", icon: "calendar")
-                }
-            }
-            .refreshable { await repo.refreshFromServer() }
+            .screenTitlePill("Roster", icon: "calendar", fraction: 0)
+            .macRefreshable { await repo.refreshFromServer() }
             .sheet(item: $shareURL) { url in ShareSheet(items: [url]) }
             .confirmationDialog("Undo absence report?",
                                 isPresented: Binding(get: { undoTarget != nil }, set: { if !$0 { undoTarget = nil } }),
@@ -154,6 +157,7 @@ struct RosterView: View {
                 )
             }
             .buttonStyle(.plain)
+            .pointerHover()
         }
         .padding(.horizontal, Theme.screenPadding)
         .padding(.top, 6)
@@ -225,6 +229,7 @@ struct RosterView: View {
             .overlay(RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous).strokeBorder(Theme.separator, lineWidth: 1))
         }
         .buttonStyle(.plain)
+        .pointerHover()
     }
 
     // MARK: Day section

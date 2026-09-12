@@ -145,8 +145,7 @@
         will read higher than before (12% vs 11.25%).
   - [x] SetupRequiredView now prints the live bundle id (was stale
         com.sura.roster.staff)
-  - [ ] Remove unused ManagerBlockedView — still awaiting Sura's OK
-        (open decision below)
+  - [x] Remove unused ManagerBlockedView (2026-08-14; managers route to ManagerMainView)
 - [ ] **M7 — UI/UX correctness** — ✅ CODE COMPLETE on branch
       `milestone-7-uiux-correctness` (2026-07-06), ⏳ awaiting Sura's device
       verification
@@ -290,9 +289,9 @@
         NSCalendarsWriteOnlyAccessUsageDescription, PrivacyInfo collected-data
         types, employer-managed account deletion UX, About legal links.
         See docs/APP_STORE_SUBMISSION.md for ASC notes + device QA checklist.
-  - [ ] Passkey keep-or-remove decision still open — entitlement/domain
-        association work is done, but `PasskeyManager.register()` has no UI
-        entry point anywhere in the app, so registration can't be triggered yet
+  - [x] Passkey registration wired 2026-08-14 — Account → Security toggle
+        calls `PasskeyManager.registerAndStore`; LoginView Sign in with
+        Passkey appears once a credential is stored.
   - [ ] Trademark / domain / App Store name conflict checks still open
         (docs/BRANDING.md). Deploy PWA `/terms` + confirm support@ mailbox
         before first upload.
@@ -526,8 +525,6 @@ on the PWA repo, not part of this branch).
 - M6: super rate set to 12% (AU SG) as BusinessRules fallback on 2026-07-06 —
   Sura to confirm, and decide if constants should move to Firestore settings.
 - M6: real shift locations/departments (replace Melbourne/Sydney/Brisbane)?
-- M6: OK to delete unused ManagerBlockedView?
-- M12: keep passkeys (wire registration + Associated Domains) or remove?
 
 ## Working conventions (from the full roadmap, Phase 3 conversation)
 

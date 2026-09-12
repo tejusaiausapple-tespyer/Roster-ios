@@ -3,6 +3,28 @@
 <plist version="1.0">
 <dict>
 	<!--
+	  App Sandbox — REQUIRED for Mac App Store distribution (Mac Catalyst
+	  included). Enable "App Sandbox" for this App ID's capabilities in the
+	  Apple Developer portal / Xcode's Signing & Capabilities tab the same way
+	  Push Notifications was enabled below. network.client is mandatory or
+	  every Firebase/Worker network call fails with "host name resolution
+	  failed"; the rest match the usage-description keys already in
+	  Info.plist (camera, location, calendars, photo library).
+	-->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.device.camera</key>
+	<true/>
+	<key>com.apple.security.personal-information.location</key>
+	<true/>
+	<key>com.apple.security.personal-information.calendars</key>
+	<true/>
+	<key>com.apple.security.personal-information.photos-library</key>
+	<true/>
+
+	<!--
 	  Keychain Sharing — REQUIRED for Firebase Authentication on macOS / Mac
 	  Catalyst. FirebaseAuth persists the signed-in session to the keychain, and
 	  macOS rejects keychain writes without a keychain access group, surfacing:

@@ -66,6 +66,21 @@ enum RosterCalendar {
         dayFormatter.date(from: key)
     }
 
+    /// Monday-first `Weekday` for a date (business timezone) — used to key
+    /// into `UserAvailability`, which stores one entry per weekday.
+    static func weekday(for date: Date) -> Weekday {
+        switch calendar.component(.weekday, from: date) { // Foundation: 1=Sun...7=Sat
+        case 1: return .sunday
+        case 2: return .monday
+        case 3: return .tuesday
+        case 4: return .wednesday
+        case 5: return .thursday
+        case 6: return .friday
+        case 7: return .saturday
+        default: return .monday
+        }
+    }
+
     /// Whether a `yyyy-MM-dd` key falls on a Saturday or Sunday (business
     /// timezone). Matches `PayrollCalculator.hoursBuckets`'s own weekday
     /// check (`weekday == 1 || weekday == 7`, Sun=1...Sat=7 in Foundation's

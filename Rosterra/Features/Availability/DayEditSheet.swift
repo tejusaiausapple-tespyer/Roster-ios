@@ -23,8 +23,12 @@ struct DayEditSheet: View {
         let value = day.wrappedValue
         _available = State(initialValue: value.available)
         _allDay = State(initialValue: value.allDay)
-        _start = State(initialValue: TimeConvert.date(from: value.start ?? "09:00") ?? Date())
-        _end = State(initialValue: TimeConvert.date(from: value.end ?? "17:00") ?? Date())
+        // Falls back to the sensible default time, not `Date()` — a
+        // malformed (non-nil) stored string would otherwise make both
+        // fields fall back to the same "now" instant, guaranteeing the
+        // start >= end validation fails the moment the sheet opens.
+        _start = State(initialValue: TimeConvert.date(from: value.start ?? "09:00") ?? TimeConvert.date(from: "09:00") ?? Date())
+        _end = State(initialValue: TimeConvert.date(from: value.end ?? "17:00") ?? TimeConvert.date(from: "17:00") ?? Date())
     }
 
     var body: some View {
@@ -84,14 +88,15 @@ struct DayEditSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { apply() }
+                        .keyboardShortcut(.defaultAction)
                 }
             }
         }
-        .presentationDetents([.medium])
-        .presentationDragIndicator(.visible)
+        .phoneSheetDetents([.medium])
     }
 
     private func apply() {

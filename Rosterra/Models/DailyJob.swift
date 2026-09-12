@@ -27,6 +27,10 @@ struct DailyJobAssignment: Identifiable, Codable {
     let completed: Bool
     let completedAt: Date?
     let completedBy: String?
+    /// Manager-arranged position within the shift — the order staff should
+    /// work through the jobs in. `nil` on assignments written before this
+    /// field existed; those sort after any explicitly-ordered ones.
+    let order: Int?
 
     static func docId(shiftId: String, templateId: String) -> String {
         "\(shiftId)_\(templateId)"
@@ -37,4 +41,18 @@ struct DailyJobAssignment: Identifiable, Codable {
     func isVisibleToStaff(now: Date = Date()) -> Bool {
         date == RosterCalendar.todayKey(now)
     }
+}
+
+/// One staff member's "keep repeating these jobs" preference. Doc ID is the
+/// staffId (one rule per staff member). When `enabled`, every new shift
+/// created for this staff member auto-gets `templateIds` assigned — the
+/// manager no longer has to re-pick jobs each day. Disabling keeps
+/// `templateIds` around so re-enabling doesn't lose the previous selection;
+/// it only stops new shifts from being auto-populated.
+struct DailyJobRepeatRule: Identifiable, Codable {
+    @DocumentID var id: String?
+    let templateIds: [String]
+    let enabled: Bool
+    let updatedAt: Date?
+    let updatedBy: String?
 }

@@ -1,0 +1,48 @@
+import Foundation
+import Observation
+
+/// Drives the update-required / update-available UI from `AppVersionCheckService`.
+/// Checked on launch and every foreground (see `RootView`).
+@Observable
+final class AppVersionCheckViewModel {
+    private(set) var status: AppUpdateStatus = .upToDate
+
+    /// Version the user tapped "Later" on — suppresses the optional sheet for
+    /// the rest of this session so it doesn't reappear on every foreground.
+    private var dismissedOptionalVersion: String?
+
+    /// Constructed lazily on first `check()`, not at init — `RemoteConfig.remoteConfig()`
+    /// requires Firebase to already be configured, which isn't guaranteed yet
+    /// when this view model is created as `RootView`'s `@State`.
+    private var service: AppVersionCheckService?
+
+    init(service: AppVersionCheckService? = nil) {
+        self.service = service
+    }
+
+    var isUpdateRequired: Bool {
+        if case .required = status { return true }
+        return false
+    }
+
+    var isUpdateAvailable: Bool {
+        if case .optional(let latestVersion) = status {
+            return latestVersion != dismissedOptionalVersion
+        }
+        return false
+    }
+
+    @MainActor
+    func check() async {
+        guard FirebaseBootstrap.hasConfigFile else { return }
+        let service = self.service ?? AppVersionCheckService()
+        self.service = service
+        status = await service.checkForUpdate()
+    }
+
+    func dismissOptionalUpdate() {
+        if case .optional(let latestVersion) = status {
+            dismissedOptionalVersion = latestVersion
+        }
+    }
+}

@@ -133,14 +133,23 @@ struct PayslipAuditEntry: Equatable, Identifiable {
     var userName: String
     var at: Date
     var detail: String
+    /// Set only for field-level "edited" entries (see `PayrollCalculator.auditDiff`) —
+    /// nil for coarse-grained actions like generated/approved/submitted/archived.
+    var field: String?
+    var previousValue: String?
+    var newValue: String?
 
-    init(action: String, userId: String, userName: String, at: Date = Date(), detail: String = "") {
+    init(action: String, userId: String, userName: String, at: Date = Date(), detail: String = "",
+         field: String? = nil, previousValue: String? = nil, newValue: String? = nil) {
         self.id = UUID().uuidString
         self.action = action
         self.userId = userId
         self.userName = userName
         self.at = at
         self.detail = detail
+        self.field = field
+        self.previousValue = previousValue
+        self.newValue = newValue
     }
 
     init(dict: [String: Any]) {
@@ -150,11 +159,18 @@ struct PayslipAuditEntry: Equatable, Identifiable {
         self.userName = FS.stringValue(dict, "userName")
         self.at = FS.date(dict, "at") ?? Date(timeIntervalSince1970: 0)
         self.detail = FS.stringValue(dict, "detail")
+        self.field = FS.string(dict, "field")
+        self.previousValue = FS.string(dict, "previousValue")
+        self.newValue = FS.string(dict, "newValue")
     }
 
     var asDictionary: [String: Any] {
-        ["id": id, "action": action, "userId": userId,
-         "userName": userName, "at": at, "detail": detail]
+        var dict: [String: Any] = ["id": id, "action": action, "userId": userId,
+                                    "userName": userName, "at": at, "detail": detail]
+        dict["field"] = field ?? NSNull()
+        dict["previousValue"] = previousValue ?? NSNull()
+        dict["newValue"] = newValue ?? NSNull()
+        return dict
     }
 }
 
@@ -192,7 +208,14 @@ struct Payslip: Identifiable, Equatable {
     /// at generation, manager-editable afterwards).
     var extraEarnings: [PayslipEarning]
 
-    // Deductions (all manager-entered).
+    /// Drives which ATO weekly withholding scale `PAYGCalculator` uses
+    /// (snapshot — see `StaffWageProfile.claimsTaxFreeThreshold`).
+    var claimsTaxFreeThreshold: Bool
+
+    // Deductions. `payg` is auto-calculated at generation time from the ATO
+    // formula (PayrollCalculator.calculatedPAYG) but stays manager-editable —
+    // e.g. for a HELP/STSL debt or foreign-resident declaration the formula
+    // doesn't model.
     var payg: Double
     var otherDeductions: Double
     var salarySacrifice: Double
@@ -226,8 +249,9 @@ struct Payslip: Identifiable, Equatable {
          publicHolidayHours: Double = 0, publicHolidayRate: Double = 0,
          overtimeHours: Double = 0, overtimeRate: Double = 0,
          extraEarnings: [PayslipEarning] = [],
+         claimsTaxFreeThreshold: Bool = true,
          payg: Double = 0, otherDeductions: Double = 0, salarySacrifice: Double = 0,
-         deductionNotes: String = "", superRate: Double = 12.0, notes: String = "",
+         deductionNotes: String = "", superRate: Double = BusinessRules.defaultSuperRatePercent, notes: String = "",
          generatedAt: Date? = nil, updatedAt: Date? = nil,
          approvedBy: String? = nil, approvedAt: Date? = nil,
          submittedBy: String? = nil, submittedAt: Date? = nil,
@@ -255,6 +279,7 @@ struct Payslip: Identifiable, Equatable {
         self.overtimeHours = overtimeHours
         self.overtimeRate = overtimeRate
         self.extraEarnings = extraEarnings
+        self.claimsTaxFreeThreshold = claimsTaxFreeThreshold
         self.payg = payg
         self.otherDeductions = otherDeductions
         self.salarySacrifice = salarySacrifice
@@ -295,11 +320,12 @@ struct Payslip: Identifiable, Equatable {
         self.overtimeHours = FS.double(data, "overtimeHours")
         self.overtimeRate = FS.double(data, "overtimeRate")
         self.extraEarnings = (data["extraEarnings"] as? [[String: Any]] ?? []).map { PayslipEarning(dict: $0) }
+        self.claimsTaxFreeThreshold = FS.bool(data, "claimsTaxFreeThreshold", default: true)
         self.payg = FS.double(data, "payg")
         self.otherDeductions = FS.double(data, "otherDeductions")
         self.salarySacrifice = FS.double(data, "salarySacrifice")
         self.deductionNotes = FS.stringValue(data, "deductionNotes")
-        self.superRate = FS.double(data, "superRate", default: 12.0)
+        self.superRate = FS.double(data, "superRate", default: BusinessRules.defaultSuperRatePercent)
         self.notes = FS.stringValue(data, "notes")
         self.generatedAt = FS.date(data, "generatedAt")
         self.updatedAt = FS.date(data, "updatedAt")
@@ -334,6 +360,7 @@ struct Payslip: Identifiable, Equatable {
             "overtimeHours": overtimeHours,
             "overtimeRate": overtimeRate,
             "extraEarnings": extraEarnings.map { $0.asDictionary },
+            "claimsTaxFreeThreshold": claimsTaxFreeThreshold,
             "payg": payg,
             "otherDeductions": otherDeductions,
             "salarySacrifice": salarySacrifice,
@@ -405,6 +432,113 @@ enum PayrollCalculator {
         )
     }
 
+    /// Weekly earnings PAYG withholding is calculated on: ordinary + weekend +
+    /// PH + overtime + extras NOT flagged `exemptFromTax`, less salary
+    /// sacrifice (a pre-tax deduction). `otherDeductions` is left out — it's
+    /// typically post-tax and the model doesn't distinguish, so a manager
+    /// adjusts `payg` manually if a specific deduction needs pre-tax treatment.
+    static func taxableEarnings(for slip: Payslip) -> Double {
+        let taxableExtras = slip.extraEarnings.filter { !$0.exemptFromTax }.reduce(0) { $0 + $1.amount }
+        let ordinary = slip.ordinaryHours * slip.baseHourlyRate
+        let weekend = slip.weekendHours * slip.weekendRate
+        let publicHoliday = slip.publicHolidayHours * slip.publicHolidayRate
+        let overtime = slip.overtimeHours * slip.overtimeRate
+        return max(0, round2(ordinary + weekend + publicHoliday + overtime + taxableExtras - slip.salarySacrifice))
+    }
+
+    /// The ATO-formula PAYG withholding for this payslip (Australian
+    /// resident, weekly pay period; see `PAYGCalculator`). This is what
+    /// generation seeds `payg` with and what the manager "Recalculate" action
+    /// re-derives — `payg` itself stays a plain stored/editable field so a
+    /// manager can override for HELP/STSL debt, foreign residency, etc.
+    static func calculatedPAYG(for slip: Payslip) -> Double {
+        PAYGCalculator.weeklyWithholding(taxableEarnings: taxableEarnings(for: slip),
+                                         claimsTaxFreeThreshold: slip.claimsTaxFreeThreshold)
+    }
+
+    /// Field-level diff between two payslip snapshots — one `PayslipAuditEntry`
+    /// per manager-editable field that changed, `[]` if nothing did. Powers
+    /// `RosterRepository.savePayslip`'s audit trail. Numeric fields are
+    /// compared post-`round2` so float noise from arithmetic elsewhere (e.g.
+    /// the quantity×rate sync on an earnings row) never produces a spurious
+    /// entry. Excludes `payDate` (not wired to any editable control today)
+    /// and every snapshot-only/system field (staffName, status, generatedAt,
+    /// audit itself, etc).
+    static func auditDiff(from old: Payslip, to new: Payslip, editor: AppUser) -> [PayslipAuditEntry] {
+        func hours(_ v: Double) -> String { String(format: "%.2f", v) }
+        func money(_ v: Double) -> String { RosterFormat.money(v) }
+        func percent(_ v: Double) -> String { String(format: "%g%%", v) }
+        func yesNo(_ v: Bool) -> String { v ? "Yes" : "No" }
+        func text(_ v: String) -> String { v }
+
+        var entries: [PayslipAuditEntry] = []
+        func log<T: Equatable>(_ field: String, _ oldValue: T, _ newValue: T, _ format: (T) -> String) {
+            guard oldValue != newValue else { return }
+            let previous = format(oldValue), updated = format(newValue)
+            entries.append(PayslipAuditEntry(
+                action: "edited", userId: editor.id, userName: editor.fullName,
+                detail: "\(field): \(previous) → \(updated)",
+                field: field, previousValue: previous, newValue: updated))
+        }
+
+        log("Base hourly rate", round2(old.baseHourlyRate), round2(new.baseHourlyRate), money)
+        log("Ordinary hours", round2(old.ordinaryHours), round2(new.ordinaryHours), hours)
+        log("Weekend hours", round2(old.weekendHours), round2(new.weekendHours), hours)
+        log("Weekend rate", round2(old.weekendRate), round2(new.weekendRate), money)
+        log("Public holiday hours", round2(old.publicHolidayHours), round2(new.publicHolidayHours), hours)
+        log("Public holiday rate", round2(old.publicHolidayRate), round2(new.publicHolidayRate), money)
+        log("Overtime hours", round2(old.overtimeHours), round2(new.overtimeHours), hours)
+        log("Overtime rate", round2(old.overtimeRate), round2(new.overtimeRate), money)
+        log("Claims tax-free threshold", old.claimsTaxFreeThreshold, new.claimsTaxFreeThreshold, yesNo)
+        log("PAYG withholding", round2(old.payg), round2(new.payg), money)
+        log("Other deductions", round2(old.otherDeductions), round2(new.otherDeductions), money)
+        log("Salary sacrifice", round2(old.salarySacrifice), round2(new.salarySacrifice), money)
+        log("Deduction notes", old.deductionNotes, new.deductionNotes, text)
+        log("Super guarantee", round2(old.superRate), round2(new.superRate), percent)
+        log("Notes", old.notes, new.notes, text)
+
+        entries.append(contentsOf: extraEarningsDiff(from: old.extraEarnings, to: new.extraEarnings, editor: editor))
+        return entries
+    }
+
+    /// Row-level diff for `extraEarnings`, matched by id: added rows, removed
+    /// rows, and rows present in both whose amount changed. Diffs on `amount`
+    /// alone (not `quantity`/`rate` separately) — a quantity edit already
+    /// resyncs `amount` (see `ManagerPayslipDetailSheet.extraBinding`), so
+    /// diffing both would double-report the same edit.
+    private static func extraEarningsDiff(from old: [PayslipEarning], to new: [PayslipEarning],
+                                          editor: AppUser) -> [PayslipAuditEntry] {
+        let oldByID = Dictionary(uniqueKeysWithValues: old.map { ($0.id, $0) })
+        let newByID = Dictionary(uniqueKeysWithValues: new.map { ($0.id, $0) })
+        var entries: [PayslipAuditEntry] = []
+
+        for earning in new where oldByID[earning.id] == nil {
+            let amount = RosterFormat.money(round2(earning.amount))
+            entries.append(PayslipAuditEntry(
+                action: "edited", userId: editor.id, userName: editor.fullName,
+                detail: "Added earnings row: \(earning.name) (\(amount))",
+                field: "Earnings: \(earning.name)", newValue: amount))
+        }
+        for earning in old where newByID[earning.id] == nil {
+            let amount = RosterFormat.money(round2(earning.amount))
+            entries.append(PayslipAuditEntry(
+                action: "edited", userId: editor.id, userName: editor.fullName,
+                detail: "Removed earnings row: \(earning.name)",
+                field: "Earnings: \(earning.name)", previousValue: amount))
+        }
+        for newEarning in new {
+            guard let oldEarning = oldByID[newEarning.id],
+                  round2(oldEarning.amount) != round2(newEarning.amount) else { continue }
+            let previous = RosterFormat.money(round2(oldEarning.amount))
+            let updated = RosterFormat.money(round2(newEarning.amount))
+            entries.append(PayslipAuditEntry(
+                action: "edited", userId: editor.id, userName: editor.fullName,
+                detail: "\(newEarning.name): \(previous) → \(updated)",
+                field: "Earnings: \(newEarning.name)", previousValue: previous, newValue: updated))
+        }
+        return entries
+    }
+
     /// Splits approved worked hours into ordinary (Mon–Fri) vs weekend
     /// (Sat/Sun) buckets by shift date key.
     static func hoursBuckets(workedHoursByDate: [String: Double]) -> (ordinary: Double, weekend: Double) {
@@ -418,6 +552,67 @@ enum PayrollCalculator {
     }
 
     static func round2(_ value: Double) -> Double { (value * 100).rounded() / 100 }
+}
+
+/// Australian PAYG withholding — ATO Schedule 1, "Statement of formulas for
+/// calculating amounts to be withheld" (NAT 1004), weekly earnings, resident
+/// individual rates. Coefficients below are effective from 1 July 2026
+/// (2026–27 income year — the 2025–26 16% band dropped to 15%).
+///
+/// Payslip pay periods are always a Mon–Sun week (see `PayrollModels.swift`
+/// header), so only the weekly scales are implemented; there's no
+/// fortnightly/monthly conversion to do.
+///
+/// Only resident Scale 1 (no tax-free threshold) and Scale 2 (threshold
+/// claimed) are modelled — the two declarations that cover the vast majority
+/// of staff. HELP/STSL debt, foreign residency, and seniors/pensioner offsets
+/// aren't in the ATO Schedule 1 formula either (they're separate schedules) —
+/// a manager overrides `payg` manually for those, same as before this existed.
+enum PAYGCalculator {
+    /// One coefficient band of the ATO formula `withholding = a×x − b`, valid
+    /// while `x` (see `weeklyWithholding`) is below `upperBound`.
+    private struct Band {
+        let upperBound: Double
+        let a: Double
+        let b: Double
+    }
+
+    /// Scale 1 — tax-free threshold NOT claimed.
+    private static let scale1: [Band] = [
+        Band(upperBound: 371, a: 0.2084, b: 11.0185),
+        Band(upperBound: 515, a: 0.1790, b: 0.1066),
+        Band(upperBound: 932, a: 0.3227, b: 74.1674),
+        Band(upperBound: 2246, a: 0.3200, b: 71.6508),
+        Band(upperBound: 3303, a: 0.3900, b: 228.8816),
+        Band(upperBound: .infinity, a: 0.4700, b: 493.1893),
+    ]
+
+    /// Scale 2 — tax-free threshold claimed (the common case: this is the
+    /// staff member's main or only job).
+    private static let scale2: [Band] = [
+        Band(upperBound: 362, a: 0, b: 0),
+        Band(upperBound: 538, a: 0.1500, b: 54.3462),
+        Band(upperBound: 673, a: 0.2500, b: 108.2135),
+        Band(upperBound: 721, a: 0.1700, b: 54.3473),
+        Band(upperBound: 865, a: 0.1790, b: 60.8377),
+        Band(upperBound: 1282, a: 0.3227, b: 185.1935),
+        Band(upperBound: 2596, a: 0.3200, b: 181.7319),
+        Band(upperBound: 3653, a: 0.3900, b: 363.4627),
+        Band(upperBound: .infinity, a: 0.4700, b: 655.7704),
+    ]
+
+    /// Weekly PAYG withholding for `taxableEarnings` (dollars and cents).
+    /// Mirrors the ATO's documented method exactly: truncate earnings to
+    /// whole dollars, add 99 cents (`x`), apply the matching band's linear
+    /// formula, then round to the nearest dollar — an exact 50 cents rounds
+    /// up (`.rounded()`'s away-from-zero default does this for positives).
+    static func weeklyWithholding(taxableEarnings: Double, claimsTaxFreeThreshold: Bool) -> Double {
+        guard taxableEarnings > 0 else { return 0 }
+        let x = taxableEarnings.rounded(.down) + 0.99
+        let bands = claimsTaxFreeThreshold ? scale2 : scale1
+        guard let band = bands.first(where: { x < $0.upperBound }) else { return 0 }
+        return max(0, (band.a * x - band.b).rounded())
+    }
 }
 
 /// Formatting shared by payroll UI + PDF.

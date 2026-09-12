@@ -97,6 +97,7 @@ struct WeekSelector: View {
             .opacity(isLocked ? 0.45 : 1)
         }
         .buttonStyle(.plain)
+        .pointerHover()
         .accessibilityLabel("\(RosterFormat.weekdayLong(key)) \(dayNumber)\(isMarked ? ", has shift" : "")\(isLocked ? ", locked" : "")")
     }
 
