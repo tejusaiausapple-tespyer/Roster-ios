@@ -18,7 +18,6 @@ struct MacManagerTasksView: View {
     @State private var taskToDelete: RosterTask?
     @State private var photoTarget: PhotoTarget?
     @State private var isWorking = false
-    @State private var isRefreshing = false
 
     private enum TaskFilter: String, CaseIterable, Identifiable {
         case all = "All"
@@ -269,22 +268,9 @@ struct MacManagerTasksView: View {
     }
 
     private var refreshToolbarButton: some View {
-        Button {
-            guard !isRefreshing else { return }
-            isRefreshing = true
-            Task {
-                await repo.refreshFromServer()
-                isRefreshing = false
-            }
-        } label: {
-            if isRefreshing {
-                ProgressView()
-                    .controlSize(.small)
-            } else {
-                Image(systemName: "arrow.clockwise")
-            }
+        MacRefreshButton("Refresh tasks") {
+            await repo.refreshFromServer()
         }
-        .disabled(isRefreshing)
     }
 
     private var dateControls: some View {

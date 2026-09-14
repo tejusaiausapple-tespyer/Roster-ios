@@ -113,8 +113,10 @@ struct MacButtonStyle: ButtonStyle {
         private var foregroundColor: Color {
             guard isEnabled else { return MacColor.textTertiary }
             switch variant {
-            case .prominent, .success:
+            case .success:
                 return Color.white
+            case .prominent:
+                return Color.black
             case .secondary, .bordered:
                 return MacColor.textPrimary
             case .ghost:
@@ -128,7 +130,7 @@ struct MacButtonStyle: ButtonStyle {
             guard isEnabled else { return MacColor.cardBorder.opacity(0.3) }
             switch variant {
             case .prominent:
-                return isHovered ? MacColor.brandStrong.opacity(0.9) : MacColor.brandStrong
+                return isHovered ? Color.white.opacity(0.88) : Color.white
             case .success:
                 return isHovered ? MacColor.success.opacity(0.9) : MacColor.success
             case .secondary:
@@ -145,8 +147,10 @@ struct MacButtonStyle: ButtonStyle {
         private var borderColor: Color {
             guard isEnabled else { return Color.clear }
             switch variant {
-            case .prominent, .success:
+            case .success:
                 return Color.white.opacity(0.18)
+            case .prominent:
+                return Color.black.opacity(isHovered ? 0.16 : 0.08)
             case .secondary:
                 return isHovered ? MacColor.accent.opacity(0.4) : MacColor.cardBorder
             case .bordered:
@@ -211,7 +215,7 @@ struct MacAsyncButton<Label: View>: View {
                 if isLoading {
                     ProgressView()
                         .controlSize(size == .small ? .mini : .small)
-                        .tint((variant == .prominent || variant == .success) ? Color.white : MacColor.accent)
+                        .tint(variant == .success ? Color.white : (variant == .prominent ? Color.black : MacColor.accent))
                 }
                 label()
                     .opacity(isLoading ? 0.7 : 1.0)
@@ -219,6 +223,42 @@ struct MacAsyncButton<Label: View>: View {
         }
         .macButton(variant, size: size, fullWidth: fullWidth)
         .disabled(isLoading)
+    }
+}
+
+/// Consistent icon-only refresh action for Mac toolbars. It deliberately uses
+/// the plain system button style so Catalyst does not add a glass/grey capsule.
+struct MacRefreshButton: View {
+    let accessibilityLabel: String
+    let action: () async -> Void
+
+    @State private var isRefreshing = false
+
+    init(_ accessibilityLabel: String = "Refresh", action: @escaping () async -> Void) {
+        self.accessibilityLabel = accessibilityLabel
+        self.action = action
+    }
+
+    var body: some View {
+        Button {
+            guard !isRefreshing else { return }
+            isRefreshing = true
+            Task {
+                await action()
+                isRefreshing = false
+            }
+        } label: {
+            if isRefreshing {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: "arrow.clockwise")
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(isRefreshing)
+        .help(accessibilityLabel)
+        .accessibilityLabel(accessibilityLabel)
     }
 }
 #endif

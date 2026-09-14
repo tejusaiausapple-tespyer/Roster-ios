@@ -12,7 +12,7 @@ final class AppRouter {
     static weak var shared: AppRouter?
 
     enum Tab: Int, CaseIterable, Identifiable {
-        case home, roster, tasks, availability, account
+        case home, roster, payslips, availability, account
 
         var id: Self { self }
 
@@ -20,7 +20,7 @@ final class AppRouter {
             switch self {
             case .home: return "Home"
             case .roster: return "Roster"
-            case .tasks: return "Tasks"
+            case .payslips: return "Payslips"
             case .availability: return "Availability"
             case .account: return "Account"
             }
@@ -30,7 +30,7 @@ final class AppRouter {
             switch self {
             case .home: return "house"
             case .roster: return "calendar"
-            case .tasks: return "list.bullet.clipboard"
+            case .payslips: return "banknote"
             case .availability: return "calendar.badge.clock"
             case .account: return "person.crop.circle"
             }
@@ -42,7 +42,7 @@ final class AppRouter {
             switch self {
             case .home: return "1"
             case .roster: return "2"
-            case .tasks: return "3"
+            case .payslips: return "3"
             case .availability: return "4"
             case .account: return ","
             }
@@ -50,6 +50,20 @@ final class AppRouter {
     }
 
     var selectedTab: Int = Tab.home.rawValue
+
+    struct PendingClockAction: Equatable {
+        enum Kind: String {
+            case start
+            case end
+        }
+
+        let shiftId: String
+        let kind: Kind
+    }
+
+    /// A Start/End control tapped from the shift Live Activity. Home consumes
+    /// it through ClockInCard so location checks and confirmations stay intact.
+    var pendingClockAction: PendingClockAction?
 
     /// Mirrors `selectedTab` for the manager shell, which has its own tab set
     /// (`ManagerMainView`/`ManagerTab`) rather than the staff `Tab` enum.
@@ -83,7 +97,13 @@ final class AppRouter {
     func handle(url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
         let items = components.queryItems ?? []
-        if let submit = items.first(where: { $0.name == "submit" })?.value {
+        if let rawAction = items.first(where: { $0.name == "shiftAction" })?.value,
+           let kind = PendingClockAction.Kind(rawValue: rawAction),
+           let shiftId = items.first(where: { $0.name == "shiftId" })?.value,
+           !shiftId.isEmpty {
+            pendingClockAction = PendingClockAction(shiftId: shiftId, kind: kind)
+            selectedTab = Tab.home.rawValue
+        } else if let submit = items.first(where: { $0.name == "submit" })?.value {
             openSubmit(shiftId: submit)
         } else if let absent = items.first(where: { $0.name == "absent" })?.value {
             pendingAbsentShiftId = absent
@@ -129,11 +149,10 @@ final class AppRouter {
             select(.roster)
             return
         }
-        // The registry's url ('/staff/history') would otherwise fall through
-        // to routeStaffPath's "history" -> Roster mapping, but PayslipsView
-        // lives under Account on iOS, not Roster/History.
+        // Payslips has its own staff tab, so this takes precedence over the
+        // registry's legacy `/staff/history` URL.
         if event == "payslip-generated" {
-            select(.account)
+            select(.payslips)
             return
         }
 
@@ -168,14 +187,17 @@ final class AppRouter {
 
     private func routeStaffPath(_ path: String) {
         let p = path.lowercased()
-        if p.contains("roster") || p.contains("history") {
+        if p.contains("payslip") {
+            selectedTab = Tab.payslips.rawValue
+        } else if p.contains("roster") || p.contains("history") {
             selectedTab = Tab.roster.rawValue
         } else if p.contains("job") {
             // Daily Jobs lives as a card on Home (right under the Start Shift
             // card), not its own tab — route there.
             selectedTab = Tab.home.rawValue
         } else if p.contains("tasks") {
-            selectedTab = Tab.tasks.rawValue
+            // Tasks now lives as a card on the Home dashboard.
+            selectedTab = Tab.home.rawValue
         } else if p.contains("availability") {
             selectedTab = Tab.availability.rawValue
         } else if p.contains("account") {

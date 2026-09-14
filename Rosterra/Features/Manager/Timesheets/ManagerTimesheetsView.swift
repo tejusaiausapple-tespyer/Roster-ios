@@ -783,23 +783,7 @@ struct ManagerTimesheetsView: View {
                 }
             }
 
-            let failedIds = await withTaskGroup(of: String?.self, returning: [String].self) { group in
-                for id in ids {
-                    group.addTask {
-                        do {
-                            try await repo.approveTimesheet(id: id, managerNotes: nil)
-                            return nil
-                        } catch {
-                            return id
-                        }
-                    }
-                }
-                var failures: [String] = []
-                for await failedId in group {
-                    if let failedId { failures.append(failedId) }
-                }
-                return failures
-            }
+            let failedIds = await repo.approveTimesheets(ids: ids).failedIds
 
             isBulkApproving = false
 

@@ -77,6 +77,15 @@ enum BusinessRules {
         return (hours * 100).rounded() / 100
     }
 
+    /// A clock-out this far after the rostered end is almost always a forgotten
+    /// End Shift tap the next morning, not an 18-hour stay-back. Seed rostered
+    /// end instead and let staff edit if they truly worked late.
+    static let forgottenClockOutThreshold: TimeInterval = 10 * 60 * 60
+
+    static func isForgottenClockOut(clockOut: Date, rosteredEnd: Date) -> Bool {
+        clockOut.timeIntervalSince(rosteredEnd) >= forgottenClockOutThreshold
+    }
+
     static func clampBreakMinutes(_ value: Int) -> Int {
         min(breakMinutesMax, max(breakMinutesMin, value))
     }

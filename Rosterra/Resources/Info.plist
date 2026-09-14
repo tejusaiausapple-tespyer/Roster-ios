@@ -47,6 +47,8 @@
 	<string>Rosterra uses Face ID to securely unlock the app on this device.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Rosterra records your location when you start or end a shift to verify attendance at your workplace.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Rosterra lets you choose a photo from your library to set your profile picture and attach reference photos to tasks.</string>
 	<key>UIApplicationSceneManifest</key>

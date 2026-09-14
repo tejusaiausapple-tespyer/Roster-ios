@@ -482,6 +482,10 @@ extension RosterRepository {
         try await approveTimesheet(id: shiftId, managerNotes: nil)
     }
 
+    func approveShiftTimesheets(shiftIds: [String]) async -> (approvedIds: [String], failedIds: [String]) {
+        await approveTimesheets(ids: shiftIds)
+    }
+
     func rejectShiftTimesheet(shiftId: String, reason: String) async throws {
         try await rejectTimesheet(id: shiftId, reason: reason, managerNotes: nil)
     }

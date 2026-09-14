@@ -71,6 +71,18 @@ extension View {
             self.buttonStyle(MacButtonStyle(variant: variant, size: size, fullWidth: fullWidth))
         }
     }
+
+    /// A quiet system control for routine Mac actions. The system supplies
+    /// the control geometry and interaction states; only its neutral palette
+    /// is specified so it stays white with dark text instead of inheriting
+    /// the app's indigo accent.
+    func macNeutralPill(size: MacButtonSize = .medium) -> some View {
+        self
+            .buttonStyle(.borderedProminent)
+            .tint(.white)
+            .foregroundStyle(.black)
+            .controlSize(size.controlSize)
+    }
 }
 
 @available(iOS 26.0, *)
@@ -82,8 +94,9 @@ private struct MacGlassButtonModifier: ViewModifier {
         switch variant {
         case .prominent:
             content
-                .buttonStyle(.glassProminent)
-                .tint(MacColor.brandStrong)
+                .buttonStyle(.borderedProminent)
+                .tint(.white)
+                .foregroundStyle(.black)
                 .controlSize(size.controlSize)
         case .success:
             content

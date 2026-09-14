@@ -54,6 +54,57 @@ final class BusinessRulesTests: XCTestCase {
         XCTAssertEqual(BusinessRules.calcWorkedHours(start: "22:00", end: "06:00", breakMinutes: 0), 8.0)
     }
 
+    func testCalcWorkedHoursEveningToMidnight() {
+        XCTAssertEqual(BusinessRules.calcWorkedHours(start: "18:00", end: "00:00", breakMinutes: 0), 6.0)
+    }
+
+    func testCalcWorkedHoursEveningToNextMorningIsAlmostEighteenHours() {
+        // 6:00 PM → 11:59 AM next day. This is the AM/PM mix-up that turns a
+        // 6h overnight shift into 17h 59m.
+        XCTAssertEqual(BusinessRules.calcWorkedHours(start: "18:00", end: "11:59", breakMinutes: 0), 17.98)
+    }
+
+    func testForgottenClockOutAfterOvernightShift() {
+        let rosteredEnd = TestSupport.instant("2026-09-11", "00:00")
+        let nextMorning = TestSupport.instant("2026-09-11", "11:59")
+        let stayedBack = TestSupport.instant("2026-09-11", "01:30")
+
+        XCTAssertTrue(BusinessRules.isForgottenClockOut(clockOut: nextMorning, rosteredEnd: rosteredEnd))
+        XCTAssertFalse(BusinessRules.isForgottenClockOut(clockOut: stayedBack, rosteredEnd: rosteredEnd))
+    }
+
+    func testSeededEndUsesRosteredTimeWhenClockOutWasForgotten() {
+        let shift = TestSupport.shift(
+            id: "overnight",
+            date: "2026-09-10",
+            start: "18:00",
+            end: "00:00"
+        )
+        var session = ClockSession(
+            shiftId: shift.id,
+            staffId: "staff-1",
+            clockInAt: TestSupport.instant("2026-09-10", "18:00")
+        )
+        session.clockOut(at: TestSupport.instant("2026-09-11", "11:59"))
+
+        XCTAssertEqual(
+            TimeConvert.seededEndHHmm(shift: shift, existing: nil, clock: session),
+            "00:00"
+        )
+    }
+
+    func testPickerDatesPutOvernightEndOnTheNextDay() {
+        let dates = TimeConvert.pickerDates(start: "18:00", end: "00:00", shiftDateKey: "2026-09-10")
+        let start = RosterCalendar.calendar.dateComponents([.day, .hour], from: dates.start)
+        let end = RosterCalendar.calendar.dateComponents([.day, .hour], from: dates.end)
+
+        XCTAssertEqual(start.day, 10)
+        XCTAssertEqual(start.hour, 18)
+        XCTAssertEqual(end.day, 11)
+        XCTAssertEqual(end.hour, 0)
+        XCTAssertEqual(TimeConvert.hhmm(from: dates.end), "00:00")
+    }
+
     func testCalcWorkedHoursRounding() {
         // 20 minutes = 0.3333h -> rounded to 2dp = 0.33
         XCTAssertEqual(BusinessRules.calcWorkedHours(start: "09:00", end: "09:20", breakMinutes: 0), 0.33)

@@ -20,7 +20,9 @@ struct SubmitHoursSheet: View {
     @State private var isWorking = false
     @State private var errorMessage: String?
     @State private var showingUncompletedTasksAlert = false
+    @State private var showingLongHoursAlert = false
     @State private var forceSubmit = false
+    @State private var forceLongHours = false
 
     init(shift: Shift, existing: Timesheet?, clock: ClockSession? = nil) {
         self.shift = shift
@@ -30,22 +32,18 @@ struct SubmitHoursSheet: View {
         // → rostered times. A recorded session with no breaks seeds 0m break.
         // Early check-ins are clamped to the rostered start: the pre-shift
         // window is unpaid, so paid time never begins before the roster says.
+        //
+        // Times are always anchored to the shift date (overnight ends on the
+        // next day). Passing a live clock-out Date into the hour/minute picker
+        // can flip 11:59 PM to 11:59 AM when the sheet opens the next morning.
         let clockSeed = self.clock
-        let startSeed = existing.flatMap { TimeConvert.date(from: $0.actualStart) }
-            ?? clockSeed.map { $0.paidStart(rosterStart: shift.startDateTime) }
-            ?? TimeConvert.date(from: shift.rosteredStart) ?? Date()
-        // "Use rostered end time" choice at clock-out seeds the roster's end;
-        // "stayed back for extra work" seeds the actual clock-out (editable).
-        let clockEndSeed: Date? = clockSeed.flatMap { session in
-            session.useRosteredEnd == true
-                ? TimeConvert.date(from: shift.rosteredEnd)
-                : session.clockOutAt
-        }
-        let endSeed = existing.flatMap { TimeConvert.date(from: $0.actualEnd) }
-            ?? clockEndSeed
-            ?? TimeConvert.date(from: shift.rosteredEnd) ?? Date()
-        _start = State(initialValue: startSeed)
-        _end = State(initialValue: endSeed)
+        let startHHmm = existing?.actualStart
+            ?? clockSeed.map { RosterFormat.hhmm($0.paidStart(rosterStart: shift.startDateTime)) }
+            ?? shift.rosteredStart
+        let endHHmm = TimeConvert.seededEndHHmm(shift: shift, existing: existing, clock: clockSeed)
+        let dates = TimeConvert.pickerDates(start: startHHmm, end: endHHmm, shiftDateKey: shift.date)
+        _start = State(initialValue: dates.start)
+        _end = State(initialValue: dates.end)
         _breakMinutes = State(initialValue: existing?.actualBreakMinutes
                               ?? clockSeed.map { $0.timesheetBreakMinutes() }
                               ?? shift.breakMinutes)
@@ -142,6 +140,15 @@ struct SubmitHoursSheet: View {
                 }
             } message: {
                 Text("You have \(pendingTasksCount) uncompleted task(s) for today. Have you completed all of your duties?")
+            }
+            .alert("Check these hours", isPresented: $showingLongHoursAlert) {
+                Button("Go Back", role: .cancel) {}
+                Button("Submit Anyway") {
+                    forceLongHours = true
+                    Task { await submit() }
+                }
+            } message: {
+                Text("This timesheet is \(RosterFormat.decimalHours(workedHours)) hours, \(RosterFormat.hours(abs(scheduledDiff))) \(scheduledDiff > 0 ? "more" : "less") than the \(RosterFormat.hours(shift.scheduledHours)) rostered shift. Overnight ends should be 12:00 AM, not 11:59 AM.")
             }
         }
         .phoneSheetDetents([.large])
@@ -245,8 +252,17 @@ struct SubmitHoursSheet: View {
             return
         }
 
+        if abs(scheduledDiff) >= 4 && !forceLongHours {
+            showingLongHoursAlert = true
+            return
+        }
+
         isWorking = true
-        defer { isWorking = false; forceSubmit = false }
+        defer {
+            isWorking = false
+            forceSubmit = false
+            forceLongHours = false
+        }
         do {
             if let existing, isEditingExisting {
                 try await repo.resubmitTimesheet(id: existing.id, actualStart: startHHmm, actualEnd: endHHmm,
@@ -269,18 +285,42 @@ struct SubmitHoursSheet: View {
 
 /// HH:mm <-> Date helpers (only hour/minute are meaningful).
 enum TimeConvert {
-    static func date(from hhmm: String) -> Date? {
+    private static let canonicalDay = RosterCalendar.dateFromKey("2000-01-01") ?? Date()
+
+    static func date(from hhmm: String, on day: Date = canonicalDay) -> Date? {
         let parts = hhmm.split(separator: ":").compactMap { Int($0) }
         guard parts.count >= 2 else { return nil }
-        var comps = DateComponents()
+        var comps = RosterCalendar.calendar.dateComponents([.year, .month, .day], from: day)
         comps.hour = parts[0]
         comps.minute = parts[1]
-        comps.year = 2000; comps.month = 1; comps.day = 1
-        return Calendar.current.date(from: comps)
+        comps.second = 0
+        return RosterCalendar.calendar.date(from: comps)
     }
 
     static func hhmm(from date: Date) -> String {
-        let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
-        return String(format: "%02d:%02d", comps.hour ?? 0, comps.minute ?? 0)
+        RosterFormat.hhmm(date)
+    }
+
+    /// Anchor start/end to the shift date so overnight ends sit on the next
+    /// calendar day. Hour-and-minute DatePickers stay stable that way.
+    static func pickerDates(start startHHmm: String, end endHHmm: String, shiftDateKey: String) -> (start: Date, end: Date) {
+        let day = RosterCalendar.dateFromKey(shiftDateKey) ?? canonicalDay
+        let start = date(from: startHHmm, on: day) ?? day
+        var end = date(from: endHHmm, on: day) ?? day
+        if endHHmm <= startHHmm {
+            end = RosterCalendar.addDays(1, to: end)
+        }
+        return (start, end)
+    }
+
+    static func seededEndHHmm(shift: Shift, existing: Timesheet?, clock: ClockSession?) -> String {
+        if let existing { return existing.actualEnd }
+        guard let session = clock else { return shift.rosteredEnd }
+        if session.useRosteredEnd == true { return shift.rosteredEnd }
+        guard let clockOutAt = session.clockOutAt else { return shift.rosteredEnd }
+        if BusinessRules.isForgottenClockOut(clockOut: clockOutAt, rosteredEnd: shift.endDateTime) {
+            return shift.rosteredEnd
+        }
+        return RosterFormat.hhmm(clockOutAt)
     }
 }

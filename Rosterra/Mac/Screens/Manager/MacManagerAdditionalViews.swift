@@ -5,45 +5,977 @@ import SwiftUI
 
 struct MacManagerWageView: View {
     @Environment(RosterRepository.self) private var repo
+    @Environment(MacToastCenter.self) private var toasts
+
+    private enum Section: String, CaseIterable, Identifiable {
+        case awards = "Awards"
+        case classifications = "Classifications"
+        case payItems = "Pay items"
+
+        var id: String { rawValue }
+
+        var icon: String {
+            switch self {
+            case .awards: return "doc.text.fill"
+            case .classifications: return "person.text.rectangle"
+            case .payItems: return "plus.forwardslash.minus"
+            }
+        }
+    }
+
+    private struct ClassificationRow: Identifiable {
+        enum Source {
+            case line(EarningsLine)
+            case legacy(awardId: String, classification: AwardClassification)
+        }
+
+        let id: String
+        let source: Source
+        let awardName: String
+        let awardCode: String
+
+        var title: String {
+            switch source {
+            case .line(let line): return line.classificationTitle
+            case .legacy(_, let classification): return classification.title
+            }
+        }
+
+        var level: String {
+            switch source {
+            case .line(let line): return line.level
+            case .legacy(_, let classification): return classification.level
+            }
+        }
+
+        var baseRate: Double {
+            switch source {
+            case .line(let line): return line.baseHourlyRate > 0 ? line.baseHourlyRate : line.fixedRate
+            case .legacy(_, let classification): return classification.baseHourlyRate
+            }
+        }
+
+        var weekendRate: Double {
+            switch source {
+            case .line(let line): return line.weekendHourlyRate
+            case .legacy(_, let classification): return classification.weekendHourlyRate
+            }
+        }
+
+        var active: Bool {
+            if case .line(let line) = source { return line.active }
+            return true
+        }
+
+        var isLegacy: Bool {
+            if case .legacy = source { return true }
+            return false
+        }
+    }
+
+    private enum ActiveSheet: Identifiable {
+        case award(WageAward?)
+        case line(EarningsLine?)
+        case legacy(awardId: String, classification: AwardClassification)
+
+        var id: String {
+            switch self {
+            case .award(let award): return "award-\(award?.id ?? "new")"
+            case .line(let line): return "line-\(line?.id ?? "new")"
+            case .legacy(let awardId, let classification): return "legacy-\(awardId)-\(classification.level)"
+            }
+        }
+    }
+
+    private enum PendingDelete: Identifiable {
+        case award(WageAward)
+        case classification(ClassificationRow)
+        case payItem(EarningsLine)
+
+        var id: String {
+            switch self {
+            case .award(let award): return "award-\(award.id)"
+            case .classification(let row): return "classification-\(row.id)"
+            case .payItem(let line): return "pay-item-\(line.id)"
+            }
+        }
+
+        var title: String {
+            switch self {
+            case .award: return "Delete wage award?"
+            case .classification: return "Delete classification?"
+            case .payItem: return "Delete pay item?"
+            }
+        }
+
+        var message: String {
+            switch self {
+            case .award(let award):
+                return "\u{201c}\(award.name)\u{201d} will be removed. Linked classifications keep their rates but lose the award reference."
+            case .classification(let row):
+                return "\u{201c}\(row.title)\u{201d} will be removed. Existing staff assignments remain until they are changed."
+            case .payItem(let line):
+                return "\u{201c}\(line.name)\u{201d} will be removed from every staff wage assignment."
+            }
+        }
+    }
+
+    @State private var section: Section = .awards
+    @State private var searchText = ""
+    @State private var selectedID: String?
+    @State private var activeSheet: ActiveSheet?
+    @State private var pendingDelete: PendingDelete?
 
     init() {}
 
     var body: some View {
         MacScreen(
             title: "Wage Awards & Rates",
-            subtitle: "Modern Award configurations and penalty rates"
+            subtitle: "Awards, classifications and payroll rates",
+            actions: { toolbarActions }
         ) {
-            ScrollView {
-                VStack(spacing: MacSpace.xl) {
-                    MacCard(title: "Penalty Rates Configuration", icon: "percent") {
-                        VStack(spacing: MacSpace.md) {
-                            HStack {
-                                Text("Saturday Penalty Rate").font(MacType.body)
-                                Spacer()
-                                Text("125% (1.25x)").font(MacType.monoStrong)
-                            }
-                            HStack {
-                                Text("Sunday Penalty Rate").font(MacType.body)
-                                Spacer()
-                                Text("150% (1.50x)").font(MacType.monoStrong)
-                            }
-                            HStack {
-                                Text("Public Holiday Rate").font(MacType.body)
-                                Spacer()
-                                Text("225% (2.25x)").font(MacType.monoStrong)
-                            }
-                            HStack {
-                                Text("Daily Overtime (>10h)").font(MacType.body)
-                                Spacer()
-                                Text("150% first 2h, then 200%").font(MacType.monoStrong)
-                            }
+            screenContent
+        }
+        .onAppear { maintainSelection() }
+        .onChange(of: section) { _, _ in
+            searchText = ""
+            selectedID = nil
+            maintainSelection()
+        }
+        .onChange(of: visibleIDs) { _, _ in maintainSelection() }
+        .sheet(item: $activeSheet) { sheet in
+            editor(for: sheet)
+                .frame(minWidth: 560, idealWidth: 620, minHeight: 500, idealHeight: 680)
+                .macObserved(repo: repo, toasts: toasts)
+        }
+        .alert(
+            pendingDelete?.title ?? "Delete item?",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            presenting: pendingDelete
+        ) { pending in
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) { performDelete(pending) }
+        } message: { pending in
+            Text(pending.message)
+        }
+    }
+
+    @ViewBuilder
+    private var toolbarActions: some View {
+        MacRefreshButton("Refresh wage data") {
+            await repo.refreshFromServer()
+        }
+
+        Button {
+            createNewItem()
+        } label: {
+            Image(systemName: "plus")
+        }
+        .keyboardShortcut("n", modifiers: [.command])
+        .help(addButtonTitle)
+        .accessibilityLabel(addButtonTitle)
+    }
+
+    private var screenContent: some View {
+        VStack(spacing: 0) {
+            controls
+
+            summaryStrip
+                .padding(.horizontal, MacSpace.xl)
+                .padding(.bottom, MacSpace.lg)
+
+            workspacePanels
+                .padding(.horizontal, MacSpace.xl)
+                .padding(.bottom, MacSpace.xl)
+        }
+    }
+
+    private var workspacePanels: some View {
+        HStack(spacing: MacSpace.lg) {
+            AnyView(recordsPanel)
+                .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+
+            AnyView(inspectorPanel)
+                .frame(width: 350)
+                .frame(maxHeight: .infinity)
+        }
+    }
+
+    // MARK: - Data
+
+    private var classificationRows: [ClassificationRow] {
+        var rows: [ClassificationRow] = []
+        var coveredLevels: Set<String> = []
+
+        for line in repo.earningsLines where line.isClassificationLevel {
+            let key = levelKey(awardId: line.awardId, level: line.level)
+            coveredLevels.insert(key)
+            let award = line.awardId.flatMap { id in repo.wageAwards.first { $0.id == id } }
+            rows.append(ClassificationRow(
+                id: "line-\(line.id)",
+                source: .line(line),
+                awardName: award?.name ?? "No award",
+                awardCode: award?.code ?? ""
+            ))
+        }
+
+        for award in repo.wageAwards {
+            for classification in award.classifications {
+                let key = levelKey(awardId: award.id, level: classification.level)
+                guard !coveredLevels.contains(key) else { continue }
+                rows.append(ClassificationRow(
+                    id: "legacy-\(award.id)-\(classification.level)",
+                    source: .legacy(awardId: award.id, classification: classification),
+                    awardName: award.name,
+                    awardCode: award.code
+                ))
+            }
+        }
+
+        return rows.sorted {
+            if $0.awardName != $1.awardName {
+                return $0.awardName.localizedCaseInsensitiveCompare($1.awardName) == .orderedAscending
+            }
+            return ClassificationDisplayOrder.areInOrder(
+                levelA: $0.level, titleA: $0.title,
+                levelB: $1.level, titleB: $1.title
+            )
+        }
+    }
+
+    private var payItems: [EarningsLine] {
+        repo.earningsLines
+            .filter { !$0.isClassificationLevel }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private var filteredAwards: [WageAward] {
+        repo.wageAwards
+            .filter { matchesSearch([$0.name, $0.code, $0.industry]) }
+            .sorted { lhs, rhs in
+                if lhs.active != rhs.active { return lhs.active }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+    }
+
+    private var filteredClassifications: [ClassificationRow] {
+        classificationRows.filter { matchesSearch([$0.title, $0.level, $0.awardName, $0.awardCode]) }
+    }
+
+    private var filteredPayItems: [EarningsLine] {
+        payItems.filter { matchesSearch([$0.name, $0.displayName, $0.category.label, $0.rateSummary]) }
+    }
+
+    private var visibleIDs: [String] {
+        switch section {
+        case .awards: return filteredAwards.map(\.id)
+        case .classifications: return filteredClassifications.map(\.id)
+        case .payItems: return filteredPayItems.map(\.id)
+        }
+    }
+
+    private func matchesSearch(_ values: [String]) -> Bool {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return true }
+        return values.contains { $0.localizedCaseInsensitiveContains(query) }
+    }
+
+    private func levelKey(awardId: String?, level: String) -> String {
+        "\(awardId ?? "")|\(level)"
+    }
+
+    private func classificationCount(for award: WageAward) -> Int {
+        let lineCount = repo.earningsLines.filter {
+            $0.isClassificationLevel && $0.awardId == award.id
+        }.count
+        return lineCount > 0 ? lineCount : award.classifications.count
+    }
+
+    // MARK: - Controls and summary
+
+    private var controls: some View {
+        HStack(spacing: MacSpace.lg) {
+            HStack(spacing: MacSpace.xs) {
+                ForEach(Section.allCases) { item in
+                    sectionButton(item)
+                }
+            }
+            .padding(4)
+            .background(MacColor.cardBackgroundSecondary, in: Capsule())
+            .overlay { Capsule().strokeBorder(MacColor.cardBorder, lineWidth: 1) }
+
+            Spacer()
+
+            HStack(spacing: MacSpace.sm) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(MacColor.textTertiary)
+                TextField("Search \(section.rawValue.lowercased())", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(MacType.caption)
+                if !searchText.isEmpty {
+                    Button { searchText = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(MacColor.textTertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, MacSpace.md)
+            .frame(width: 250, height: 34)
+            .background(MacColor.cardBackground, in: RoundedRectangle(cornerRadius: MacRadius.medium))
+            .overlay {
+                RoundedRectangle(cornerRadius: MacRadius.medium)
+                    .strokeBorder(MacColor.cardBorder, lineWidth: 1)
+            }
+        }
+        .padding(.horizontal, MacSpace.xl)
+        .padding(.vertical, MacSpace.lg)
+    }
+
+    private func sectionButton(_ item: Section) -> some View {
+        let selected = section == item
+        return Button {
+            withAnimation(MacMotion.fast) { section = item }
+        } label: {
+            Label(item.rawValue, systemImage: item.icon)
+                .font(MacType.captionStrong)
+                .foregroundStyle(selected ? MacColor.textPrimary : MacColor.textSecondary)
+                .padding(.horizontal, MacSpace.md)
+                .padding(.vertical, 7)
+                .background(selected ? MacColor.cardBackground : Color.clear, in: Capsule())
+                .shadow(color: selected ? Color.black.opacity(0.06) : .clear, radius: 4, y: 1)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var summaryStrip: some View {
+        HStack(spacing: 0) {
+            summaryMetric(
+                title: "Active awards",
+                value: "\(repo.wageAwards.filter(\.active).count)",
+                detail: "\(repo.wageAwards.count) total",
+                icon: "doc.text.fill",
+                tint: MacColor.accent
+            )
+            summaryDivider
+            summaryMetric(
+                title: "Classifications",
+                value: "\(classificationRows.count)",
+                detail: "Ordinary-hour rates",
+                icon: "person.text.rectangle",
+                tint: MacColor.info
+            )
+            summaryDivider
+            summaryMetric(
+                title: "Pay items",
+                value: "\(payItems.count)",
+                detail: "Allowances & overtime",
+                icon: "plus.forwardslash.minus",
+                tint: MacColor.warning
+            )
+            summaryDivider
+            summaryMetric(
+                title: "Assigned staff",
+                value: "\(assignedStaffCount)",
+                detail: "\(repo.staffMembers.count) staff total",
+                icon: "person.2.fill",
+                tint: MacColor.success
+            )
+        }
+        .padding(.vertical, MacSpace.md)
+        .background(MacColor.cardBackground, in: RoundedRectangle(cornerRadius: MacRadius.large))
+        .overlay {
+            RoundedRectangle(cornerRadius: MacRadius.large)
+                .strokeBorder(MacColor.cardBorder, lineWidth: 1)
+        }
+    }
+
+    private var assignedStaffCount: Int {
+        repo.staffWageProfiles.filter {
+            $0.active && ($0.awardId != nil || $0.hourlyRateOverride != nil)
+        }.count
+    }
+
+    private func summaryMetric(title: String, value: String, detail: String, icon: String, tint: Color) -> some View {
+        HStack(spacing: MacSpace.md) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 34, height: 34)
+                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: MacRadius.medium))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title.uppercased())
+                    .font(MacType.badge)
+                    .tracking(0.4)
+                    .foregroundStyle(MacColor.textTertiary)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(value)
+                        .font(MacType.monoLarge)
+                        .foregroundStyle(MacColor.textPrimary)
+                    Text(detail)
+                        .font(MacType.caption)
+                        .foregroundStyle(MacColor.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, MacSpace.lg)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var summaryDivider: some View {
+        Rectangle()
+            .fill(MacColor.separator)
+            .frame(width: 1, height: 48)
+    }
+
+    // MARK: - Records
+
+    private var recordsPanel: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(section.rawValue)
+                        .font(MacType.sectionHeader)
+                        .foregroundStyle(MacColor.textPrimary)
+                    Text(recordsSubtitle)
+                        .font(MacType.caption)
+                        .foregroundStyle(MacColor.textTertiary)
+                }
+                Spacer()
+                Text("\(visibleIDs.count)")
+                    .font(MacType.badge)
+                    .foregroundStyle(MacColor.accent)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(MacColor.accent.opacity(0.12), in: Capsule())
+            }
+            .padding(MacSpace.lg)
+
+            Divider().overlay(MacColor.separator)
+
+            if visibleIDs.isEmpty {
+                MacEmptyState(
+                    title: searchText.isEmpty ? emptyTitle : "No matches",
+                    subtitle: searchText.isEmpty ? emptySubtitle : "Try a different name, code or category.",
+                    icon: searchText.isEmpty ? section.icon : "magnifyingglass",
+                    actionTitle: searchText.isEmpty ? addButtonTitle : nil,
+                    action: searchText.isEmpty ? createNewItem : nil
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        switch section {
+                        case .awards:
+                            ForEach(filteredAwards) { awardRow($0) }
+                        case .classifications:
+                            ForEach(filteredClassifications) { classificationRow($0) }
+                        case .payItems:
+                            ForEach(filteredPayItems) { payItemRow($0) }
                         }
                     }
                 }
-                .padding(MacSpace.xl)
+            }
+        }
+        .background(MacColor.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: MacRadius.large, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: MacRadius.large, style: .continuous)
+                .strokeBorder(MacColor.cardBorder, lineWidth: 1)
+        }
+    }
+
+    private var recordsSubtitle: String {
+        switch section {
+        case .awards: return "Modern awards used by your team"
+        case .classifications: return "Weekday and weekend hourly rates"
+        case .payItems: return "Allowances, loadings, overtime and bonuses"
+        }
+    }
+
+    private var emptyTitle: String {
+        switch section {
+        case .awards: return "No wage awards"
+        case .classifications: return "No classifications"
+        case .payItems: return "No pay items"
+        }
+    }
+
+    private var emptySubtitle: String {
+        switch section {
+        case .awards: return "Add the modern award your staff are employed under."
+        case .classifications: return "Add each award level and its current hourly rates."
+        case .payItems: return "Add optional allowances, overtime rates or bonuses."
+        }
+    }
+
+    private func awardRow(_ award: WageAward) -> some View {
+        recordButton(id: award.id) {
+            HStack(spacing: MacSpace.md) {
+                iconWell("doc.text.fill", tint: award.active ? MacColor.accent : MacColor.textTertiary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(award.name)
+                        .font(MacType.bodyStrong)
+                        .foregroundStyle(MacColor.textPrimary)
+                        .lineLimit(1)
+                    Text([award.code, award.industry].filter { !$0.isEmpty }.joined(separator: "  ·  ").nilIfEmpty ?? "No award code or industry")
+                        .font(MacType.caption)
+                        .foregroundStyle(MacColor.textTertiary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Text("\(classificationCount(for: award)) levels")
+                    .font(MacType.captionStrong)
+                    .foregroundStyle(MacColor.textSecondary)
+                statusPill(active: award.active)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(MacColor.textTertiary)
+            }
+        }
+        .contextMenu {
+            Button("Edit", systemImage: "pencil") { activeSheet = .award(award) }
+            Divider()
+            Button("Delete", systemImage: "trash", role: .destructive) { pendingDelete = .award(award) }
+        }
+    }
+
+    private func classificationRow(_ row: ClassificationRow) -> some View {
+        recordButton(id: row.id) {
+            HStack(spacing: MacSpace.md) {
+                levelWell(row.level)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(row.title)
+                        .font(MacType.bodyStrong)
+                        .foregroundStyle(MacColor.textPrimary)
+                        .lineLimit(1)
+                    Text([row.awardCode, row.awardName].filter { !$0.isEmpty }.joined(separator: "  ·  "))
+                        .font(MacType.caption)
+                        .foregroundStyle(MacColor.textTertiary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(currencyRate(row.baseRate))
+                        .font(MacType.monoStrong)
+                        .foregroundStyle(MacColor.textPrimary)
+                    Text(row.weekendRate > 0 ? "\(currencyRate(row.weekendRate)) weekend" : "Default penalties")
+                        .font(MacType.caption)
+                        .foregroundStyle(MacColor.textTertiary)
+                }
+                if row.isLegacy {
+                    Text("LEGACY")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(MacColor.warning)
+                } else {
+                    statusPill(active: row.active)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(MacColor.textTertiary)
+            }
+        }
+        .contextMenu {
+            Button("Edit", systemImage: "pencil") { open(row) }
+            Divider()
+            Button("Delete", systemImage: "trash", role: .destructive) { pendingDelete = .classification(row) }
+        }
+    }
+
+    private func payItemRow(_ line: EarningsLine) -> some View {
+        recordButton(id: line.id) {
+            HStack(spacing: MacSpace.md) {
+                iconWell("plus.forwardslash.minus", tint: MacColor.warning)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(line.name)
+                        .font(MacType.bodyStrong)
+                        .foregroundStyle(MacColor.textPrimary)
+                        .lineLimit(1)
+                    Text(line.category.label)
+                        .font(MacType.caption)
+                        .foregroundStyle(MacColor.textTertiary)
+                }
+                Spacer()
+                Text(line.rateSummary)
+                    .font(MacType.monoStrong)
+                    .foregroundStyle(MacColor.textPrimary)
+                statusPill(active: line.active)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(MacColor.textTertiary)
+            }
+        }
+        .contextMenu {
+            Button("Edit", systemImage: "pencil") { activeSheet = .line(line) }
+            Divider()
+            Button("Delete", systemImage: "trash", role: .destructive) { pendingDelete = .payItem(line) }
+        }
+    }
+
+    private func recordButton<Content: View>(id: String, @ViewBuilder content: () -> Content) -> some View {
+        let selected = selectedID == id
+        return Button {
+            selectedID = id
+        } label: {
+            content()
+                .padding(.horizontal, MacSpace.lg)
+                .frame(minHeight: 68)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(selected ? MacColor.tableRowSelected : Color.clear)
+                .contentShape(Rectangle())
+                .overlay(alignment: .bottom) {
+                    Rectangle().fill(MacColor.separator.opacity(0.7)).frame(height: 1)
+                }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func iconWell(_ icon: String, tint: Color) -> some View {
+        Image(systemName: icon)
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(tint)
+            .frame(width: 36, height: 36)
+            .background(tint.opacity(0.11), in: RoundedRectangle(cornerRadius: MacRadius.medium))
+    }
+
+    private func levelWell(_ level: String) -> some View {
+        Text(level.isEmpty ? "—" : level)
+            .font(MacType.badge)
+            .foregroundStyle(MacColor.info)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .frame(width: 42, height: 36)
+            .background(MacColor.info.opacity(0.11), in: RoundedRectangle(cornerRadius: MacRadius.medium))
+    }
+
+    private func statusPill(active: Bool) -> some View {
+        Text(active ? "Active" : "Inactive")
+            .font(MacType.badge)
+            .foregroundStyle(active ? MacColor.success : MacColor.textTertiary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background((active ? MacColor.success : MacColor.textTertiary).opacity(0.1), in: Capsule())
+    }
+
+    // MARK: - Inspector
+
+    @ViewBuilder
+    private var inspectorPanel: some View {
+        switch section {
+        case .awards:
+            if let award = filteredAwards.first(where: { $0.id == selectedID }) {
+                awardInspector(award)
+            } else {
+                inspectorPlaceholder
+            }
+        case .classifications:
+            if let row = filteredClassifications.first(where: { $0.id == selectedID }) {
+                classificationInspector(row)
+            } else {
+                inspectorPlaceholder
+            }
+        case .payItems:
+            if let line = filteredPayItems.first(where: { $0.id == selectedID }) {
+                payItemInspector(line)
+            } else {
+                inspectorPlaceholder
             }
         }
     }
+
+    private func awardInspector(_ award: WageAward) -> some View {
+        inspectorCard {
+            inspectorHeader(icon: "doc.text.fill", tint: MacColor.accent, title: award.name, subtitle: award.code.nilIfEmpty ?? "No award code")
+            inspectorDivider
+            detailRow("Status", value: award.active ? "Active" : "Inactive")
+            detailRow("Industry", value: award.industry.nilIfEmpty ?? "Not specified")
+            detailRow("Classifications", value: "\(classificationCount(for: award))")
+            detailRow("Assigned staff", value: "\(repo.staffWageProfiles.filter { $0.awardId == award.id }.count)")
+            inspectorDivider
+            VStack(alignment: .leading, spacing: MacSpace.sm) {
+                Text("LINKED LEVELS")
+                    .font(MacType.badge)
+                    .foregroundStyle(MacColor.textTertiary)
+                    .tracking(0.5)
+                let rows = classificationRows.filter {
+                    switch $0.source {
+                    case .line(let line): return line.awardId == award.id
+                    case .legacy(let awardId, _): return awardId == award.id
+                    }
+                }
+                if rows.isEmpty {
+                    Text("No classifications linked yet.")
+                        .font(MacType.caption)
+                        .foregroundStyle(MacColor.textTertiary)
+                } else {
+                    ForEach(rows.prefix(5)) { row in
+                        HStack {
+                            Text(row.level.isEmpty ? "—" : row.level)
+                                .font(MacType.badge)
+                                .foregroundStyle(MacColor.info)
+                                .frame(width: 38, alignment: .leading)
+                            Text(row.title)
+                                .font(MacType.caption)
+                                .foregroundStyle(MacColor.textSecondary)
+                                .lineLimit(1)
+                            Spacer()
+                            Text(currencyRate(row.baseRate))
+                                .font(MacType.mono)
+                        }
+                    }
+                    if rows.count > 5 {
+                        Text("+ \(rows.count - 5) more")
+                            .font(MacType.captionStrong)
+                            .foregroundStyle(MacColor.accent)
+                    }
+                }
+            }
+            Spacer(minLength: MacSpace.lg)
+            inspectorActions(
+                edit: { activeSheet = .award(award) },
+                delete: { pendingDelete = .award(award) }
+            )
+        }
+    }
+
+    private func classificationInspector(_ row: ClassificationRow) -> some View {
+        inspectorCard {
+            inspectorHeader(icon: "person.text.rectangle", tint: MacColor.info, title: row.title, subtitle: "Level \(row.level.isEmpty ? "—" : row.level)")
+            inspectorDivider
+            detailRow("Award", value: row.awardCode.nilIfEmpty ?? row.awardName)
+            detailRow("Mon–Fri", value: currencyRate(row.baseRate))
+            detailRow("Weekend & PH", value: row.weekendRate > 0 ? currencyRate(row.weekendRate) : "Payroll default")
+            detailRow("Status", value: row.active ? "Active" : "Inactive")
+            if row.isLegacy {
+                HStack(alignment: .top, spacing: MacSpace.sm) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .foregroundStyle(MacColor.warning)
+                    Text("This is a legacy embedded rate. Saving it migrates the level to the current payroll format.")
+                        .font(MacType.caption)
+                        .foregroundStyle(MacColor.textSecondary)
+                }
+                .padding(MacSpace.md)
+                .background(MacColor.warning.opacity(0.09), in: RoundedRectangle(cornerRadius: MacRadius.medium))
+            }
+            Spacer(minLength: MacSpace.lg)
+            inspectorActions(edit: { open(row) }, delete: { pendingDelete = .classification(row) })
+        }
+    }
+
+    private func payItemInspector(_ line: EarningsLine) -> some View {
+        inspectorCard {
+            inspectorHeader(icon: "plus.forwardslash.minus", tint: MacColor.warning, title: line.name, subtitle: line.category.label)
+            inspectorDivider
+            detailRow("Payslip name", value: line.displayName)
+            detailRow("Rate", value: line.rateSummary)
+            detailRow("Status", value: line.active ? "Active" : "Inactive")
+            detailRow("Super", value: line.exemptFromSuper ? "Exempt" : "Included")
+            detailRow("PAYG", value: line.exemptFromTax ? "Exempt" : "Included")
+            Spacer(minLength: MacSpace.lg)
+            inspectorActions(edit: { activeSheet = .line(line) }, delete: { pendingDelete = .payItem(line) })
+        }
+    }
+
+    private var inspectorPlaceholder: some View {
+        inspectorCard {
+            MacEmptyState(
+                title: "Select an item",
+                subtitle: "Choose a record to view its setup and actions.",
+                icon: "sidebar.right"
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func inspectorCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: MacSpace.lg) {
+            content()
+        }
+        .padding(MacSpace.lg)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(MacColor.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: MacRadius.large, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: MacRadius.large, style: .continuous)
+                .strokeBorder(MacColor.cardBorder, lineWidth: 1)
+        }
+    }
+
+    private func inspectorHeader(icon: String, tint: Color, title: String, subtitle: String) -> some View {
+        HStack(alignment: .top, spacing: MacSpace.md) {
+            iconWell(icon, tint: tint)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(MacType.sectionHeader)
+                    .foregroundStyle(MacColor.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(subtitle)
+                    .font(MacType.caption)
+                    .foregroundStyle(MacColor.textTertiary)
+            }
+        }
+    }
+
+    private var inspectorDivider: some View {
+        Rectangle().fill(MacColor.separator).frame(height: 1)
+    }
+
+    private func detailRow(_ label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: MacSpace.md) {
+            Text(label)
+                .font(MacType.caption)
+                .foregroundStyle(MacColor.textTertiary)
+            Spacer()
+            Text(value)
+                .font(MacType.captionStrong)
+                .foregroundStyle(MacColor.textPrimary)
+                .multilineTextAlignment(.trailing)
+        }
+    }
+
+    private func inspectorActions(edit: @escaping () -> Void, delete: @escaping () -> Void) -> some View {
+        HStack(spacing: MacSpace.sm) {
+            Button(action: edit) { Label("Edit", systemImage: "pencil") }
+                .macButton(.prominent, size: .medium, fullWidth: true)
+            Button(action: delete) { Image(systemName: "trash") }
+                .macButton(.destructive, size: .medium)
+                .help("Delete")
+        }
+    }
+
+    // MARK: - Actions
+
+    private var addButtonTitle: String {
+        switch section {
+        case .awards: return "Add award"
+        case .classifications: return "Add classification"
+        case .payItems: return "Add pay item"
+        }
+    }
+
+    private func createNewItem() {
+        switch section {
+        case .awards: activeSheet = .award(nil)
+        case .classifications, .payItems: activeSheet = .line(nil)
+        }
+    }
+
+    private func maintainSelection() {
+        guard !visibleIDs.isEmpty else {
+            selectedID = nil
+            return
+        }
+        if selectedID == nil || !visibleIDs.contains(selectedID!) {
+            selectedID = visibleIDs.first
+        }
+    }
+
+    private func open(_ row: ClassificationRow) {
+        switch row.source {
+        case .line(let line): activeSheet = .line(line)
+        case .legacy(let awardId, let classification):
+            activeSheet = .legacy(awardId: awardId, classification: classification)
+        }
+    }
+
+    @ViewBuilder
+    private func editor(for sheet: ActiveSheet) -> some View {
+        switch sheet {
+        case .award(let award):
+            WageAwardEditorSheet(award: award) { save(award: $0) }
+        case .line(let line):
+            EarningsLineEditorSheet(
+                line: line,
+                onSave: { save(line: $0) },
+                onDelete: line.map { existing in { deleteDocument(id: existing.id, message: "Pay item deleted.") } }
+            )
+        case .legacy(let awardId, let classification):
+            EarningsLineEditorSheet(
+                line: EarningsLine.from(classification: classification, awardId: awardId),
+                migrateFromAwardId: awardId,
+                removeLegacyLevel: classification.level,
+                onSave: { save(line: $0, migrateFromAwardId: awardId, removeLegacyLevel: classification.level) },
+                onDelete: { deleteLegacy(awardId: awardId, level: classification.level) }
+            )
+        }
+    }
+
+    private func save(award: WageAward) {
+        Task {
+            do {
+                try await repo.saveWageAward(award)
+                toasts.show(award.id.isEmpty ? "Wage award added." : "Wage award updated.", style: .success)
+            } catch {
+                toasts.show("Couldn\u{2019}t save the wage award. \(error.localizedDescription)", style: .error)
+            }
+        }
+    }
+
+    private func save(line: EarningsLine, migrateFromAwardId: String? = nil, removeLegacyLevel: String? = nil) {
+        Task {
+            do {
+                if migrateFromAwardId != nil || removeLegacyLevel != nil {
+                    try await repo.saveClassificationLine(line, migrateFromAwardId: migrateFromAwardId, removeLegacyLevel: removeLegacyLevel)
+                } else {
+                    try await repo.saveEarningsLine(line)
+                }
+                toasts.show(line.id.isEmpty ? "Rate added." : "Rate updated.", style: .success)
+            } catch {
+                toasts.show("Couldn\u{2019}t save the rate. \(error.localizedDescription)", style: .error)
+            }
+        }
+    }
+
+    private func performDelete(_ pending: PendingDelete) {
+        pendingDelete = nil
+        switch pending {
+        case .award(let award):
+            deleteDocument(id: award.id, message: "Wage award deleted.")
+        case .classification(let row):
+            switch row.source {
+            case .line(let line): deleteDocument(id: line.id, message: "Classification deleted.")
+            case .legacy(let awardId, let classification): deleteLegacy(awardId: awardId, level: classification.level)
+            }
+        case .payItem(let line):
+            deleteDocument(id: line.id, message: "Pay item deleted.")
+        }
+    }
+
+    private func deleteDocument(id: String, message: String) {
+        Task {
+            do {
+                try await repo.deleteWageDocument(id: id)
+                toasts.show(message, style: .success)
+            } catch {
+                toasts.show("Couldn\u{2019}t delete this item. \(error.localizedDescription)", style: .error)
+            }
+        }
+    }
+
+    private func deleteLegacy(awardId: String, level: String) {
+        Task {
+            do {
+                try await repo.deleteLegacyClassification(awardId: awardId, level: level)
+                toasts.show("Classification deleted.", style: .success)
+            } catch {
+                toasts.show("Couldn\u{2019}t delete this classification. \(error.localizedDescription)", style: .error)
+            }
+        }
+    }
+
+    private func currencyRate(_ value: Double) -> String {
+        String(format: "$%.2f/h", value)
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 // MARK: - Mac Manager Jobs View

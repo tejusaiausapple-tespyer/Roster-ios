@@ -298,6 +298,8 @@ struct ManagerStaffDetailSheet: View {
     @Environment(RosterRepository.self) private var repo
     @Environment(\.dismiss) private var dismiss
     let user: AppUser
+    private let embedded: Bool
+    private let onClose: (() -> Void)?
 
     @State private var fullName: String
     @State private var phone: String
@@ -342,8 +344,15 @@ struct ManagerStaffDetailSheet: View {
         let emergencyEmail: String
     }
 
-    init(user: AppUser) {
+    init(
+        user: AppUser,
+        embedded: Bool = false,
+        startsInEditMode: Bool = false,
+        onClose: (() -> Void)? = nil
+    ) {
         self.user = user
+        self.embedded = embedded
+        self.onClose = onClose
         let phoneValue = user.phone ?? ""
         let emergencyNameValue = user.emergencyContactName ?? user.emergencyContact ?? ""
         let tfnValue = user.tfn.map { TFN.format($0) } ?? ""
@@ -360,6 +369,7 @@ struct ManagerStaffDetailSheet: View {
         _emergencyPhone = State(initialValue: user.emergencyContactPhone ?? "")
         _emergencyAddress = State(initialValue: user.emergencyContactAddress ?? "")
         _emergencyEmail = State(initialValue: user.emergencyContactEmail ?? "")
+        _isEditMode = State(initialValue: startsInEditMode)
         _emailRequested = State(initialValue: user.emailChangeRequired)
         _savedBaseline = State(initialValue: Baseline(
             fullName: user.fullName,
@@ -504,7 +514,7 @@ struct ManagerStaffDetailSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                    Button(embedded ? "Done" : "Close") { close() }
                         .keyboardShortcut(.cancelAction)
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -945,7 +955,7 @@ struct ManagerStaffDetailSheet: View {
             do {
                 try await repo.requestStaffAddressUpdate(staffId: user.id)
                 Haptics.success()
-                dismiss()
+                close()
             } catch {
                 toast = ToastMessage(kind: .error, text: "Couldn't update. \(error.localizedDescription)")
                 Haptics.error()
@@ -995,6 +1005,14 @@ struct ManagerStaffDetailSheet: View {
                 toast = ToastMessage(kind: .error, text: error.localizedDescription)
                 Haptics.error()
             }
+        }
+    }
+
+    private func close() {
+        if let onClose {
+            onClose()
+        } else {
+            dismiss()
         }
     }
 }

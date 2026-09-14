@@ -53,6 +53,62 @@ final class ShiftReminderSchedulerTests: XCTestCase {
     }
 
     @MainActor
+    func testLiveActivityStartLinkRoutesToHomeClockAction() {
+        let router = AppRouter()
+        router.selectedTab = AppRouter.Tab.account.rawValue
+
+        router.handle(url: URL(
+            string: "surafoster://staff/home?shiftId=shift-live&shiftAction=start"
+        )!)
+
+        XCTAssertEqual(
+            router.pendingClockAction,
+            AppRouter.PendingClockAction(shiftId: "shift-live", kind: .start)
+        )
+        XCTAssertEqual(router.selectedTab, AppRouter.Tab.home.rawValue)
+    }
+
+    @MainActor
+    func testLiveActivitySelectsShiftOnlyInsideClockWindow() {
+        let now = TestSupport.instant("2026-09-12", "12:00")
+        let ready = TestSupport.shift(
+            id: "ready",
+            staffId: "staff-1",
+            date: "2026-09-12",
+            start: "12:03",
+            end: "18:00"
+        )
+        let tooEarly = TestSupport.shift(
+            id: "too-early",
+            staffId: "staff-1",
+            date: "2026-09-12",
+            start: "13:00",
+            end: "18:00"
+        )
+
+        XCTAssertEqual(
+            ShiftLiveActivityManager.activeShift(
+                staffID: "staff-1",
+                shifts: [tooEarly, ready],
+                timesheets: [],
+                clockSession: nil,
+                now: now
+            )?.id,
+            "ready"
+        )
+
+        XCTAssertNil(
+            ShiftLiveActivityManager.activeShift(
+                staffID: "staff-1",
+                shifts: [tooEarly],
+                timesheets: [],
+                clockSession: nil,
+                now: now
+            )
+        )
+    }
+
+    @MainActor
     func testTimesheetRejectedPushOpensSubmit() {
         let router = AppRouter()
         AppRouter.shared = router
@@ -90,17 +146,16 @@ final class ShiftReminderSchedulerTests: XCTestCase {
     }
 
     @MainActor
-    func testPayslipGeneratedOpensAccountNotRoster() {
-        // Regression for 5.7: the registry's url ('/staff/history') would
-        // otherwise fall through to routeStaffPath's "history" -> Roster
-        // mapping, but PayslipsView lives under Account on iOS.
+    func testPayslipGeneratedOpensPayslipsNotRoster() {
+        // The registry still uses the legacy `/staff/history` URL, so the
+        // event must take precedence and open the dedicated Payslips tab.
         let router = AppRouter()
         AppRouter.shared = router
         router.handleNotificationUserInfo([
             "event": "payslip-generated",
             "url": "/staff/history",
         ])
-        XCTAssertEqual(router.selectedTab, AppRouter.Tab.account.rawValue)
+        XCTAssertEqual(router.selectedTab, AppRouter.Tab.payslips.rawValue)
     }
 
     // MARK: - Manager notification routing (5.2)

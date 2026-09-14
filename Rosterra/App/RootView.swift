@@ -24,6 +24,7 @@ struct RootView: View {
                 switch newPhase {
                 case .active:
                     auth.handleScenePhase(.active)
+                    repo.refreshShiftLiveActivity()
                     Task { await versionCheck.check() }
                 case .inactive: auth.handleScenePhase(.inactive)
                 case .background: auth.handleScenePhase(.background)

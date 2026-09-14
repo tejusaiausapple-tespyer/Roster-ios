@@ -268,8 +268,13 @@ struct ManagerTimesheetDetailSheet: View {
                     editTimesForm
                 } else {
                     Button {
-                        editedStart = TimeConvert.date(from: liveTimesheet.actualStart) ?? Date()
-                        editedEnd = TimeConvert.date(from: liveTimesheet.actualEnd) ?? Date()
+                        let dates = TimeConvert.pickerDates(
+                            start: liveTimesheet.actualStart,
+                            end: liveTimesheet.actualEnd,
+                            shiftDateKey: shift?.date ?? ""
+                        )
+                        editedStart = dates.start
+                        editedEnd = dates.end
                         editedBreak = liveTimesheet.actualBreakMinutes
                         withAnimation { isEditingTimes = true }
                     } label: {

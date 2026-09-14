@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Staff → Account → Payslips, one month at a time. A pill at the top shows
+/// Staff → Payslips, one month at a time. A pill at the top shows
 /// the selected month; tapping it opens a month/year picker and the chevrons
 /// step a month either way. Data loads via the repository's cache-first
 /// month fetch — previously viewed months cost zero Firestore reads and are
@@ -104,6 +104,7 @@ struct PayslipsView: View {
         }
         .navigationTitle("Payslips")
         .navigationBarTitleDisplayMode(.inline)
+        .screenTitlePill("Payslips", icon: "banknote", fraction: 0)
         .task(id: monthKey) { await load() }
         .sheet(item: $activeSheet) { sheet in
             switch sheet {

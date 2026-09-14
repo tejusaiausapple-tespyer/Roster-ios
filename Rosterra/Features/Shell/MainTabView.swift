@@ -32,9 +32,9 @@ struct MainTabView: View {
             RosterView()
                 .tabItem { Label(AppRouter.Tab.roster.title, systemImage: AppRouter.Tab.roster.icon) }
                 .tag(AppRouter.Tab.roster.rawValue)
-            TasksView()
-                .tabItem { Label(AppRouter.Tab.tasks.title, systemImage: AppRouter.Tab.tasks.icon) }
-                .tag(AppRouter.Tab.tasks.rawValue)
+            PayslipsView()
+                .tabItem { Label(AppRouter.Tab.payslips.title, systemImage: AppRouter.Tab.payslips.icon) }
+                .tag(AppRouter.Tab.payslips.rawValue)
             AvailabilityView()
                 .tabItem { Label(AppRouter.Tab.availability.title, systemImage: AppRouter.Tab.availability.icon) }
                 .tag(AppRouter.Tab.availability.rawValue)
@@ -53,7 +53,7 @@ struct MainTabView: View {
             switch AppRouter.Tab(rawValue: router.selectedTab) ?? .home {
             case .home: HomeView()
             case .roster: RosterView()
-            case .tasks: TasksView()
+            case .payslips: PayslipsView()
             case .availability: AvailabilityView()
             case .account: AccountView()
             }
@@ -121,7 +121,7 @@ struct MainTabView: View {
     }
 
     private var staffWorkTabs: [AppRouter.Tab] {
-        [.home, .roster, .tasks]
+        [.home, .roster, .payslips]
     }
 }
 

@@ -7,6 +7,7 @@ struct AccountView: View {
     @Environment(RosterRepository.self) private var repo
     @Environment(AuthViewModel.self) private var auth
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("preferredColorScheme") private var preferredColorSchemeSetting: String = "system"
 
     @State private var activeSheet: AccountSheet?
@@ -17,10 +18,9 @@ struct AccountView: View {
     @State private var passkeyOn = false
     @State private var passkeyWorking = false
     @State private var pushEnabled = false
-    @State private var pendingReminderCount = 0
-    @State private var nextReminderSummary: String?
     @State private var toastMessage: ToastMessage?
     @State private var profileImage: UIImage? = nil
+    @State private var profilePromptFloating = false
     @State private var showDeleteRequestConfirm = false
     @State private var showNotificationExplainer = false
 
@@ -55,7 +55,6 @@ struct AccountView: View {
                 }
                 detailsSection
                 statsSection
-                payslipsSection
                 notificationsSection
                 appearanceSection
                 securitySection
@@ -170,34 +169,67 @@ struct AccountView: View {
                 Button {
                     activeSheet = .imagePicker
                 } label: {
-                    ZStack(alignment: .bottomTrailing) {
-                        if let profileImage {
-                            Image(uiImage: profileImage)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 96, height: 96)
-                                .clipShape(Circle())
-                                .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
-                        } else {
-                            ZStack {
-                                Circle().fill(Theme.brand.opacity(0.12)).frame(width: 96, height: 96)
-                                Text(user?.initials ?? "?")
-                                    .font(.system(size: 32, weight: .bold, design: .rounded))
-                                    .foregroundStyle(Theme.brand)
+                    ZStack {
+                        ZStack(alignment: .bottomTrailing) {
+                            if let profileImage {
+                                Image(uiImage: profileImage)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 120, height: 120)
+                                    .clipShape(Circle())
+                                    .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
+                            } else {
+                                ZStack {
+                                    Circle().fill(Theme.brand.opacity(0.12)).frame(width: 120, height: 120)
+                                    Text(user?.initials ?? "?")
+                                        .font(.system(size: 40, weight: .bold, design: .rounded))
+                                        .foregroundStyle(Theme.brand)
+                                }
                             }
+
+                            ZStack {
+                                Circle().fill(Theme.brand).frame(width: 30, height: 30)
+                                Image(systemName: "pencil")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundStyle(.white)
+                            }
+                            .offset(x: 2, y: 2)
                         }
-                        
-                        ZStack {
-                            Circle().fill(Theme.brand).frame(width: 26, height: 26)
-                            Image(systemName: "pencil")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(.white)
+
+                        if profileImage == nil {
+                            Text("Add profile pic")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Theme.brand)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 7)
+                                .background(Theme.brand.opacity(0.11), in: Capsule())
+                                .shadow(color: Theme.brand.opacity(0.12), radius: 6, y: 3)
+                                .fixedSize()
+                                .scaleEffect(profilePromptFloating ? 1.04 : 0.98)
+                                .offset(
+                                    x: 92,
+                                    y: profilePromptFloating ? -34 : -27
+                                )
+                                .animation(
+                                    reduceMotion
+                                        ? nil
+                                        : .easeInOut(duration: 1.35).repeatForever(autoreverses: true),
+                                    value: profilePromptFloating
+                                )
+                                .onAppear {
+                                    profilePromptFloating = true
+                                }
+                                .onDisappear {
+                                    profilePromptFloating = false
+                                }
                         }
-                        .offset(x: 2, y: 2)
                     }
+                    .frame(maxWidth: .infinity)
                 }
+                .frame(maxWidth: .infinity)
                 .buttonStyle(.plain)
                 .pointerHover()
+                .accessibilityLabel(profileImage == nil ? "Add profile picture" : "Change profile picture")
                 .contextMenu {
                     if profileImage != nil {
                         Button(role: .destructive) {
@@ -327,20 +359,6 @@ struct AccountView: View {
         .background(RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous).fill(Theme.card))
     }
 
-    // MARK: Payslips
-
-    private var payslipsSection: some View {
-        Section("Pay") {
-            NavigationLink {
-                PayslipsView()
-            } label: {
-                // No count badge: payslips load one month at a time on demand,
-                // so the full history is deliberately never fetched here.
-                Label("Payslips", systemImage: "banknote")
-            }
-        }
-    }
-
     // MARK: Notifications
 
     private var notificationsSection: some View {
@@ -352,20 +370,7 @@ struct AccountView: View {
                     .font(.subheadline)
                     .foregroundStyle(pushEnabled ? Theme.accent : Theme.textTertiary)
             }
-            if pushEnabled {
-                HStack {
-                    Label("Shift reminders armed", systemImage: "clock.badge")
-                    Spacer()
-                    Text(pendingReminderCount > 0 ? "\(pendingReminderCount) pending" : "None yet")
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.textSecondary)
-                }
-                if let nextReminderSummary {
-                    Text(nextReminderSummary)
-                        .font(.caption)
-                        .foregroundStyle(Theme.textSecondary)
-                }
-            } else {
+            if !pushEnabled {
                 Button {
                     showNotificationExplainer = true
                 } label: {
@@ -472,15 +477,11 @@ struct AccountView: View {
                     Text(location).foregroundStyle(Theme.textSecondary)
                 }
             }
-            NavigationLink {
-                AppVersionHistoryView()
-            } label: {
-                HStack {
-                    Label("Version", systemImage: "info.circle")
-                    Spacer()
-                    Text(ReleaseHistory.current.versionString)
-                        .foregroundStyle(Theme.textSecondary)
-                }
+            HStack {
+                Label("Version", systemImage: "info.circle")
+                Spacer()
+                Text(ReleaseHistory.current.versionString)
+                    .foregroundStyle(Theme.textSecondary)
             }
             NavigationLink {
                 PrivacyPolicyView()
@@ -586,13 +587,6 @@ struct AccountView: View {
         passkeyOn = PasskeyStore.isRegistered
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         pushEnabled = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
-        let pending = await ShiftReminderScheduler.pendingStatus()
-        pendingReminderCount = pending.count
-        if let date = pending.nextFireDate, let title = pending.nextTitle {
-            nextReminderSummary = "Next: \(title) · \(RosterFormat.dateTime(date))"
-        } else {
-            nextReminderSummary = nil
-        }
     }
 
     private func toggleDeviceAuth(_ enable: Bool) {

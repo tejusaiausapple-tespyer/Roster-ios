@@ -4,6 +4,7 @@ import SwiftUI
 /// Lives inside HomeView's NavigationStack — do not wrap another stack here.
 struct DailyJobsView: View {
     @Environment(RosterRepository.self) private var repo
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var toastMessage: ToastMessage?
     @State private var inFlightJobIds: Set<String> = []
 
@@ -131,7 +132,7 @@ struct DailyJobsView: View {
             RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous)
                 .fill(job.completed ? Theme.accent.opacity(0.06) : Theme.card)
         )
-        .animation(.easeInOut(duration: 0.18), value: job.completed)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: job.completed)
     }
 
     private func toggle(_ job: DailyJobAssignment) {

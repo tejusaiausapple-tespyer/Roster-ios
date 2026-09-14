@@ -9,7 +9,7 @@ options:
 settings:
   base:
     MARKETING_VERSION: "1.2.1"
-    CURRENT_PROJECT_VERSION: "35"
+    CURRENT_PROJECT_VERSION: "36"
     SWIFT_VERSION: "5.0"
     DEVELOPMENT_TEAM: "GS2KGPX9P8"
     CODE_SIGN_STYLE: Automatic
@@ -27,6 +27,7 @@ schemes:
       targets:
         Rosterra: all
         RosterraTests: [test]
+        RosterraLiveActivity: all
     run:
       config: Debug
     test:
@@ -48,6 +49,9 @@ targets:
         optional: true
       - path: Rosterra/Resources/PrivacyInfo.xcprivacy
     dependencies:
+      # Live Activities are iPhone-only — exclude from Mac Catalyst embeds.
+      - target: RosterraLiveActivity
+        platformFilter: iOS
       - package: Firebase
         product: FirebaseAuth
       - package: Firebase
@@ -69,7 +73,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2" # Support both iPhone (1) and iPad (2)
         SUPPORTS_MACCATALYST: YES     # Enable Mac Catalyst (runs natively on macOS)
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
-    postCompileScripts:
+    postBuildScripts:
       - name: Crashlytics Upload Symbols
         script: |
           if [ "${CONFIGURATION}" = "Release" ]; then
@@ -79,6 +83,33 @@ targets:
         inputFiles:
           - ${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${TARGET_NAME}
         basedOnDependencyAnalysis: false
+
+  RosterraLiveActivity:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: RosterraLiveActivity
+      - path: Rosterra/LiveActivity/ShiftLiveActivityAttributes.swift
+    info:
+      path: RosterraLiveActivity/Info.plist
+      properties:
+        CFBundleDisplayName: Rosterra Live Shift
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    dependencies:
+      - sdk: ActivityKit.framework
+      - sdk: SwiftUI.framework
+      - sdk: WidgetKit.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.surainvestments.roster.liveactivity
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
 
   RosterraTests:
     type: bundle.unit-test

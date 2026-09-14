@@ -44,13 +44,11 @@ struct MacManagerTimesheetsView: View {
 
                     if filter == .pending && !timesheetShifts.isEmpty {
                         MacAsyncButton(variant: .prominent, size: .small) {
-                            do {
-                                for shift in timesheetShifts {
-                                    try await repo.approveShiftTimesheet(shiftId: shift.id)
-                                }
-                                toasts.show("All pending timesheets approved!", style: .success)
-                            } catch {
-                                toasts.show(error.localizedDescription, style: .error)
+                            let result = await repo.approveTimesheets(ids: timesheetShifts.map(\.id))
+                            if result.failedIds.isEmpty {
+                                toasts.show("\(result.approvedIds.count) timesheets approved", style: .success)
+                            } else {
+                                toasts.show("\(result.approvedIds.count) approved · \(result.failedIds.count) failed", style: .warning)
                             }
                         } label: {
                             HStack(spacing: 4) {
@@ -261,7 +259,7 @@ struct MacManagerStaffView: View {
     @State private var searchText = ""
     @State private var showingAddStaff = false
     @State private var selectedStaffID: String?
-    @State private var staffToEdit: AppUser?
+    @State private var editingStaffID: String?
     @State private var statusFilter: StatusFilter = .all
 
     init() {}
@@ -331,7 +329,7 @@ struct MacManagerStaffView: View {
                         Text("Add staff")
                     }
                 }
-                .macButton(.prominent, size: .small)
+                .macNeutralPill(size: .small)
             }
         ) {
             GeometryReader { geometry in
@@ -352,7 +350,16 @@ struct MacManagerStaffView: View {
                             .fill(MacColor.separator)
                             .frame(width: 1)
 
-                        if let selectedStaff {
+                        if let selectedStaff, editingStaffID == selectedStaff.id {
+                            ManagerStaffDetailSheet(
+                                user: selectedStaff,
+                                embedded: true,
+                                startsInEditMode: true,
+                                onClose: { editingStaffID = nil }
+                            )
+                            .id(selectedStaff.id)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else if let selectedStaff {
                             staffInspector(selectedStaff)
                         } else {
                             MacEmptyState(
@@ -382,12 +389,6 @@ struct MacManagerStaffView: View {
             ManagerAddStaffSheet()
                 .frame(width: 640)
                 .frame(minHeight: 680)
-                .scrollIndicators(.hidden)
-        }
-        .sheet(item: $staffToEdit) { staff in
-            ManagerStaffDetailSheet(user: staff)
-                .frame(width: 760)
-                .frame(minHeight: 720)
                 .scrollIndicators(.hidden)
         }
         .onAppear {
@@ -506,6 +507,7 @@ struct MacManagerStaffView: View {
         let tint = statusTint(staff.status)
 
         return Button {
+            editingStaffID = nil
             selectedStaffID = staff.id
         } label: {
             HStack(spacing: MacSpace.md) {
@@ -558,12 +560,13 @@ struct MacManagerStaffView: View {
         .buttonStyle(.plain)
         .simultaneousGesture(
             TapGesture(count: 2).onEnded {
-                staffToEdit = staff
+                editingStaffID = staff.id
             }
         )
         .contextMenu {
             Button {
-                staffToEdit = staff
+                selectedStaffID = staff.id
+                editingStaffID = staff.id
             } label: {
                 Label("Edit details", systemImage: "pencil")
             }
@@ -595,16 +598,16 @@ struct MacManagerStaffView: View {
                     Spacer()
 
                     Button {
-                        staffToEdit = staff
+                        editingStaffID = staff.id
                     } label: {
                         Label("Edit details", systemImage: "pencil")
                     }
-                    .macButton(.prominent)
+                    .macNeutralPill()
                 }
 
                 if staff.deletion?.status == .requested {
                     Label(
-                        "This staff member requested account deletion. Open Edit details to review it.",
+                        "This staff member requested account deletion. Edit their details to review the request.",
                         systemImage: "exclamationmark.triangle.fill"
                     )
                     .font(MacType.captionStrong)
@@ -620,7 +623,7 @@ struct MacManagerStaffView: View {
                 HStack(spacing: MacSpace.md) {
                     inspectorMetric(
                         title: "Hourly rate",
-                        value: staff.hourlyRate.map { String(format: "$%.2f", $0) } ?? "Not set",
+                        value: displayHourlyRate(for: staff),
                         icon: "dollarsign.circle"
                     )
                     inspectorMetric(
@@ -636,34 +639,77 @@ struct MacManagerStaffView: View {
                 }
 
                 HStack(alignment: .top, spacing: MacSpace.md) {
-                    inspectorCard(title: "Contact", icon: "person.crop.circle") {
+                    inspectorCard(title: "Personal & contact", icon: "person.crop.circle") {
                         inspectorRow("Email", staff.email)
                         inspectorRow("Phone", staff.phone?.isEmpty == false ? staff.phone! : "Not provided")
                         inspectorRow(
                             "Address",
                             staff.address?.isEmpty == false ? staff.address! : "Not provided"
                         )
+                        inspectorRow("Date of birth", formattedDate(staff.dob))
                     }
 
                     inspectorCard(title: "Employment", icon: "building.2") {
                         inspectorRow("Role", staff.defaultDepartment?.isEmpty == false ? staff.defaultDepartment! : "Not set")
+                        inspectorRow("Type", staff.employmentType?.label ?? "Not set")
+                        inspectorRow("Employee ID", staff.employeeId?.isEmpty == false ? staff.employeeId! : "Not set")
+                        inspectorRow("Status", staff.status.rawValue.capitalized)
                         inspectorRow("Start date", formattedDate(staff.startDate))
                         inspectorRow("Member since", staff.memberSince ?? "—")
                     }
                 }
 
-                inspectorCard(title: "Emergency contact", icon: "cross.case") {
+                HStack(alignment: .top, spacing: MacSpace.md) {
+                    inspectorCard(title: "Payroll", icon: "dollarsign.circle") {
+                        inspectorRow("Hourly rate", displayHourlyRate(for: staff))
+                        inspectorRow("Wage setup", wageAssignmentSummary(for: staff))
+                        inspectorRow("TFN", TFN.mask(staff.tfn))
+                        inspectorRow(
+                            "Super",
+                            staff.superRate.map { String(format: "%g%%", $0) } ?? "Default"
+                        )
+                    }
+
+                    inspectorCard(title: "Emergency contact", icon: "cross.case") {
+                        inspectorRow(
+                            "Name",
+                            staff.emergencyContactName?.isEmpty == false
+                                ? staff.emergencyContactName!
+                                : (staff.emergencyContact?.isEmpty == false ? staff.emergencyContact! : "Not provided")
+                        )
+                        inspectorRow(
+                            "Phone",
+                            staff.emergencyContactPhone?.isEmpty == false
+                                ? staff.emergencyContactPhone!
+                                : "Not provided"
+                        )
+                        inspectorRow(
+                            "Email",
+                            staff.emergencyContactEmail?.isEmpty == false
+                                ? staff.emergencyContactEmail!
+                                : "Not provided"
+                        )
+                        inspectorRow(
+                            "Address",
+                            staff.emergencyContactAddress?.isEmpty == false
+                                ? staff.emergencyContactAddress!
+                                : "Not provided"
+                        )
+                    }
+                }
+
+                inspectorCard(title: "Account", icon: "person.badge.key") {
                     inspectorRow(
-                        "Name",
-                        staff.emergencyContactName?.isEmpty == false
-                            ? staff.emergencyContactName!
-                            : (staff.emergencyContact?.isEmpty == false ? staff.emergencyContact! : "Not provided")
+                        "Email change",
+                        staff.emailChangeRequired ? "Requested" : "Not requested"
                     )
                     inspectorRow(
-                        "Phone",
-                        staff.emergencyContactPhone?.isEmpty == false
-                            ? staff.emergencyContactPhone!
-                            : "Not provided"
+                        "Profile update",
+                        staff.profileUpdateRequired ? "Required" : "Not required"
+                    )
+                    inspectorRow(
+                        "Last sign in",
+                        formattedTimestamp(staff.lastLoginAt)
                     )
                 }
             }
@@ -816,11 +862,38 @@ struct MacManagerStaffView: View {
         return RosterFormat.date(key)
     }
 
+    private func formattedTimestamp(_ value: String?) -> String {
+        guard let value, let date = FS.isoDate(from: value) else { return "Not recorded" }
+        return RosterFormat.dateFull(date)
+    }
+
+    private func displayHourlyRate(for staff: AppUser) -> String {
+        let rate = repo.liveHourlyRate(forStaffId: staff.id)
+        return rate > 0 ? String(format: "$%.2f", rate) : "Not set"
+    }
+
+    private func wageAssignmentSummary(for staff: AppUser) -> String {
+        guard let profile = repo.staffWageProfile(for: staff.id) else { return "Not set" }
+        var parts: [String] = []
+        if let awardID = profile.awardId,
+           let award = repo.wageAwards.first(where: { $0.id == awardID }) {
+            parts.append(award.code.isEmpty ? award.name : award.code)
+        }
+        if let level = profile.classificationLevel, !level.isEmpty {
+            parts.append("Level \(level)")
+        }
+        if !profile.earningsLineIds.isEmpty {
+            parts.append("\(profile.earningsLineIds.count) pay item\(profile.earningsLineIds.count == 1 ? "" : "s")")
+        }
+        return parts.isEmpty ? "Not set" : parts.joined(separator: " · ")
+    }
+
     private func maintainSelection() {
         if let selectedStaffID,
            filteredStaff.contains(where: { $0.id == selectedStaffID }) {
             return
         }
+        editingStaffID = nil
         selectedStaffID = filteredStaff.first?.id
     }
 }

@@ -173,10 +173,8 @@ struct MacManagerReportsView: View {
             title: "Reports & Analytics",
             subtitle: "Weekly hours, labour costs and timesheet progress",
             actions: {
-                MacAsyncButton(variant: .bordered, size: .small) {
+                MacRefreshButton("Refresh reports") {
                     await repo.refreshFromServer()
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
                 }
             }
         ) {

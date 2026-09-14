@@ -123,4 +123,35 @@ extension View {
         searchable(text: text, placement: .navigationBarDrawer(displayMode: .always), prompt: prompt)
         #endif
     }
+
+    /// iOS 27 can reclaim vertical space by minimizing the navigation bar as
+    /// the staff Home dashboard scrolls. Older SDKs and operating systems keep
+    /// the existing fixed bar.
+    @ViewBuilder
+    func phoneHomeToolbarBehavior() -> some View {
+        #if compiler(>=6.4)
+        if #available(iOS 27.0, *), PlatformUI.isPhone {
+            toolbarMinimizeBehavior(.onScrollDown, for: .navigationBar)
+        } else {
+            self
+        }
+        #else
+        self
+        #endif
+    }
+
+    /// Coordinates swipe actions on custom ScrollView rows, introduced in the
+    /// 2027 SwiftUI releases. Context menus remain the iOS 17–26 fallback.
+    @ViewBuilder
+    func phoneHomeSwipeActions() -> some View {
+        #if compiler(>=6.4)
+        if #available(iOS 27.0, *) {
+            swipeActionsContainer()
+        } else {
+            self
+        }
+        #else
+        self
+        #endif
+    }
 }

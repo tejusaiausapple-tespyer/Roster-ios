@@ -551,7 +551,7 @@ struct ManagerWageView: View {
 
 // MARK: - Award editor
 
-private struct WageAwardEditorSheet: View {
+struct WageAwardEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let award: WageAward?
@@ -626,7 +626,7 @@ private struct WageAwardEditorSheet: View {
 
 // MARK: - Classification level / earnings line editor
 
-private struct EarningsLineEditorSheet: View {
+struct EarningsLineEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(RosterRepository.self) private var repo
 

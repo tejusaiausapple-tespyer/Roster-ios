@@ -52,15 +52,17 @@ enum ReleaseHistory {
     static let all: [AppRelease] = [
         AppRelease(
             version: "1.2.1",
-            build: "35",
-            releaseDate: releaseDate(2026, 8, 13),
+            build: "36",
+            releaseDate: releaseDate(2026, 9, 14),
             updateType: .minor,
-            summary: "A dedicated Daily Jobs page for staff, and a fix for a shared-device notification bug.",
+            summary: "Improved staff navigation, account presentation and Mac manager workflows.",
             features: [
-                "Daily Jobs has its own page for staff — a card right under Start Shift on Home opens the full list, instead of digging into the Notifications popup",
+                "Payslips now has a dedicated centre tab for staff, while Tasks is available directly from the Home dashboard",
+                "Staff can add a larger profile picture from the refreshed Account header",
+                "Mac managers can review complete staff records and edit details directly in the Staff Directory inspector",
             ],
             bugFixes: [
-                "Fixed a bug where signing out and into a different account on the same device could still deliver push notifications meant for the previous account — the old account's device registration is now fully cleared before sign-out completes, instead of racing it",
+                "Clarified staff Account information and removed internal reminder diagnostics",
             ],
             commitHash: "pending"
         ),

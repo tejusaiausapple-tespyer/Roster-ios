@@ -8,8 +8,16 @@ import SwiftUI
 /// a GPS fix checked against the shift's workplace geofence.
 struct ClockInCard: View {
     @Environment(RosterRepository.self) private var repo
+    @Environment(AppRouter.self) private var router
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    enum Presentation: Equatable {
+        case card
+        case embedded
+    }
 
     let shift: Shift
+    var presentation: Presentation = .card
     let onSubmitHours: () -> Void
 
     @State private var isWorking = false
@@ -43,20 +51,15 @@ struct ClockInCard: View {
     }
 
     var body: some View {
-        Card {
-            TimelineView(.periodic(from: .now, by: 5)) { _ in
-                if let session {
-                    if session.isActive {
-                        activeBody(session)
-                    } else {
-                        endedBody(session)
-                    }
-                } else if ServerClock.shared.now > shift.endDateTime {
-                    missedBody
-                } else {
-                    idleBody
-                }
+        Group {
+            if presentation == .card {
+                Card { clockContent }
+            } else {
+                clockContent
             }
+        }
+        .task(id: router.pendingClockAction) {
+            await handlePendingLiveActivityAction()
         }
         .confirmationDialog(
             "Are you sure you want to end your shift?",
@@ -147,6 +150,23 @@ struct ClockInCard: View {
         }
     }
 
+    @ViewBuilder
+    private var clockContent: some View {
+        TimelineView(.periodic(from: .now, by: 5)) { _ in
+            if let session {
+                if session.isActive {
+                    activeBody(session)
+                } else {
+                    endedBody(session)
+                }
+            } else if ServerClock.shared.now > shift.endDateTime {
+                missedBody
+            } else {
+                idleBody
+            }
+        }
+    }
+
     // MARK: Not clocked in yet
 
     /// Instant the Start button unlocks: 5 minutes before the rostered start,
@@ -156,12 +176,18 @@ struct ClockInCard: View {
         shift.startDateTime.addingTimeInterval(-AppConfig.earlyClockInWindow)
     }
 
+    private var responsiveLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+    }
+
     private var idleBody: some View {
         // Re-evaluates every few seconds so the button appears on its own
         // the moment the early check-in window opens.
         TimelineView(.periodic(from: .now, by: 5)) { _ in
             let serverNow = ServerClock.shared.now
-            HStack(spacing: 12) {
+            responsiveLayout {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(serverNow >= unlockDate ? "Ready to start?" : "Starts soon")
                         .font(.subheadline.weight(.semibold))
@@ -178,7 +204,8 @@ struct ClockInCard: View {
                             .foregroundStyle(Theme.textSecondary)
                     }
                 }
-                Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
+
                 if serverNow >= unlockDate {
                     Button {
                         Task { await startShift() }
@@ -192,14 +219,17 @@ struct ClockInCard: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Theme.brand)
+                    .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : nil)
+                    .frame(minHeight: 44)
                     // repo.isStartingClockSession disables every today's-shift
                     // card's Start button the moment any one of them begins,
                     // not just the tapped card's own isWorking.
                     .disabled(isWorking || repo.isStartingClockSession)
                 } else {
-                    Image(systemName: "lock.fill")
-                        .font(.body)
+                    Label("Locked", systemImage: "lock.fill")
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(Theme.textTertiary)
+                        .frame(minHeight: 44)
                 }
             }
         }
@@ -211,7 +241,7 @@ struct ClockInCard: View {
     /// would produce a meaningless near-zero session, so skip straight to manual submission.
     private var missedBody: some View {
         let submittable = shift.isSubmittable(at: ServerClock.shared.now)
-        return HStack(spacing: 12) {
+        return responsiveLayout {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Missed clocking in")
                     .font(.subheadline.weight(.semibold))
@@ -222,15 +252,18 @@ struct ClockInCard: View {
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
             }
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
+
             Button {
                 onSubmitHours()
             } label: {
                 Label("Submit hours", systemImage: "square.and.pencil")
                     .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : nil)
             }
             .buttonStyle(.borderedProminent)
             .tint(Theme.brand)
+            .frame(minHeight: 44)
             .disabled(!submittable)
         }
     }
@@ -240,7 +273,7 @@ struct ClockInCard: View {
     private func activeBody(_ session: ClockSession) -> some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             VStack(spacing: 14) {
-                HStack {
+                responsiveLayout {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
                             Circle()
@@ -274,8 +307,9 @@ struct ClockInCard: View {
                                 .foregroundStyle(Theme.warning)
                         }
                     }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 2) {
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    VStack(alignment: dynamicTypeSize.isAccessibilitySize ? .leading : .trailing, spacing: 2) {
                         Text(elapsed(session.paidWorkedSeconds(rosterStart: shift.startDateTime, at: context.date)))
                             .font(.system(.title3, design: .rounded).weight(.bold))
                             .monospacedDigit()
@@ -288,7 +322,19 @@ struct ClockInCard: View {
                     }
                 }
 
-                HStack(spacing: 10) {
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(spacing: 10) { activeButtons(session) }
+                    } else {
+                        HStack(spacing: 10) { activeButtons(session) }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func activeButtons(_ session: ClockSession) -> some View {
                     Button {
                         if session.isOnBreak { repo.endClockBreak() } else { repo.startClockBreak() }
                         Haptics.light()
@@ -300,6 +346,7 @@ struct ClockInCard: View {
                     }
                     .buttonStyle(.bordered)
                     .tint(Theme.warning)
+                    .frame(minHeight: 44)
                     .disabled(isWorking)
 
                     Button {
@@ -315,10 +362,8 @@ struct ClockInCard: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Theme.brand)
+                    .frame(minHeight: 44)
                     .disabled(isWorking)
-                }
-            }
-        }
     }
 
     // MARK: Clocked out, hours not yet submitted
@@ -339,7 +384,7 @@ struct ClockInCard: View {
             let syncPending = repo.attendance(forShift: shift.id)?.clockOutAt == nil
             let submittable = shift.isSubmittable(at: ServerClock.shared.now)
                 || repo.attendance(forShift: shift.id)?.clockOutAt != nil
-            HStack(spacing: 12) {
+            responsiveLayout {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Shift ended")
                         .font(.subheadline.weight(.semibold))
@@ -358,7 +403,8 @@ struct ClockInCard: View {
                             .foregroundStyle(Theme.textTertiary)
                     }
                 }
-                Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
+
                 if syncPending {
                     Button {
                         Task { await retryEndSync() }
@@ -372,6 +418,8 @@ struct ClockInCard: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Theme.brand)
+                    .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : nil)
+                    .frame(minHeight: 44)
                     .disabled(isWorking)
                 } else {
                     Button {
@@ -382,6 +430,8 @@ struct ClockInCard: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Theme.brand)
+                    .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : nil)
+                    .frame(minHeight: 44)
                     .disabled(!submittable)
                 }
             }
@@ -396,6 +446,21 @@ struct ClockInCard: View {
 
     private func endShift() async {
         await capture(action: .end)
+    }
+
+    private func handlePendingLiveActivityAction() async {
+        guard let action = router.pendingClockAction,
+              action.shiftId == shift.id else { return }
+        router.pendingClockAction = nil
+
+        switch action.kind {
+        case .start:
+            guard session == nil, ServerClock.shared.now >= unlockDate else { return }
+            await startShift()
+        case .end:
+            guard session?.isActive == true else { return }
+            showEndConfirmation = true
+        }
     }
 
     /// Re-attempts the end-shift server write after it failed to sync the

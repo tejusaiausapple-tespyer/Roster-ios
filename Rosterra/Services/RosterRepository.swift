@@ -13,30 +13,40 @@ import UIKit
 @Observable
 final class RosterRepository {
     // Live state
-    var currentUser: AppUser?
+    var currentUser: AppUser? {
+        didSet { syncShiftLiveActivity() }
+    }
     /// Index maintained on assignment so `shift(id:)` is O(1) instead of an
     /// O(n) first-match scan per call (list rows call it repeatedly).
     var shifts: [Shift] = [] {
         didSet {
             shiftsById = Dictionary(shifts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             reconcileClockSessionFromServerIfNeeded()
+            syncShiftLiveActivity()
         }
     }
     private(set) var shiftsById: [String: Shift] = [:]
     /// Cache maintained on assignment so manager list views can resolve a
     /// timesheet-by-shift in O(1) instead of O(n) per row (O(n²) per list).
     var timesheets: [Timesheet] = [] {
-        didSet { rebuildTimesheetIndex() }
+        didSet {
+            rebuildTimesheetIndex()
+            syncShiftLiveActivity()
+        }
     }
     private(set) var timesheetsByShiftId: [String: Timesheet] = [:]
     var messages: [Message] = []
-    var appSettings: AppSettings = .fallback
+    var appSettings: AppSettings = .fallback {
+        didSet { syncShiftLiveActivity() }
+    }
     var tasks: [RosterTask] = []
     var taskCompletions: [TaskCompletion] = []
     /// Daily Jobs (separate from Tasks): permanent manager template library
     /// (manager-only listener) + shift-scoped assignments (both roles).
     var dailyJobTemplates: [DailyJobTemplate] = []
-    var dailyJobAssignments: [DailyJobAssignment] = []
+    var dailyJobAssignments: [DailyJobAssignment] = [] {
+        didSet { syncShiftLiveActivity() }
+    }
     /// Per-staff "repeat these jobs daily" preferences, keyed by staffId.
     var dailyJobRepeatRules: [String: DailyJobRepeatRule] = [:]
     /// Same O(1) treatment for staff-by-id, the most common manager lookup.
@@ -71,7 +81,9 @@ final class RosterRepository {
 
     /// Live clock-in session for the signed-in staff member (device-local;
     /// see ClockSession for why this can't be written to Firestore live).
-    var clockSession: ClockSession?
+    var clockSession: ClockSession? {
+        didSet { syncShiftLiveActivity() }
+    }
 
     /// True from the moment a Start Shift tap begins (before the GPS fix
     /// resolves) until it commits or fails. `clockSession` only becomes
@@ -519,6 +531,25 @@ final class RosterRepository {
         currentRole = nil
         clockSession = nil // persisted copy stays on disk for re-sign-in
         isLoading = true
+    }
+
+    /// Reconciles the Lock Screen/Dynamic Island shift card with the latest
+    /// repository state. The app root also calls this on foreground entry so
+    /// a system-ended activity can be restored while the shift is still live.
+    func refreshShiftLiveActivity() {
+        syncShiftLiveActivity()
+    }
+
+    private func syncShiftLiveActivity() {
+        ShiftLiveActivityManager.sync(
+            currentUser: currentUser,
+            shifts: shifts,
+            timesheets: timesheets,
+            dailyJobs: dailyJobAssignments,
+            clockSession: clockSession,
+            companyName: appSettings.companyName,
+            now: ServerClock.shared.now
+        )
     }
 
     // MARK: - Clock in/out (device-local session)
@@ -2431,17 +2462,90 @@ final class RosterRepository {
 
     func approveTimesheet(id: String, managerNotes: String?) async throws {
         guard let currentUserId = currentUser?.id else { return }
+        try await updateTimesheetIfActionable(
+            id: id,
+            actionableStatuses: [.pending],
+            data: timesheetApprovalData(managerNotes: managerNotes, approvedBy: currentUserId)
+        )
+        notifyTimesheetsApproved([id])
+    }
 
-        let data: [String: Any] = [
+    /// Approve many pending timesheets in one Firestore batch instead of
+    /// waiting on a transaction + worker notification per row. Notifications
+    /// go out after the write, without blocking the manager.
+    func approveTimesheets(ids: [String], managerNotes: String? = nil) async -> (approvedIds: [String], failedIds: [String]) {
+        let uniqueIds = Array(Set(ids))
+        guard let currentUserId = currentUser?.id, !uniqueIds.isEmpty else {
+            return ([], uniqueIds)
+        }
+        let data = timesheetApprovalData(managerNotes: managerNotes, approvedBy: currentUserId)
+
+        do {
+            try await commitTimesheetApprovals(ids: uniqueIds, data: data)
+            notifyTimesheetsApproved(uniqueIds)
+            return (uniqueIds, [])
+        } catch {
+            var approvedIds: [String] = []
+            var failedIds: [String] = []
+            await withTaskGroup(of: (String, Bool).self) { group in
+                for id in uniqueIds {
+                    group.addTask {
+                        do {
+                            try await self.updateTimesheetIfActionable(
+                                id: id, actionableStatuses: [.pending], data: data
+                            )
+                            return (id, true)
+                        } catch {
+                            return (id, false)
+                        }
+                    }
+                }
+                for await (id, succeeded) in group {
+                    if succeeded { approvedIds.append(id) } else { failedIds.append(id) }
+                }
+            }
+            notifyTimesheetsApproved(approvedIds)
+            return (approvedIds, failedIds)
+        }
+    }
+
+    private func timesheetApprovalData(managerNotes: String?, approvedBy: String) -> [String: Any] {
+        [
             "status": TimesheetStatus.approved.rawValue,
             "managerNotes": managerNotes ?? "",
-            "approvedBy": currentUserId,
+            "approvedBy": approvedBy,
             "approvedAt": nowISO(),
             "updatedAt": nowISO()
         ]
+    }
 
-        try await updateTimesheetIfActionable(id: id, actionableStatuses: [.pending], data: data)
-        await WorkerAPIClient.shared.sendNotification(event: "timesheet-approved", timesheetId: id)
+    private func commitTimesheetApprovals(ids: [String], data: [String: Any]) async throws {
+        let chunkSize = 500
+        var index = 0
+        while index < ids.count {
+            let end = min(index + chunkSize, ids.count)
+            let batch = db.batch()
+            for id in ids[index..<end] {
+                batch.updateData(data, forDocument: db.collection("timesheets").document(id))
+            }
+            try await batch.commit()
+            index = end
+        }
+    }
+
+    private func notifyTimesheetsApproved(_ ids: [String]) {
+        guard !ids.isEmpty else { return }
+        Task {
+            await withTaskGroup(of: Void.self) { group in
+                for id in ids {
+                    group.addTask {
+                        await WorkerAPIClient.shared.sendNotification(
+                            event: "timesheet-approved", timesheetId: id
+                        )
+                    }
+                }
+            }
+        }
     }
 
     /// Confirm a staff-reported absence — sets status = .absent (terminal).
@@ -2479,6 +2583,8 @@ final class RosterRepository {
         // A rejection can apply to either a regular submission or an
         // absence report — both are pre-decision, actionable states.
         try await updateTimesheetIfActionable(id: id, actionableStatuses: [.pending, .absentReported], data: data)
-        await WorkerAPIClient.shared.sendNotification(event: "timesheet-rejected", timesheetId: id)
+        Task {
+            await WorkerAPIClient.shared.sendNotification(event: "timesheet-rejected", timesheetId: id)
+        }
     }
 }

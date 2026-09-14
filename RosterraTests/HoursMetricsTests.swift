@@ -87,3 +87,107 @@ final class HoursMetricsTests: XCTestCase {
         XCTAssertEqual(m.year, 6)
     }
 }
+
+final class HomeDashboardSnapshotTests: XCTestCase {
+
+    func testFiltersSortsAndLimitsPublishedShifts() {
+        let today = "2026-09-12"
+        let shifts = [
+            TestSupport.shift(id: "later-today", date: today, start: "14:00"),
+            TestSupport.shift(id: "earlier-today", date: today, start: "08:00"),
+            TestSupport.shift(id: "draft-today", date: today, start: "06:00", status: "draft"),
+            TestSupport.shift(id: "future-4", date: "2026-09-16"),
+            TestSupport.shift(id: "future-2", date: "2026-09-14"),
+            TestSupport.shift(id: "future-1", date: "2026-09-13", start: "12:00"),
+            TestSupport.shift(id: "future-1-early", date: "2026-09-13", start: "07:00"),
+        ]
+
+        let snapshot = HomeDashboardSnapshot(shifts: shifts, todayKey: today)
+
+        XCTAssertEqual(snapshot.todayShifts.map(\.id), ["earlier-today", "later-today"])
+        XCTAssertEqual(
+            snapshot.upcomingShifts.map(\.id),
+            ["future-1-early", "future-1", "future-2"]
+        )
+    }
+
+    func testClockabilityKeepsActiveShiftAndBlocksCompetingShift() {
+        XCTAssertTrue(
+            HomeDashboardSnapshot.isClockable(
+                shiftId: "active",
+                activeClockShiftId: "active",
+                hasTimesheet: true
+            ),
+            "The active clock session remains visible even if a timesheet arrives."
+        )
+        XCTAssertFalse(
+            HomeDashboardSnapshot.isClockable(
+                shiftId: "other",
+                activeClockShiftId: "active",
+                hasTimesheet: false
+            ),
+            "A second shift cannot start while another shift has an active session."
+        )
+        XCTAssertTrue(
+            HomeDashboardSnapshot.isClockable(
+                shiftId: "fresh",
+                activeClockShiftId: nil,
+                hasTimesheet: false
+            )
+        )
+        XCTAssertFalse(
+            HomeDashboardSnapshot.isClockable(
+                shiftId: "submitted",
+                activeClockShiftId: nil,
+                hasTimesheet: true
+            )
+        )
+    }
+
+    func testMissedTimesheetsOnlyIncludesSubmittableMissingOrDraftRecords() {
+        let now = TestSupport.instant("2026-09-12", "18:00")
+        let newestMissing = TestSupport.shift(
+            id: "newest-missing",
+            date: "2026-09-12",
+            start: "09:00",
+            end: "12:00"
+        )
+        let olderDraft = TestSupport.shift(
+            id: "older-draft",
+            date: "2026-09-11",
+            start: "09:00",
+            end: "12:00"
+        )
+        let approved = TestSupport.shift(
+            id: "approved",
+            date: "2026-09-10",
+            start: "09:00",
+            end: "12:00"
+        )
+        let future = TestSupport.shift(
+            id: "future",
+            date: "2026-09-13",
+            start: "09:00",
+            end: "12:00"
+        )
+        let unpublished = TestSupport.shift(
+            id: "unpublished",
+            date: "2026-09-09",
+            start: "09:00",
+            end: "12:00",
+            status: "draft"
+        )
+        let timesheets = [
+            TestSupport.timesheet(id: "older-draft", shiftId: "older-draft", status: "draft"),
+            TestSupport.timesheet(id: "approved", shiftId: "approved", status: "approved"),
+        ]
+
+        let result = HomeDashboardSnapshot.missedTimesheetShifts(
+            shifts: [approved, future, olderDraft, unpublished, newestMissing],
+            timesheets: timesheets,
+            now: now
+        )
+
+        XCTAssertEqual(result.map(\.id), ["newest-missing", "older-draft"])
+    }
+}

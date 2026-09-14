@@ -12,6 +12,7 @@ struct MacManagerTimesheetsWorkspace: View {
     @State private var rejectionReason = ""
     @State private var showingRejectionSheet = false
     @State private var showingBulkConfirmation = false
+    @State private var isBulkApproving = false
 
     init() {}
 
@@ -156,12 +157,21 @@ struct MacManagerTimesheetsWorkspace: View {
                     Button {
                         showingBulkConfirmation = true
                     } label: {
-                        Label(
-                            "Approve all \(pendingForBulkApproval.count)",
-                            systemImage: "checkmark.circle"
-                        )
+                        HStack(spacing: 6) {
+                            if isBulkApproving {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Label(
+                                isBulkApproving
+                                    ? "Approving…"
+                                    : "Approve all \(pendingForBulkApproval.count)",
+                                systemImage: "checkmark.circle"
+                            )
+                        }
                     }
                     .timesheetGlassPill()
+                    .disabled(isBulkApproving)
                 }
             }
 
@@ -640,21 +650,17 @@ struct MacManagerTimesheetsWorkspace: View {
     }
 
     private func approveAllVisible() async {
-        var approved = 0
-        var failed = 0
-        for timesheet in pendingForBulkApproval {
-            do {
-                try await repo.approveTimesheet(id: timesheet.id, managerNotes: nil)
-                approved += 1
-            } catch {
-                failed += 1
-            }
-        }
+        guard !isBulkApproving else { return }
+        isBulkApproving = true
+        defer { isBulkApproving = false }
 
-        if failed == 0 {
-            toasts.show("\(approved) timesheets approved", style: .success)
+        let ids = pendingForBulkApproval.map(\.id)
+        let result = await repo.approveTimesheets(ids: ids)
+
+        if result.failedIds.isEmpty {
+            toasts.show("\(result.approvedIds.count) timesheets approved", style: .success)
         } else {
-            toasts.show("\(approved) approved · \(failed) failed", style: .warning)
+            toasts.show("\(result.approvedIds.count) approved · \(result.failedIds.count) failed", style: .warning)
         }
     }
 

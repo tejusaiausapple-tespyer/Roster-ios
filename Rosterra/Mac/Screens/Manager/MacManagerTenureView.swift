@@ -96,10 +96,8 @@ struct MacManagerTenureView: View {
             title: "Tenure & Hours",
             subtitle: "Approved service history for \(rows.count) staff",
             actions: {
-                MacAsyncButton(variant: .bordered, size: .small) {
+                MacRefreshButton("Refresh tenure data") {
                     await repo.refreshFromServer()
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
                 }
             }
         ) {
