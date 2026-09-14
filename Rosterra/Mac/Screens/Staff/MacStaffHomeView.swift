@@ -24,8 +24,7 @@ struct MacStaffHomeView: View {
     }
 
     private var assignedJobs: [DailyJob] {
-        let today = RosterCalendar.todayString()
-        return repo.dailyJobs.filter { $0.date == today && $0.assignedStaffId == currentUserId }
+        repo.activeDailyJobsForStaff.filter { $0.assignedStaffId == currentUserId }
     }
 
     var body: some View {

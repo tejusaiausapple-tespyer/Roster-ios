@@ -108,6 +108,7 @@ struct MacSidebar: View {
         sidebarSection("Workspace") {
             sidebarRow(.managerDashboard)
             sidebarRow(.managerRoster)
+            sidebarRow(.managerJobs)
             sidebarRow(
                 .managerTimesheets,
                 badge: pendingTimesheetCount

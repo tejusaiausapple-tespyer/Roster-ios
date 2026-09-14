@@ -87,6 +87,8 @@ struct MacShellView: View {
             MacManagerDashboardView()
         case .managerRoster:
             MacManagerRosterView()
+        case .managerJobs:
+            MacManagerJobsView()
         case .managerTimesheets:
             MacManagerTimesheetsWorkspace()
         case .managerStaff:

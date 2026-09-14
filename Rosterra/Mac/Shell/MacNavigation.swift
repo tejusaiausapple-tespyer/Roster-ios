@@ -14,6 +14,7 @@ enum MacDestination: String, Hashable, CaseIterable, Identifiable {
     // Manager Destinations
     case managerDashboard = "manager_dashboard"
     case managerRoster = "manager_roster"
+    case managerJobs = "manager_jobs"
     case managerTimesheets = "manager_timesheets"
     case managerStaff = "manager_staff"
     case managerTasks = "manager_tasks"
@@ -41,6 +42,7 @@ enum MacDestination: String, Hashable, CaseIterable, Identifiable {
 
         case .managerDashboard: return "Dashboard"
         case .managerRoster: return "Roster"
+        case .managerJobs: return "Jobs"
         case .managerTimesheets: return "Timesheets"
         case .managerStaff: return "Staff Directory"
         case .managerTasks: return "Team Tasks"
@@ -67,6 +69,7 @@ enum MacDestination: String, Hashable, CaseIterable, Identifiable {
 
         case .managerDashboard: return "square.grid.2x2.fill"
         case .managerRoster: return "calendar"
+        case .managerJobs: return "checklist"
         case .managerTimesheets: return "clipboard.fill"
         case .managerStaff: return "person.2.fill"
         case .managerTasks: return "list.bullet.clipboard.fill"

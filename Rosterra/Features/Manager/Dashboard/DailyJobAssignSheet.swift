@@ -5,6 +5,11 @@ import SwiftUI
 /// Today's Roster rows on the manager dashboard.
 struct DailyJobAssignSheet: View {
     let shift: Shift
+    /// Mac Jobs has a dedicated remove button on every assigned row, so its
+    /// Add Jobs flow only presents templates that are not on this shift yet.
+    /// iPhone and iPad keep the combined assignment manager by default.
+    let showsOnlyUnassignedTemplates: Bool
+
     @Environment(RosterRepository.self) private var repo
     @Environment(\.dismiss) private var dismiss
 
@@ -29,14 +34,30 @@ struct DailyJobAssignSheet: View {
         repo.user(id: shift.staffId)?.fullName ?? "Staff Member"
     }
 
+    init(shift: Shift, showsOnlyUnassignedTemplates: Bool = false) {
+        self.shift = shift
+        self.showsOnlyUnassignedTemplates = showsOnlyUnassignedTemplates
+    }
+
     private var assignments: [DailyJobAssignment] {
         repo.dailyJobs(forShift: shift.id)
     }
 
     private var filteredTemplates: [DailyJobTemplate] {
+        let templates: [DailyJobTemplate]
+        if showsOnlyUnassignedTemplates {
+            let assignedTemplateIDs = Set(assignments.map(\.templateId))
+            templates = repo.dailyJobTemplates.filter {
+                guard let id = $0.id else { return false }
+                return !assignedTemplateIDs.contains(id)
+            }
+        } else {
+            templates = repo.dailyJobTemplates
+        }
+
         let trimmed = searchText.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return repo.dailyJobTemplates }
-        return repo.dailyJobTemplates.filter { $0.title.localizedCaseInsensitiveContains(trimmed) }
+        guard !trimmed.isEmpty else { return templates }
+        return templates.filter { $0.title.localizedCaseInsensitiveContains(trimmed) }
     }
 
     /// `selectedIds` as an order-preserving array instead of a Set (which has
@@ -46,6 +67,14 @@ struct DailyJobAssignSheet: View {
     /// and a freshly-checked one lands in the same order it's shown in the
     /// library list below (rather than an arbitrary Set order).
     private var orderedSelectedIds: [String] {
+        if showsOnlyUnassignedTemplates {
+            let alreadyAssigned = assignments.map(\.templateId)
+            let newlyChecked = repo.dailyJobTemplates
+                .compactMap(\.id)
+                .filter { selectedIds.contains($0) && !alreadyAssigned.contains($0) }
+            return alreadyAssigned + newlyChecked
+        }
+
         let alreadyAssigned = assignments.map(\.templateId).filter { selectedIds.contains($0) }
         let newlyChecked = repo.dailyJobTemplates
             .compactMap(\.id)
@@ -56,7 +85,7 @@ struct DailyJobAssignSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                if !assignments.isEmpty {
+                if !assignments.isEmpty && !showsOnlyUnassignedTemplates {
                     Section {
                         ForEach(Array(assignments.enumerated()), id: \.element.id) { index, assignment in
                             HStack {
@@ -112,9 +141,21 @@ struct DailyJobAssignSheet: View {
                     }
                 }
 
-                Section("Job library") {
+                Section(showsOnlyUnassignedTemplates ? "Available jobs" : "Job library") {
                     if repo.dailyJobTemplates.isEmpty {
-                        Text("No jobs yet — add your first reusable job below.")
+                        Text(showsOnlyUnassignedTemplates
+                             ? "No jobs exist yet. Add reusable jobs from the Mac All Jobs view."
+                             : "No jobs yet — add your first reusable job below.")
+                            .font(.footnote)
+                            .foregroundStyle(Theme.textSecondary)
+                    } else if filteredTemplates.isEmpty {
+                        Text(searchText.trimmingCharacters(in: .whitespaces).isEmpty
+                             ? (showsOnlyUnassignedTemplates
+                                ? "All jobs are already assigned to this shift."
+                                : "No jobs are available.")
+                             : (showsOnlyUnassignedTemplates
+                                ? "No available jobs match your search."
+                                : "No jobs match your search."))
                             .font(.footnote)
                             .foregroundStyle(Theme.textSecondary)
                     }
@@ -139,58 +180,64 @@ struct DailyJobAssignSheet: View {
                             .buttonStyle(.plain)
                             .pointerHover()
 
-                            Button {
-                                renameText = template.title
-                                templatePendingRename = template
-                            } label: {
-                                Image(systemName: "pencil")
-                                    .font(.body.weight(.medium))
-                                    .foregroundStyle(Theme.brand)
-                                    .padding(6)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.borderless)
-                            .accessibilityLabel("Rename \(template.title)")
-                            .help("Rename \(template.title)")
+                            if !showsOnlyUnassignedTemplates {
+                                Button {
+                                    renameText = template.title
+                                    templatePendingRename = template
+                                } label: {
+                                    Image(systemName: "pencil")
+                                        .font(.body.weight(.medium))
+                                        .foregroundStyle(Theme.brand)
+                                        .padding(6)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.borderless)
+                                .accessibilityLabel("Rename \(template.title)")
+                                .help("Rename \(template.title)")
 
-                            Button {
-                                templatePendingDelete = template
-                            } label: {
-                                Image(systemName: "trash")
-                                    .font(.body.weight(.medium))
-                                    .foregroundStyle(Theme.error)
-                                    .padding(6)
-                                    .contentShape(Rectangle())
+                                Button {
+                                    templatePendingDelete = template
+                                } label: {
+                                    Image(systemName: "trash")
+                                        .font(.body.weight(.medium))
+                                        .foregroundStyle(Theme.error)
+                                        .padding(6)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.borderless)
+                                .accessibilityLabel("Delete \(template.title)")
+                                .help("Delete \(template.title)")
                             }
-                            .buttonStyle(.borderless)
-                            .accessibilityLabel("Delete \(template.title)")
-                            .help("Delete \(template.title)")
                         }
                     }
 
-                    if showingNewJob {
-                        HStack {
-                            TextField("New job title", text: $newJobTitle)
-                                .onSubmit(addTemplate)
-                            Button("Add", action: addTemplate)
-                                .disabled(newJobTitle.trimmingCharacters(in: .whitespaces).isEmpty)
-                        }
-                    } else {
-                        Button {
-                            showingNewJob = true
-                        } label: {
-                            Label("Add Job", systemImage: "plus.circle.fill")
-                                .foregroundStyle(Theme.brand)
+                    if !showsOnlyUnassignedTemplates {
+                        if showingNewJob {
+                            HStack {
+                                TextField("New job title", text: $newJobTitle)
+                                    .onSubmit(addTemplate)
+                                Button("Add", action: addTemplate)
+                                    .disabled(newJobTitle.trimmingCharacters(in: .whitespaces).isEmpty)
+                            }
+                        } else {
+                            Button {
+                                showingNewJob = true
+                            } label: {
+                                Label("Add Job", systemImage: "plus.circle.fill")
+                                    .foregroundStyle(Theme.brand)
+                            }
                         }
                     }
                 }
 
-                Section {
-                    Toggle("Repeat daily for \(staffName)", isOn: $repeatDaily)
-                } footer: {
-                    Text(repeatDaily
-                         ? "Every new shift created for \(staffName) will automatically get this same selection — no need to reassign each day."
-                         : "Off by default: each new shift starts with no jobs assigned until you pick them here.")
+                if !showsOnlyUnassignedTemplates {
+                    Section {
+                        Toggle("Repeat daily for \(staffName)", isOn: $repeatDaily)
+                    } footer: {
+                        Text(repeatDaily
+                             ? "Every new shift created for \(staffName) will automatically get this same selection — no need to reassign each day."
+                             : "Off by default: each new shift starts with no jobs assigned until you pick them here.")
+                    }
                 }
 
                 if let errorMessage {
@@ -203,7 +250,7 @@ struct DailyJobAssignSheet: View {
             }
             .environment(\.editMode, $editMode)
             .searchable(text: $searchText, prompt: "Search jobs")
-            .navigationTitle("Daily Jobs — \(staffName)")
+            .navigationTitle(showsOnlyUnassignedTemplates ? "Add Jobs — \(staffName)" : "Daily Jobs — \(staffName)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -213,7 +260,11 @@ struct DailyJobAssignSheet: View {
                     Button {
                         save()
                     } label: {
-                        if isSaving { ProgressView() } else { Text("Save").bold() }
+                        if isSaving {
+                            ProgressView()
+                        } else {
+                            Text(showsOnlyUnassignedTemplates ? "Add" : "Save").bold()
+                        }
                     }
                     .disabled(isSaving)
                 }
@@ -325,6 +376,24 @@ struct DailyJobAssignSheet: View {
     private func save() {
         isSaving = true
         errorMessage = nil
+
+        // The Mac Add Jobs sheet is deliberately shift-only. Repeat settings
+        // remain in the full iPhone/iPad assignment manager and are never
+        // changed as a side effect of adding jobs to today's Mac checklist.
+        if showsOnlyUnassignedTemplates {
+            Task {
+                do {
+                    try await repo.setDailyJobs(for: shift, templateIds: orderedSelectedIds)
+                    Haptics.submitSuccess()
+                    dismiss()
+                } catch {
+                    errorMessage = error.localizedDescription
+                    isSaving = false
+                    Haptics.submitError()
+                }
+            }
+            return
+        }
 
         // The backfill below can touch many shifts concurrently — same
         // "don't strand an in-flight batch if the app gets backgrounded"
