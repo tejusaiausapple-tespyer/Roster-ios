@@ -84,6 +84,19 @@ final class AuthService {
         }
     }
 
+    /// Reauthenticate the currently signed-in manager before a sensitive
+    /// action such as scheduling a staff account for deletion.
+    func reauthenticate(password: String) async throws {
+        guard let user = Auth.auth().currentUser,
+              let email = user.email else { throw AuthError.notAuthenticated }
+        let credential = EmailAuthProvider.credential(withEmail: email, password: password)
+        do {
+            try await user.reauthenticate(with: credential)
+        } catch let error as NSError {
+            throw mapAuthError(error)
+        }
+    }
+
     private func mapAuthError(_ error: NSError) -> AuthError {
         guard error.domain == AuthErrorDomain, let code = AuthErrorCode(rawValue: error.code) else {
             return .generic(error.localizedDescription)

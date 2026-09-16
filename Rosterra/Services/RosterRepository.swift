@@ -903,14 +903,30 @@ final class RosterRepository {
         try await db.collection("timesheets").document(timesheetId).delete()
     }
 
-    /// Complete/refresh the staff profile (dob/address/phone).
-    func updateProfile(dob: String, address: String, phone: String) async throws {
+    /// Complete/refresh the staff profile and clear any manager-required
+    /// emergency-details / role-review gates after successful submission.
+    func updateProfile(
+        dob: String,
+        address: String,
+        phone: String,
+        emergencyName: String = "",
+        emergencyPhone: String = "",
+        emergencyEmail: String = "",
+        emergencyAddress: String = ""
+    ) async throws {
         guard let uid = activeUID else { throw AuthError.notAuthenticated }
         try await db.collection("users").document(uid).updateData([
             "dob": dob,
             "address": address,
             "phone": phone,
+            "emergencyContactName": emergencyName,
+            "emergencyContact": emergencyName,
+            "emergencyContactPhone": emergencyPhone,
+            "emergencyContactEmail": emergencyEmail,
+            "emergencyContactAddress": emergencyAddress,
             "profileUpdateRequired": false,
+            "emergencyDetailsRequired": false,
+            "roleReviewRequired": false,
             "updatedAt": nowISO(),
         ])
     }
@@ -1028,6 +1044,15 @@ final class RosterRepository {
     func cancelStaffEmailChange(staffId: String) async throws {
         try await db.collection("users").document(staffId).updateData([
             "emailChangeRequired": false,
+            "updatedAt": nowISO(),
+        ])
+    }
+
+    /// Require emergency contact details on the staff member's next app route.
+    /// AppRoute blocks dashboard access until ProfileCompletionView saves them.
+    func requestStaffEmergencyDetails(staffId: String, required: Bool = true) async throws {
+        try await db.collection("users").document(staffId).updateData([
+            "emergencyDetailsRequired": required,
             "updatedAt": nowISO(),
         ])
     }
@@ -1755,6 +1780,45 @@ final class RosterRepository {
         return created
     }
 
+    /// Re-check unpublished payslips against approved timesheets fetched from the
+    /// server. This is intentionally read-only: callers show the manager what
+    /// changed and ask before replacing the existing draft snapshot.
+    func payslipsNeedingRegeneration(weekStart: Date) async throws -> [PayslipRegenerationChange] {
+        guard let manager = currentUser else { return [] }
+        let start = RosterCalendar.weekStart(weekStart)
+        let periodStart = RosterCalendar.dayFormatter.string(from: start)
+        let periodEnd = RosterCalendar.dayFormatter.string(from: RosterCalendar.addDays(6, to: start))
+        let hoursByStaff = try await fetchApprovedWorkedHours(periodStart: periodStart, periodEnd: periodEnd)
+
+        return payslips.compactMap { slip in
+            guard slip.periodStart == periodStart,
+                  slip.status != .submitted, slip.status != .archived,
+                  let user = usersById[slip.staffId] else { return nil }
+            let latest = buildDraftPayslip(
+                docId: slip.id,
+                user: user,
+                profile: staffWageProfile(for: slip.staffId),
+                periodStart: periodStart,
+                periodEnd: periodEnd,
+                workedHoursByDate: hoursByStaff[slip.staffId] ?? [:],
+                generatedBy: manager
+            )
+            let hoursChanged = [
+                slip.ordinaryHours != latest.ordinaryHours,
+                slip.weekendHours != latest.weekendHours,
+                slip.publicHolidayHours != latest.publicHolidayHours,
+                slip.overtimeHours != latest.overtimeHours,
+            ].contains(true)
+            guard hoursChanged else { return nil }
+            return PayslipRegenerationChange(
+                payslip: slip,
+                previousHours: slip.totals.totalHours,
+                latestHours: latest.totals.totalHours
+            )
+        }
+        .sorted { $0.payslip.staffName.localizedCaseInsensitiveCompare($1.payslip.staffName) == .orderedAscending }
+    }
+
     /// Approved worked hours per staff per date within `periodStart...periodEnd`,
     /// fetched fresh from the server rather than the live, listener-fed
     /// `shifts`/`timesheets` caches.
@@ -1907,8 +1971,8 @@ final class RosterRepository {
         return slip
     }
 
-    /// Persist manager edits to a payslip (draft/under-review only — callers
-    /// guard on `status.isEditable`; submitted payroll is immutable).
+    /// Persist manager edits to an unpublished payslip — callers guard on
+    /// `status.isEditable`; submitted payroll is immutable.
     /// `original` is the pre-edit snapshot this editing session started
     /// from — used to log one field-level audit entry per changed value
     /// (see `PayrollCalculator.auditDiff`) instead of one generic "edited"
@@ -2012,10 +2076,13 @@ final class RosterRepository {
         return eligible.count
     }
 
-    /// Regenerate a draft from current timesheet + wage data, REPLACING the
-    /// existing draft's amounts (explicit manager action; keeps the audit trail).
+    /// Regenerate an unpublished payslip from current timesheet + wage data,
+    /// REPLACING its amounts (explicit manager action; keeps the audit trail).
+    /// An approved payslip returns to Draft because its approved calculation is
+    /// no longer the one being paid. Submitted/archived records stay immutable.
     func regenerateDraftPayslip(_ slip: Payslip) async throws {
-        guard slip.status.isEditable, let manager = currentUser,
+        guard slip.status != .submitted, slip.status != .archived,
+              let manager = currentUser,
               let user = usersById[slip.staffId] else { return }
         // Fresh from the server, not the live shifts/timesheets cache — see
         // fetchApprovedWorkedHours.
@@ -2028,7 +2095,9 @@ final class RosterRepository {
         fresh.audit = slip.audit
         fresh.audit.append(PayslipAuditEntry(action: "regenerated", userId: manager.id,
                                              userName: manager.fullName,
-                                             detail: "Recalculated from current timesheets and wage assignment"))
+                                             detail: slip.status == .approved
+                                                ? "Recalculated from current timesheets and returned to Draft for approval"
+                                                : "Recalculated from current timesheets and wage assignment"))
         try await db.collection("payslips").document(slip.id).setData(fresh.asDictionary)
     }
 

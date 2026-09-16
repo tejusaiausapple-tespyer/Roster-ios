@@ -141,17 +141,17 @@ struct ManagerTimesheetsView: View {
                 let width = proxy.size.width
 
                 ZStack {
-                    VStack(spacing: 0) {
-                        controlBar
-                        timesheetScroll(containerWidth: width)
-                        if selectionMode {
-                            bulkActionBar
-                        } else {
-                            summaryBar
+                    timesheetScroll(containerWidth: width)
+                        .phoneHeaderBar { controlBar }
+                        .safeAreaInset(edge: .bottom, spacing: 0) {
+                            if selectionMode {
+                                bulkActionBar
+                            } else {
+                                summaryBar
+                            }
                         }
-                    }
-                    .frame(maxWidth: Theme.maxContentWidth)
-                    .frame(maxWidth: .infinity)
+                        .frame(maxWidth: Theme.maxContentWidth)
+                        .frame(maxWidth: .infinity)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }

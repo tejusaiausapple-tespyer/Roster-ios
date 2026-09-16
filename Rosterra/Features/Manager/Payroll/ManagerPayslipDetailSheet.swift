@@ -130,10 +130,8 @@ struct ManagerPayslipDetailSheet: View {
                         .foregroundStyle(Theme.warning)
                 }
             }
-            if !slip.status.isEditable && slip.status != .archived {
-                Text(slip.status == .submitted
-                     ? "Submitted payslips are locked and visible to \(slip.staffName). Issue a corrected copy to make changes."
-                     : "Approved payslips are locked — submit to publish, or issue a corrected copy.")
+            if slip.status == .submitted {
+                Text("Published payslips are locked and visible to \(slip.staffName). Issue a corrected copy to make changes.")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
             }

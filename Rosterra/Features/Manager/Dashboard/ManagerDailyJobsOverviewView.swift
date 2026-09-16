@@ -44,6 +44,7 @@ struct ManagerDailyJobsOverviewView: View {
             .padding(Theme.screenPadding)
             .padding(.top, 12)
             .padding(.bottom, 32)
+            .tracksTitlePillCollapse()
         }
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("Daily Jobs")

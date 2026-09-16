@@ -29,7 +29,7 @@ struct ChangeEmailView: View {
 
     private var canSubmit: Bool {
         !password.isEmpty && !newEmail.isEmpty && newEmail == confirmEmail &&
-        isValidEmail(newEmail) && !isWorking
+        ContactValidation.isValidEmail(newEmail) && !isWorking
     }
 
     private var formContent: some View {
@@ -78,7 +78,7 @@ struct ChangeEmailView: View {
         guard newEmail == confirmEmail else {
             errors = ["Emails do not match"]; Haptics.error(); return
         }
-        guard isValidEmail(newEmail) else {
+        guard ContactValidation.isValidEmail(newEmail) else {
             errors = ["Invalid email format"]; Haptics.error(); return
         }
         guard let currentUser = Auth.auth().currentUser else {
@@ -118,11 +118,6 @@ struct ChangeEmailView: View {
         }
     }
 
-    private func isValidEmail(_ email: String) -> Bool {
-        let emailRegEx = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,64}"
-        let emailPred = NSPredicate(format:"SELF MATCHES %@", emailRegEx)
-        return emailPred.evaluate(with: email)
-    }
 }
 
 /// Tracks an in-flight Auth email change so Firestore + Face ID / passkey

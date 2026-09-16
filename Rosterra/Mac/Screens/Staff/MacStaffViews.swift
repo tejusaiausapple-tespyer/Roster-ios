@@ -298,29 +298,63 @@ struct MacStaffPayslipsView: View {
     @State private var selectedPayslip: StaffPayslip?
     @State private var exportingPDFData: Data?
     @State private var isExporting: Bool = false
+    @State private var monthKey = RosterCalendar.monthKey()
+    @State private var myPayslips: [StaffPayslip] = []
+    @State private var isLoading = true
+    @State private var loadError: String?
 
     init() {}
 
-    private var currentUserId: String {
-        repo.currentUser?.id ?? ""
-    }
-
-    private var myPayslips: [StaffPayslip] {
-        repo.payslips.filter { $0.staffId == currentUserId }
+    private var monthLabel: String {
+        RosterCalendar.monthStartDate(monthKey).map { RosterFormat.monthYear($0) } ?? monthKey
     }
 
     var body: some View {
         MacScreen(
             title: "My Payslips",
-            subtitle: "\(myPayslips.count) published pay statements"
+            subtitle: "\(monthLabel) · \(myPayslips.count) published pay statement\(myPayslips.count == 1 ? "" : "s")",
+            isLoading: isLoading,
+            errorMessage: loadError,
+            onRetry: { Task { await load(forceRefresh: true) } },
+            actions: {
+                Button {
+                    moveMonth(-1)
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .macButton(.ghost, size: .small)
+                .help("Previous month")
+
+                Text(monthLabel)
+                    .font(MacType.captionStrong)
+                    .foregroundStyle(MacColor.textSecondary)
+                    .frame(minWidth: 112)
+
+                Button {
+                    moveMonth(1)
+                } label: {
+                    Image(systemName: "chevron.right")
+                }
+                .macButton(.ghost, size: .small)
+                .disabled(monthKey >= RosterCalendar.monthKey())
+                .help("Next month")
+
+                Button {
+                    Task { await load(forceRefresh: true) }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .macButton(.bordered, size: .small)
+                .help("Refresh published payslips")
+            }
         ) {
             HStack(spacing: 0) {
                 // Left: Payslip List
                 VStack(spacing: 0) {
                     if myPayslips.isEmpty {
                         MacEmptyState(
-                            title: "No Payslips Available",
-                            subtitle: "Your payslips will appear here once published by management.",
+                            title: "No Payslips for \(monthLabel)",
+                            subtitle: "Published payslips appear here. Use the month arrows to view another period.",
                             icon: "doc.text"
                         )
                     } else {
@@ -454,6 +488,7 @@ struct MacStaffPayslipsView: View {
                 }
             }
         }
+        .task(id: monthKey) { await load() }
         .fileExporter(
             isPresented: $isExporting,
             document: PDFDocumentFile(data: exportingPDFData ?? Data()),
@@ -467,6 +502,38 @@ struct MacStaffPayslipsView: View {
                 toasts.show("Failed to save: \(error.localizedDescription)", style: .error)
             }
         }
+    }
+
+    private func moveMonth(_ offset: Int) {
+        guard let next = RosterCalendar.monthKey(byAdding: offset, to: monthKey),
+              next <= RosterCalendar.monthKey() else { return }
+        monthKey = next
+    }
+
+    private func load(forceRefresh: Bool = false) async {
+        if !forceRefresh {
+            isLoading = true
+            myPayslips = []
+            selectedPayslip = nil
+        }
+        loadError = nil
+        do {
+            let loaded = try await repo.staffPayslips(monthKey: monthKey, forceRefresh: forceRefresh)
+            myPayslips = loaded
+            if let selectedPayslip,
+               let refreshed = loaded.first(where: { $0.id == selectedPayslip.id }) {
+                self.selectedPayslip = refreshed
+            } else {
+                selectedPayslip = loaded.first
+            }
+        } catch {
+            if myPayslips.isEmpty {
+                loadError = "Published payslips couldn’t be loaded. Check your connection and try again."
+            } else {
+                toasts.show("Couldn’t refresh payslips. \(error.localizedDescription)", style: .error)
+            }
+        }
+        isLoading = false
     }
 }
 

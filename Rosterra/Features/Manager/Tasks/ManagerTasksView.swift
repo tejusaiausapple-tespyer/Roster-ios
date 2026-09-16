@@ -74,8 +74,6 @@ struct ManagerTasksView: View {
                 Theme.background.ignoresSafeArea()
 
                 VStack(spacing: 0) {
-                    header
-
                     if filteredTasks.isEmpty {
                         emptyState
                     } else {
@@ -92,6 +90,7 @@ struct ManagerTasksView: View {
                         .platformScrollIndicators()
                     }
                 }
+                .phoneHeaderBar { header }
                 .contentLane()
             }
             .navigationTitle("Tasks")
@@ -162,7 +161,6 @@ struct ManagerTasksView: View {
         .padding(.horizontal, Theme.screenPadding)
         .padding(.top, 6)
         .padding(.bottom, 12)
-        .background(Theme.background)
     }
 
     private var emptyState: some View {

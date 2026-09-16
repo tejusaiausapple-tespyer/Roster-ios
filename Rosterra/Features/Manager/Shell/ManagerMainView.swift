@@ -3,6 +3,7 @@ import SwiftUI
 struct ManagerMainView: View {
     @Environment(RosterRepository.self) private var repo
     @Environment(AppRouter.self) private var router
+    @Environment(TitlePillCollapse.self) private var titlePillCollapse
     @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
 
     private var selectedTab: ManagerTab {
@@ -12,7 +13,10 @@ struct ManagerMainView: View {
 
     var body: some View {
         content
-            .onChange(of: router.selectedManagerTab) { Haptics.tabChange() }
+            .onChange(of: router.selectedManagerTab) {
+                titlePillCollapse.fraction = 0
+                Haptics.tabChange()
+            }
     }
 
     @ViewBuilder
@@ -52,6 +56,7 @@ struct ManagerMainView: View {
                 .tag(ManagerTab.account)
             }
             .tint(Theme.brand)
+            .phoneTabBarMinimizeOnScroll()
         } else {
             // iPadOS & macOS: solid source-list sidebar with every ManagerTab
             // (Account pinned in the profile footer).

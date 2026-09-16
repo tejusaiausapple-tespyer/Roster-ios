@@ -83,6 +83,16 @@ final class AppRouteTests: XCTestCase {
         XCTAssertEqual(route(user: user), .profileCompletion)
     }
 
+    func testStaffEmergencyDetailsRequiredGated() {
+        let user = TestSupport.user(extra: completeProfile.merging(["emergencyDetailsRequired": true]) { _, n in n })
+        XCTAssertEqual(route(user: user), .profileCompletion)
+    }
+
+    func testStaffRoleReviewRequiredGated() {
+        let user = TestSupport.user(extra: completeProfile.merging(["roleReviewRequired": true]) { _, n in n })
+        XCTAssertEqual(route(user: user), .profileCompletion)
+    }
+
     func testManagerNeverGatedOnProfile() {
         XCTAssertEqual(route(user: TestSupport.user(role: "manager")), .managerMain,
                        "needsProfileCompletion is false for managers by model")

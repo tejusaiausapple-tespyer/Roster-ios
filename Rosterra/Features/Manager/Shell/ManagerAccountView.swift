@@ -31,9 +31,10 @@ struct ManagerAccountView: View {
     var body: some View {
         NavigationStack {
             List {
-                // Zero-footprint scroll probe: own section with no spacing —
-                // a loose row would form an implicit section (44pt min row
-                // height + section spacing) and push the first card ~100pt down.
+                // Zero-footprint scroll probe: own section with no spacing +
+                // defaultMinListRowHeight below (same fix as staff Account /
+                // Wage / Payroll — without it the probe row reserves ~100pt
+                // and reads as extra header padding under the title pill).
                 Section {
                     TitlePillCollapseReporter()
                         .listRowInsets(EdgeInsets())
@@ -55,10 +56,11 @@ struct ManagerAccountView: View {
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
+            .environment(\.defaultMinListRowHeight, 0)
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle("Account")
             .navigationBarTitleDisplayMode(.inline)
-            .screenTitlePill("Account", icon: "person.crop.circle.fill", fraction: 0)
+            .screenTitlePill("Account", icon: "person.crop.circle.fill")
             .sheet(item: $activeSheet) { sheet in
                 switch sheet {
                 case .changePassword:

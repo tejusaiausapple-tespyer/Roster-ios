@@ -1,4 +1,48 @@
 import Foundation
+import PhoneNumberKit
+
+enum ContactValidation {
+    private static let phoneUtility = PhoneNumberUtility()
+
+    /// Australian national numbers are the default. A leading international
+    /// country code switches parsing to that country's numbering plan.
+    static func isValidPhone(_ raw: String) -> Bool {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return false }
+        return (try? phoneUtility.parse(value, withRegion: "AU")) != nil
+    }
+
+    static func normalizedPhone(_ raw: String) -> String? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let number = try? phoneUtility.parse(value, withRegion: "AU") else { return nil }
+        return phoneUtility.format(number, toType: .e164)
+    }
+
+    static func phoneError(_ raw: String, required: Bool = true) -> String? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.isEmpty { return required ? "Enter a phone number." : nil }
+        guard isValidPhone(value) else {
+            return "Enter a valid phone number for the selected country. Australian numbers use +61 by default."
+        }
+        return nil
+    }
+
+    static func isValidEmail(_ raw: String) -> Bool {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.range(
+            of: "^[A-Z0-9._%+-]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$",
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+    }
+
+    static func emailError(_ raw: String, required: Bool = true) -> String? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.isEmpty { return required ? "Enter an email address." : nil }
+        return isValidEmail(value)
+            ? nil
+            : "Enter a complete email address, for example name@gmail.com or name@outlook.com."
+    }
+}
 
 /// Mirrors `User` in src/types/index.ts (staff-relevant fields).
 struct AppUser: Identifiable, Equatable {
@@ -46,6 +90,12 @@ struct AppUser: Identifiable, Equatable {
     /// Used by upcoming payroll calculations.
     var superRate: Double?
     var profileUpdateRequired: Bool
+    /// Manager-requested gate: staff must provide emergency contact details
+    /// before the iPhone app will open the main workspace.
+    var emergencyDetailsRequired: Bool
+    /// Set when a manager changes the staff member's role. Staff must review
+    /// and acknowledge the new role before continuing in the iPhone app.
+    var roleReviewRequired: Bool
     /// Set by a manager to prompt the staff member to change their own sign-in
     /// email (staff completes the change via Firebase's verified flow).
     var emailChangeRequired: Bool
@@ -115,6 +165,8 @@ struct AppUser: Identifiable, Equatable {
         self.hourlyRate = (data["hourlyRate"] as? NSNumber)?.doubleValue
         self.superRate = (data["superRate"] as? NSNumber)?.doubleValue
         self.profileUpdateRequired = FS.bool(data, "profileUpdateRequired")
+        self.emergencyDetailsRequired = FS.bool(data, "emergencyDetailsRequired")
+        self.roleReviewRequired = FS.bool(data, "roleReviewRequired")
         self.emailChangeRequired = FS.bool(data, "emailChangeRequired")
     }
 
@@ -123,7 +175,7 @@ struct AppUser: Identifiable, Equatable {
     var needsProfileCompletion: Bool {
         guard role == .staff else { return false }
         let complete = !(dob?.isEmpty ?? true) && !(address?.isEmpty ?? true) && !(phone?.isEmpty ?? true)
-        return !complete || profileUpdateRequired
+        return !complete || profileUpdateRequired || emergencyDetailsRequired || roleReviewRequired
     }
 
     var memberSince: String? {

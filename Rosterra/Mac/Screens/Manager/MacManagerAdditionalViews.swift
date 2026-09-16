@@ -1744,28 +1744,392 @@ struct MacManagerJobsView: View {
 
 struct MacManagerLocationsView: View {
     @Environment(RosterRepository.self) private var repo
+    @Environment(MacToastCenter.self) private var toasts
+
+    @State private var selectedLocationID: String?
+    @State private var editor: ManagerLocationsView.EditorMode?
+    @State private var locationToDelete: RosterLocation?
+    @State private var isWorking = false
 
     init() {}
 
+    private var selectedLocation: RosterLocation? {
+        repo.locations.first { $0.id == selectedLocationID } ?? repo.locations.first
+    }
+
+    private var geofencedCount: Int {
+        repo.locations.filter(\.hasGeofence).count
+    }
+
+    private var enforcedCount: Int {
+        repo.locations.filter { $0.hasGeofence && $0.geofenceEnforced }.count
+    }
+
     var body: some View {
         MacScreen(
-            title: "Work Locations & Geofences",
-            subtitle: "Configured workplace locations and clock-in boundaries"
-        ) {
-            ScrollView {
-                VStack(spacing: MacSpace.xl) {
-                    ForEach(repo.locations) { loc in
-                        MacCard(title: loc.name, icon: "mappin.and.ellipse") {
-                            VStack(alignment: .leading, spacing: MacSpace.sm) {
-                                Text(loc.address).font(MacType.body).foregroundStyle(MacColor.textSecondary)
-                                Text("Geofence Radius: \(Int(loc.radiusMeters))m").font(MacType.caption).foregroundStyle(MacColor.textTertiary)
-                            }
+            title: "Work Locations",
+            subtitle: "Manage workplaces and attendance boundaries",
+            actions: {
+            Button {
+                editor = .add
+            } label: {
+                Label("Add work location", systemImage: "plus")
+                    .labelStyle(.iconOnly)
+            }
+        }) {
+            if repo.locations.isEmpty {
+                MacEmptyState(
+                    title: "No Work Locations",
+                    subtitle: "Add the suburbs your staff work in. Locations appear when creating shifts and can verify attendance with a geofence.",
+                    icon: "mappin.and.ellipse",
+                    actionTitle: "Add Location",
+                    action: { editor = .add }
+                )
+            } else {
+                VStack(spacing: 0) {
+                    summaryBar
+                    Divider()
+                        .overlay(MacColor.separator)
+
+                    HStack(spacing: 0) {
+                        locationsList
+                            .frame(minWidth: 300, idealWidth: 340, maxWidth: 380)
+
+                        Divider()
+                            .overlay(MacColor.separator)
+
+                        if let selectedLocation {
+                            locationDetail(selectedLocation)
                         }
                     }
                 }
-                .padding(MacSpace.xl)
             }
         }
+        .sheet(item: $editor) { mode in
+            LocationEditorSheet(mode: mode) { location in
+                Task { await save(mode: mode, location: location) }
+            }
+        }
+        .confirmationDialog(
+            "Delete Work Location?",
+            isPresented: Binding(
+                get: { locationToDelete != nil },
+                set: { if !$0 { locationToDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Location", role: .destructive) {
+                if let locationToDelete {
+                    Task { await delete(locationToDelete) }
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                locationToDelete = nil
+            }
+        } message: {
+            Text("Existing shifts keep their saved location. This action cannot be undone.")
+        }
+        .disabled(isWorking)
+        .onAppear {
+            if selectedLocationID == nil {
+                selectedLocationID = repo.locations.first?.id
+            }
+        }
+        .onChange(of: repo.locations) { _, locations in
+            if !locations.contains(where: { $0.id == selectedLocationID }) {
+                selectedLocationID = locations.first?.id
+            }
+        }
+    }
+
+    private var summaryBar: some View {
+        HStack(spacing: 0) {
+            summaryMetric(
+                value: "\(repo.locations.count)",
+                label: "Locations",
+                icon: "mappin.and.ellipse",
+                tint: MacColor.accent
+            )
+            summaryMetric(
+                value: "\(geofencedCount)",
+                label: "Geofenced",
+                icon: "location.circle.fill",
+                tint: .green
+            )
+            summaryMetric(
+                value: "\(enforcedCount)",
+                label: "Strict enforcement",
+                icon: "lock.shield.fill",
+                tint: .orange
+            )
+            Spacer(minLength: MacSpace.lg)
+            Text("Editing or deleting a location does not change existing shifts.")
+                .font(MacType.caption)
+                .foregroundStyle(MacColor.textTertiary)
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(.horizontal, MacSpace.xl)
+        .padding(.vertical, MacSpace.lg)
+        .background(MacColor.cardBackground)
+    }
+
+    private func summaryMetric(value: String, label: String, icon: String, tint: Color) -> some View {
+        HStack(spacing: MacSpace.sm) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 30, height: 30)
+                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: MacRadius.small))
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(value)
+                    .font(MacType.bodyStrong)
+                    .foregroundStyle(MacColor.textPrimary)
+                Text(label)
+                    .font(MacType.caption)
+                    .foregroundStyle(MacColor.textSecondary)
+            }
+        }
+        .frame(minWidth: 150, alignment: .leading)
+    }
+
+    private var locationsList: some View {
+        ScrollView {
+            LazyVStack(spacing: MacSpace.xs) {
+                ForEach(repo.locations) { location in
+                    let iconTint = location.hasGeofence ? MacColor.accent : MacColor.textTertiary
+                    let selectionBackground = selectedLocation?.id == location.id
+                        ? MacColor.accent.opacity(0.10)
+                        : Color.clear
+
+                    Button {
+                        selectedLocationID = location.id
+                    } label: {
+                        HStack(spacing: MacSpace.md) {
+                            Image(systemName: location.hasGeofence ? "mappin.circle.fill" : "mappin.circle")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(iconTint)
+                                .frame(width: 34, height: 34)
+                                .background(
+                                    iconTint.opacity(0.10),
+                                    in: RoundedRectangle(cornerRadius: MacRadius.small)
+                                )
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(location.displayName)
+                                    .font(MacType.bodyStrong)
+                                    .foregroundStyle(MacColor.textPrimary)
+                                Text(location.city)
+                                    .font(MacType.caption)
+                                    .foregroundStyle(MacColor.textSecondary)
+                            }
+
+                            Spacer()
+
+                            if location.geofenceEnforced {
+                                Image(systemName: "lock.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
+
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(MacColor.textTertiary)
+                        }
+                        .padding(.horizontal, MacSpace.md)
+                        .padding(.vertical, MacSpace.sm)
+                        .background(
+                            selectionBackground,
+                            in: RoundedRectangle(cornerRadius: MacRadius.medium)
+                        )
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(location.displayName), \(location.city)")
+                }
+            }
+            .padding(MacSpace.md)
+        }
+        .background(MacColor.cardBackground.opacity(0.45))
+    }
+
+    private func locationDetail(_ location: RosterLocation) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: MacSpace.xl) {
+                HStack(alignment: .top, spacing: MacSpace.lg) {
+                    Image(systemName: "mappin.and.ellipse")
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(MacColor.accent)
+                        .frame(width: 54, height: 54)
+                        .background(MacColor.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: MacRadius.large))
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(location.displayName)
+                            .font(MacType.sectionHeader)
+                            .foregroundStyle(MacColor.textPrimary)
+                        Text(location.city)
+                            .font(MacType.body)
+                            .foregroundStyle(MacColor.textSecondary)
+                    }
+
+                    Spacer()
+
+                    Button("Edit") {
+                        editor = .edit(location)
+                    }
+                    .macButton(.bordered, size: .small)
+
+                    Button {
+                        locationToDelete = location
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .macButton(.bordered, size: .small)
+                    .tint(.red)
+                    .help("Delete location")
+                    .accessibilityLabel("Delete \(location.displayName)")
+                }
+
+                MacCard(title: "Attendance Geofence", icon: "location.circle.fill") {
+                    VStack(alignment: .leading, spacing: MacSpace.lg) {
+                        HStack(spacing: MacSpace.md) {
+                            statusBadge(
+                                location.hasGeofence ? "Configured" : "Not configured",
+                                icon: location.hasGeofence ? "checkmark.circle.fill" : "minus.circle",
+                                tint: location.hasGeofence ? .green : MacColor.textTertiary
+                            )
+                            if location.hasGeofence {
+                                statusBadge(
+                                    location.geofenceEnforced ? "Strict enforcement" : "Warning only",
+                                    icon: location.geofenceEnforced ? "lock.fill" : "exclamationmark.triangle.fill",
+                                    tint: location.geofenceEnforced ? .orange : .yellow
+                                )
+                            }
+                        }
+
+                        if let latitude = location.latitude, let longitude = location.longitude {
+                            detailRow("Allowed radius", value: "\(Int(location.effectiveGeofenceRadius)) metres")
+                            detailRow(
+                                "Coordinates",
+                                value: String(format: "%.5f, %.5f", latitude, longitude),
+                                monospaced: true
+                            )
+
+                            Divider()
+                                .overlay(MacColor.separator)
+
+                            Label(
+                                location.geofenceEnforced
+                                    ? "Staff outside this boundary are blocked from starting a shift."
+                                    : "Staff outside 250 metres receive a warning and the attempt is recorded.",
+                                systemImage: "info.circle"
+                            )
+                            .font(MacType.caption)
+                            .foregroundStyle(MacColor.textSecondary)
+                        } else {
+                            Text("No attendance boundary is attached to this location. Shifts can still use it, but staff position is not verified.")
+                                .font(MacType.body)
+                                .foregroundStyle(MacColor.textSecondary)
+
+                            Button("Configure Geofence") {
+                                editor = .edit(location)
+                            }
+                            .macButton(.bordered, size: .small)
+                        }
+                    }
+                }
+
+                MacCard(title: "Location Details", icon: "building.2") {
+                    VStack(spacing: MacSpace.md) {
+                        detailRow("Suburb", value: location.suburb)
+                        detailRow("State", value: location.state)
+                        detailRow("City", value: location.city)
+                    }
+                }
+
+                Spacer(minLength: MacSpace.xl)
+            }
+            .padding(MacSpace.xl)
+            .frame(maxWidth: 860, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func statusBadge(_ title: String, icon: String, tint: Color) -> some View {
+        Label(title, systemImage: icon)
+            .font(MacType.captionStrong)
+            .foregroundStyle(tint)
+            .padding(.horizontal, MacSpace.sm)
+            .padding(.vertical, MacSpace.xs)
+            .background(tint.opacity(0.11), in: Capsule())
+    }
+
+    private func detailRow(_ label: String, value: String, monospaced: Bool = false) -> some View {
+        HStack {
+            Text(label)
+                .font(MacType.body)
+                .foregroundStyle(MacColor.textSecondary)
+            Spacer()
+            Text(value)
+                .font(monospaced ? MacType.mono : MacType.bodyStrong)
+                .foregroundStyle(MacColor.textPrimary)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func save(mode: ManagerLocationsView.EditorMode, location: RosterLocation) async {
+        let collides: Bool
+        switch mode {
+        case .add:
+            collides = repo.locations.contains { $0.id == location.id }
+        case .edit(let previous):
+            collides = repo.locations.contains { $0.id == location.id && $0.id != previous.id }
+        }
+
+        guard !collides else {
+            toasts.show("\(location.displayName) already exists.", style: .error)
+            return
+        }
+
+        isWorking = true
+        defer { isWorking = false }
+
+        do {
+            switch mode {
+            case .add:
+                try await repo.addLocation(location)
+            case .edit(let previous):
+                var updated = repo.locations.filter { $0.id != previous.id }
+                updated.append(location)
+                try await repo.setLocations(updated)
+            }
+            selectedLocationID = location.id
+            toasts.show(mode.isAdding ? "Location added." : "Location updated.", style: .success)
+        } catch {
+            toasts.show("Couldn’t save the location. \(error.localizedDescription)", style: .error)
+        }
+    }
+
+    private func delete(_ location: RosterLocation) async {
+        isWorking = true
+        defer {
+            isWorking = false
+            locationToDelete = nil
+        }
+
+        do {
+            try await repo.setLocations(repo.locations.filter { $0.id != location.id })
+            toasts.show("Location deleted.", style: .success)
+        } catch {
+            toasts.show("Couldn’t delete the location. \(error.localizedDescription)", style: .error)
+        }
+    }
+}
+
+private extension ManagerLocationsView.EditorMode {
+    var isAdding: Bool {
+        if case .add = self { return true }
+        return false
     }
 }
 
@@ -1773,37 +2137,466 @@ struct MacManagerLocationsView: View {
 
 struct MacManagerCompanyView: View {
     @Environment(RosterRepository.self) private var repo
+    @Environment(MacToastCenter.self) private var toasts
+
+    @State private var companyName = ""
+    @State private var abn = ""
+    @State private var acn = ""
+    @State private var street = ""
+    @State private var suburb = ""
+    @State private var state = "SA"
+    @State private var city = RosterLocation.capital(for: "SA")
+    @State private var phoneLocal = ""
+    @State private var contactEmail = ""
+    @State private var businessNotes = ""
+    @State private var loadedFrom: AppSettings?
+    @State private var isSaving = false
 
     init() {}
 
+    private var current: AppSettings {
+        let trimmedStreet = street.trimmingCharacters(in: .whitespaces)
+        let trimmedSuburb = suburb.trimmingCharacters(in: .whitespaces)
+        let localDigits = phoneLocal.filter(\.isNumber)
+
+        return AppSettings(
+            companyName: companyName.trimmingCharacters(in: .whitespaces),
+            businessAddress: AppSettings.composedAddress(
+                street: trimmedStreet,
+                suburb: trimmedSuburb,
+                state: state
+            ),
+            businessStreet: trimmedStreet,
+            businessSuburb: trimmedSuburb,
+            businessState: state,
+            businessCity: city.trimmingCharacters(in: .whitespaces),
+            contactPhone: localDigits.isEmpty ? "" : "+61 \(RosterFormat.auPhoneLocal(localDigits))",
+            contactEmail: contactEmail.trimmingCharacters(in: .whitespaces),
+            abn: abn,
+            acn: acn,
+            businessNotes: businessNotes.trimmingCharacters(in: .whitespaces)
+        )
+    }
+
+    private var isDirty: Bool {
+        current != (loadedFrom ?? repo.appSettings)
+    }
+
+    private var canSave: Bool {
+        isDirty && !companyName.trimmingCharacters(in: .whitespaces).isEmpty && !isSaving
+    }
+
+    private var profileCompletion: Int {
+        let values = [
+            companyName, abn, street, suburb, city, phoneLocal, contactEmail,
+        ]
+        let completed = values.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count
+        return Int((Double(completed) / Double(values.count)) * 100)
+    }
+
     var body: some View {
         MacScreen(
-            title: "Company Identity & Details",
-            subtitle: "Legal entity information used on official payslips and tax invoices"
+            title: "Company Details",
+            subtitle: "Business identity, contact details, and payslip information",
+            actions: {
+                if isDirty && !isSaving {
+                    Button("Revert") {
+                        restoreLoadedValues()
+                    }
+                    .help("Discard unsaved changes")
+                }
+
+                Button {
+                    save()
+                } label: {
+                    if isSaving {
+                        HStack(spacing: MacSpace.sm) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Saving…")
+                        }
+                    } else {
+                        Label("Save Changes", systemImage: "checkmark")
+                    }
+                }
+                .disabled(!canSave)
+                .keyboardShortcut("s", modifiers: .command)
+                .macButton(.success, size: .small)
+            }
         ) {
             ScrollView {
-                VStack(spacing: MacSpace.xl) {
-                    MacCard(title: "Entity Information", icon: "building.2.fill") {
-                        VStack(alignment: .leading, spacing: MacSpace.md) {
-                            HStack {
-                                Text("Business Name").font(MacType.bodyStrong)
-                                Spacer()
-                                Text(repo.companyDetails?.name ?? "Rosterra").font(MacType.body)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: MacSpace.xxl) {
+                        companySummary
+                            .frame(width: 300)
+
+                        editor
+                            .frame(minWidth: 600, maxWidth: 760)
+                    }
+
+                    VStack(spacing: MacSpace.xl) {
+                        companySummary
+                        editor
+                    }
+                }
+                .padding(MacSpace.xxl)
+                .frame(maxWidth: 1120)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .disabled(isSaving)
+        .onAppear { loadIfNeeded() }
+        .onChange(of: repo.appSettings) { _, _ in loadIfNeeded() }
+    }
+
+    private var companySummary: some View {
+        VStack(spacing: MacSpace.lg) {
+            VStack(alignment: .leading, spacing: MacSpace.xl) {
+                HStack(alignment: .top) {
+                    Image(systemName: "building.2.fill")
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 52, height: 52)
+                        .background(.white.opacity(0.16), in: RoundedRectangle(cornerRadius: MacRadius.large))
+
+                    Spacer()
+
+                    Label(isDirty ? "Editing" : "Saved", systemImage: isDirty ? "pencil" : "checkmark")
+                        .font(MacType.captionStrong)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.white.opacity(0.15), in: Capsule())
+                }
+
+                VStack(alignment: .leading, spacing: MacSpace.sm) {
+                    Text(companyName.trimmingCharacters(in: .whitespaces).isEmpty ? "Your Company" : companyName)
+                        .font(MacType.pageTitle)
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+
+                    Label(
+                        current.businessAddress.isEmpty ? "Add a business address" : current.businessAddress,
+                        systemImage: "mappin"
+                    )
+                    .font(MacType.caption)
+                    .foregroundStyle(.white.opacity(0.78))
+                    .lineLimit(2)
+                }
+
+                VStack(alignment: .leading, spacing: MacSpace.sm) {
+                    HStack {
+                        Text("Profile completeness")
+                        Spacer()
+                        Text("\(profileCompletion)%")
+                            .fontWeight(.semibold)
+                    }
+                    .font(MacType.caption)
+                    .foregroundStyle(.white.opacity(0.9))
+
+                    ProgressView(value: Double(profileCompletion), total: 100)
+                        .tint(.white)
+                }
+            }
+            .padding(MacSpace.xl)
+            .background(
+                LinearGradient(
+                    colors: [Color(hex: 0x4F46E5), Color(hex: 0x312E81)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                in: RoundedRectangle(cornerRadius: MacRadius.extraLarge, style: .continuous)
+            )
+            .shadow(color: MacColor.accent.opacity(0.2), radius: 18, x: 0, y: 8)
+
+            MacCard(title: "Business snapshot", icon: "doc.text.magnifyingglass") {
+                VStack(spacing: 0) {
+                    summaryRow(icon: "number", title: "ABN", value: abn.isEmpty ? "Not provided" : abn)
+                    Divider().padding(.vertical, MacSpace.md)
+                    summaryRow(icon: "phone", title: "Phone", value: phoneLocal.isEmpty ? "Not provided" : "+61 \(phoneLocal)")
+                    Divider().padding(.vertical, MacSpace.md)
+                    summaryRow(icon: "envelope", title: "Email", value: contactEmail.isEmpty ? "Not provided" : contactEmail)
+                }
+            }
+
+            HStack(alignment: .top, spacing: MacSpace.md) {
+                Image(systemName: "info.circle.fill")
+                    .foregroundStyle(MacColor.accent)
+                Text("This business profile is used across dashboards and generated payslips.")
+                    .font(MacType.caption)
+                    .foregroundStyle(MacColor.textSecondary)
+            }
+            .padding(MacSpace.lg)
+            .background(MacColor.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: MacRadius.large))
+        }
+    }
+
+    private var editor: some View {
+        VStack(spacing: MacSpace.xl) {
+            editorSection(
+                number: "01",
+                title: "Business identity",
+                subtitle: "The legal details shown on company documents.",
+                icon: "building.columns.fill"
+            ) {
+                VStack(spacing: MacSpace.lg) {
+                    formField("Company name", prompt: "Company name", text: $companyName)
+
+                    HStack(spacing: MacSpace.md) {
+                        formField("ABN", prompt: "XX XXX XXX XXX", text: $abn)
+                            .onChange(of: abn) { _, value in
+                                let formatted = RosterFormat.abn(value)
+                                if formatted != value { abn = formatted }
                             }
-                            HStack {
-                                Text("Australian Business Number (ABN)").font(MacType.bodyStrong)
-                                Spacer()
-                                Text(repo.companyDetails?.abn ?? "Not configured").font(MacType.mono)
+
+                        formField("ACN (optional)", prompt: "XXX XXX XXX", text: $acn)
+                            .onChange(of: acn) { _, value in
+                                let formatted = RosterFormat.acn(value)
+                                if formatted != value { acn = formatted }
                             }
-                            HStack {
-                                Text("Business Address").font(MacType.bodyStrong)
-                                Spacer()
-                                Text(repo.companyDetails?.address ?? "Adelaide, SA").font(MacType.body)
+                    }
+                }
+            }
+
+            editorSection(
+                number: "02",
+                title: "Business address",
+                subtitle: "Your primary registered or trading location.",
+                icon: "mappin.and.ellipse"
+            ) {
+                VStack(spacing: MacSpace.lg) {
+                    formField("Street address", prompt: "Street address", text: $street)
+
+                    HStack(spacing: MacSpace.md) {
+                        formField("Suburb", prompt: "Suburb", text: $suburb)
+                        formField("City", prompt: "City", text: $city)
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("State or territory")
+                            .font(MacType.captionStrong)
+                            .foregroundStyle(MacColor.textSecondary)
+                        Picker("State or territory", selection: $state) {
+                            ForEach(RosterLocation.states, id: \.self) { item in
+                                Text(item).tag(item)
                             }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 7)
+                        .frame(height: 38)
+                        .background(MacColor.cardBackgroundSecondary, in: RoundedRectangle(cornerRadius: MacRadius.medium))
+                        .overlay(RoundedRectangle(cornerRadius: MacRadius.medium).stroke(MacColor.cardBorder))
+                        .onChange(of: state) { _, newValue in
+                            city = RosterLocation.capital(for: newValue)
                         }
                     }
                 }
-                .padding(MacSpace.xl)
+            }
+
+            editorSection(
+                number: "03",
+                title: "Contact & payroll",
+                subtitle: "How staff and payroll documents identify the business.",
+                icon: "person.crop.circle.fill"
+            ) {
+                VStack(spacing: MacSpace.lg) {
+                    HStack(spacing: MacSpace.md) {
+                        phoneField
+                        formField("Email address", prompt: "accounts@example.com", text: $contactEmail)
+                            .textContentType(.emailAddress)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Additional business information")
+                            .font(MacType.captionStrong)
+                            .foregroundStyle(MacColor.textSecondary)
+                        TextField(
+                            "Bank details, payroll notes, or other information",
+                            text: $businessNotes,
+                            axis: .vertical
+                        )
+                        .textFieldStyle(.plain)
+                        .lineLimit(4...8)
+                        .padding(11)
+                        .background(MacColor.cardBackgroundSecondary, in: RoundedRectangle(cornerRadius: MacRadius.medium))
+                        .overlay(RoundedRectangle(cornerRadius: MacRadius.medium).stroke(MacColor.cardBorder))
+
+                        Text("Optional. Keep sensitive credentials out of this field.")
+                            .font(MacType.caption)
+                            .foregroundStyle(MacColor.textTertiary)
+                    }
+                }
+            }
+        }
+    }
+
+    private var phoneField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Phone number")
+                .font(MacType.captionStrong)
+                .foregroundStyle(MacColor.textSecondary)
+            HStack(spacing: MacSpace.sm) {
+                Text("+61")
+                    .font(MacType.bodyStrong)
+                    .foregroundStyle(MacColor.textSecondary)
+                Rectangle()
+                    .fill(MacColor.separator)
+                    .frame(width: 1, height: 18)
+                TextField("412 345 678", text: $phoneLocal)
+                    .textFieldStyle(.plain)
+                    .textContentType(.telephoneNumber)
+                    .onChange(of: phoneLocal) { _, value in
+                        let formatted = RosterFormat.auPhoneLocal(value)
+                        if formatted != value { phoneLocal = formatted }
+                    }
+            }
+            .padding(.horizontal, 11)
+            .frame(height: 38)
+            .background(MacColor.cardBackgroundSecondary, in: RoundedRectangle(cornerRadius: MacRadius.medium))
+            .overlay(RoundedRectangle(cornerRadius: MacRadius.medium).stroke(MacColor.cardBorder))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func editorSection<Content: View>(
+        number: String,
+        title: String,
+        subtitle: String,
+        icon: String,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        MacCard {
+            VStack(alignment: .leading, spacing: MacSpace.xl) {
+                HStack(spacing: MacSpace.md) {
+                    Image(systemName: icon)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(MacColor.accent)
+                        .frame(width: 34, height: 34)
+                        .background(MacColor.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: MacRadius.medium))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(MacType.sectionHeader)
+                            .foregroundStyle(MacColor.textPrimary)
+                        Text(subtitle)
+                            .font(MacType.caption)
+                            .foregroundStyle(MacColor.textTertiary)
+                    }
+
+                    Spacer()
+
+                    Text(number)
+                        .font(MacType.monoStrong)
+                        .foregroundStyle(MacColor.textTertiary.opacity(0.65))
+                }
+
+                Divider()
+                content()
+            }
+        }
+    }
+
+    private func summaryRow(icon: String, title: String, value: String) -> some View {
+        HStack(spacing: MacSpace.md) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(MacColor.textTertiary)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(MacType.caption)
+                    .foregroundStyle(MacColor.textTertiary)
+                Text(value)
+                    .font(MacType.captionStrong)
+                    .foregroundStyle(MacColor.textPrimary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func formField(
+        _ label: String,
+        prompt: String,
+        text: Binding<String>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(MacType.captionStrong)
+                .foregroundStyle(MacColor.textSecondary)
+            TextField(prompt, text: text)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 11)
+                .frame(height: 38)
+                .background(MacColor.cardBackgroundSecondary, in: RoundedRectangle(cornerRadius: MacRadius.medium))
+                .overlay(RoundedRectangle(cornerRadius: MacRadius.medium).stroke(MacColor.cardBorder))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func restoreLoadedValues() {
+        guard let loadedFrom else { return }
+        companyName = loadedFrom.companyName
+        abn = RosterFormat.abn(loadedFrom.abn)
+        acn = RosterFormat.acn(loadedFrom.acn)
+        street = loadedFrom.businessStreet.isEmpty && loadedFrom.businessSuburb.isEmpty
+            ? loadedFrom.businessAddress
+            : loadedFrom.businessStreet
+        suburb = loadedFrom.businessSuburb
+        state = loadedFrom.businessState.isEmpty ? "SA" : loadedFrom.businessState
+        city = loadedFrom.businessCity.isEmpty
+            ? RosterLocation.capital(for: state)
+            : loadedFrom.businessCity
+        phoneLocal = RosterFormat.auPhoneLocal(
+            loadedFrom.contactPhone.replacingOccurrences(of: "+61", with: "")
+        )
+        contactEmail = loadedFrom.contactEmail
+        businessNotes = loadedFrom.businessNotes
+    }
+
+    private func loadIfNeeded() {
+        guard loadedFrom == nil || !isDirty else { return }
+
+        let settings = repo.appSettings
+        companyName = settings.companyName
+        abn = RosterFormat.abn(settings.abn)
+        acn = RosterFormat.acn(settings.acn)
+        street = settings.businessStreet.isEmpty && settings.businessSuburb.isEmpty
+            ? settings.businessAddress
+            : settings.businessStreet
+        suburb = settings.businessSuburb
+        if !settings.businessState.isEmpty {
+            state = settings.businessState
+        }
+        city = settings.businessCity.isEmpty
+            ? RosterLocation.capital(for: state)
+            : settings.businessCity
+        phoneLocal = RosterFormat.auPhoneLocal(
+            settings.contactPhone.replacingOccurrences(of: "+61", with: "")
+        )
+        contactEmail = settings.contactEmail
+        businessNotes = settings.businessNotes
+        loadedFrom = settings
+    }
+
+    private func save() {
+        guard canSave else { return }
+
+        isSaving = true
+        let settings = current
+
+        Task {
+            defer { isSaving = false }
+            do {
+                try await repo.saveCompanyDetails(settings)
+                loadedFrom = settings
+                toasts.show("Company details saved.", style: .success)
+            } catch {
+                toasts.show("Couldn’t save company details. \(error.localizedDescription)", style: .error)
             }
         }
     }

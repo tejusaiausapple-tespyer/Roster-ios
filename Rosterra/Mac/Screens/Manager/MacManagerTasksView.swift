@@ -302,7 +302,8 @@ struct MacManagerTasksView: View {
                 .macGlassSurface(cornerRadius: MacRadius.pill)
             }
             .buttonStyle(.plain)
-            .help("Return to today")
+            .disabled(weekOffset == 0 && selectedDayKey == RosterCalendar.todayKey())
+            .help(weekOffset == 0 ? "Current week" : "Return to this week")
 
             Button {
                 moveWeek(1)

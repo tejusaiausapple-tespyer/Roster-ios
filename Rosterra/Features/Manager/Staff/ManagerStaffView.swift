@@ -70,12 +70,10 @@ struct ManagerStaffView: View {
         GeometryReader { _ in
             ZStack {
                 Theme.background.ignoresSafeArea()
-                VStack(spacing: 0) {
-                    filterBar
-                    rosterGrid
-                    summaryBar
-                }
-                .frame(maxWidth: Theme.maxContentWidth)
+                rosterGrid
+                    .phoneHeaderBar { filterBar }
+                    .safeAreaInset(edge: .bottom, spacing: 0) { summaryBar }
+                    .frame(maxWidth: Theme.maxContentWidth)
                 .frame(maxWidth: .infinity)
             }
         }
@@ -849,9 +847,21 @@ struct ManagerStaffDetailSheet: View {
             return
         }
 
+        let trimmedPhone = phone.trimmingCharacters(in: .whitespaces)
+        if let error = ContactValidation.phoneError(trimmedPhone, required: false) {
+            toast = ToastMessage(kind: .error, text: error)
+            Haptics.error()
+            return
+        }
+        let trimmedEmergencyPhone = emergencyPhone.trimmingCharacters(in: .whitespaces)
+        if let error = ContactValidation.phoneError(trimmedEmergencyPhone, required: false) {
+            toast = ToastMessage(kind: .error, text: "Emergency contact: \(error)")
+            Haptics.error()
+            return
+        }
         let trimmedEmail = emergencyEmail.trimmingCharacters(in: .whitespaces)
-        if !trimmedEmail.isEmpty, !trimmedEmail.contains("@") {
-            toast = ToastMessage(kind: .error, text: "Enter a valid emergency contact email.")
+        if let error = ContactValidation.emailError(trimmedEmail, required: false) {
+            toast = ToastMessage(kind: .error, text: error)
             Haptics.error()
             return
         }
@@ -871,12 +881,14 @@ struct ManagerStaffDetailSheet: View {
 
         var fields: [String: Any] = [:]
         if trimmedName != savedBaseline.fullName { fields["fullName"] = trimmedName }
-        let trimmedPhone = phone.trimmingCharacters(in: .whitespaces)
         if trimmedPhone != savedBaseline.phone { fields["phone"] = trimmedPhone }
         if cleanedEmployeeId != savedBaseline.employeeId { fields["employeeId"] = cleanedEmployeeId }
         if cleanedTfn != savedBaseline.tfn { fields["tfn"] = cleanedTfn }
         if employmentType != savedBaseline.employmentType { fields["employmentType"] = employmentType.rawValue }
-        if defaultDepartment != savedBaseline.defaultDepartment { fields["defaultDepartment"] = defaultDepartment }
+        if defaultDepartment != savedBaseline.defaultDepartment {
+            fields["defaultDepartment"] = defaultDepartment
+            fields["roleReviewRequired"] = true
+        }
         if status != savedBaseline.status, user.status != .locked { fields["status"] = status.rawValue }
 
         let startKey = dateKey(startDate)
@@ -889,7 +901,6 @@ struct ManagerStaffDetailSheet: View {
             fields["emergencyContactName"] = trimmedEmergencyName
             fields["emergencyContact"] = trimmedEmergencyName
         }
-        let trimmedEmergencyPhone = emergencyPhone.trimmingCharacters(in: .whitespaces)
         if trimmedEmergencyPhone != savedBaseline.emergencyPhone { fields["emergencyContactPhone"] = trimmedEmergencyPhone }
         let trimmedEmergencyAddress = emergencyAddress.trimmingCharacters(in: .whitespaces)
         if trimmedEmergencyAddress != savedBaseline.emergencyAddress { fields["emergencyContactAddress"] = trimmedEmergencyAddress }

@@ -78,6 +78,13 @@ struct HistoryView: View {
                 TabScroll { ForEach(0..<4, id: \.self) { _ in SkeletonCard() } }
             } else {
                 List {
+                    Section {
+                        TitlePillCollapseReporter()
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                    }
+                    .listSectionSpacing(0)
                     summarySection
                     if metrics.pendingHours > 0 {
                         Section {
@@ -107,6 +114,7 @@ struct HistoryView: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
+                .environment(\.defaultMinListRowHeight, 0)
                 .ignoresSafeArea(edges: .bottom)
             }
         }

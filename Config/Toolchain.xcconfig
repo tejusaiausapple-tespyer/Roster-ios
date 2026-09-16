@@ -1,0 +1,6 @@
+// Xcode 27 can select the Metal cryptex as TOOLCHAIN_DIR. Its implicit Mac
+// Catalyst Swift library path does not exist, so use the default Xcode toolchain
+// explicitly for Catalyst linking.
+TOOLCHAINS = com.apple.dt.toolchain.XcodeDefault
+TOOLCHAIN_DIR = $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain
+LIBRARY_SEARCH_PATHS[sdk=macosx*] = $(SDKROOT)/System/iOSSupport/usr/lib $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/maccatalyst $(SDKROOT)/usr/lib

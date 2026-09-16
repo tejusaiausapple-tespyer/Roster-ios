@@ -69,12 +69,10 @@ struct ManagerAvailabilityView: View {
             let wide = layoutIsWide(proxy.size.width)
             ZStack {
                 Theme.background.ignoresSafeArea()
-                VStack(spacing: 0) {
-                    controlBar
-                    content(wide: wide, width: proxy.size.width)
-                    summaryBar
-                }
-                .frame(maxWidth: Theme.maxContentWidth)
+                content(wide: wide, width: proxy.size.width)
+                    .phoneHeaderBar { controlBar }
+                    .safeAreaInset(edge: .bottom, spacing: 0) { summaryBar }
+                    .frame(maxWidth: Theme.maxContentWidth)
                 .frame(maxWidth: .infinity)
             }
         }

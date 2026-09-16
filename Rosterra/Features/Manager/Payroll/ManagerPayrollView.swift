@@ -31,6 +31,8 @@ struct ManagerPayrollView: View {
     @State private var pendingDeleteSlip: Payslip?
     @State private var confirmDeleteAllDrafts = false
     @State private var pendingPublishSlip: Payslip?
+    @State private var regenerationChanges: [PayslipRegenerationChange] = []
+    @State private var showRegenerationPrompt = false
 
     var embedInNavigationStack = true
 
@@ -115,12 +117,12 @@ struct ManagerPayrollView: View {
                     if isGenerating {
                         ProgressView()
                     } else {
-                        Image(systemName: "wand.and.sparkles")
+                        Image(systemName: periodSlips.isEmpty ? "wand.and.sparkles" : "arrow.clockwise")
                     }
                 }
                 .disabled(isGenerating)
-                .accessibilityLabel("Generate draft payslips for this period")
-                .help("Generate draft payslips for this period")
+                .accessibilityLabel(periodSlips.isEmpty ? "Generate draft payslips for this period" : "Refresh pay run from approved timesheets")
+                .help(periodSlips.isEmpty ? "Generate draft payslips for this period" : "Refresh pay run from approved timesheets")
             }
             if !deletableSlips.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -143,7 +145,7 @@ struct ManagerPayrollView: View {
                 PayrollGapsSheet(
                     gaps: gaps,
                     weekLabel: RosterFormat.weekRange(monday: weekMonday),
-                    onGenerateAnyway: { runGeneration() }
+                    onGenerateAnyway: { checkForTimesheetChanges() }
                 )
             case .bulkPublish(let slips):
                 PayslipBulkPublishSheet(slips: slips, weekMonday: weekMonday) { count in
@@ -188,6 +190,14 @@ struct ManagerPayrollView: View {
             Button("Publish") { publishOne(slip) }
         } message: { slip in
             Text("\(slip.staffName) will be able to see this payslip immediately.")
+        }
+        .alert("Approved timesheet hours changed", isPresented: $showRegenerationPrompt) {
+            Button("Cancel", role: .cancel) { regenerationChanges = [] }
+            Button("Regenerate payslips") {
+                runGeneration(regenerating: regenerationChanges.map(\.payslip))
+            }
+        } message: {
+            Text(regenerationPromptMessage)
         }
     }
 
@@ -416,20 +426,60 @@ struct ManagerPayrollView: View {
             activeSheet = .gaps(gaps)
             return
         }
-        runGeneration()
+        checkForTimesheetChanges()
     }
 
-    private func runGeneration() {
+    private var regenerationPromptMessage: String {
+        let rows = regenerationChanges.prefix(8).map {
+            "\($0.payslip.staffName): \(String(format: "%.1f", $0.previousHours)) → \(String(format: "%.1f", $0.latestHours)) hours"
+        }
+        let remainder = regenerationChanges.count > 8
+            ? "\n…and \(regenerationChanges.count - 8) more."
+            : ""
+        return "The latest approved timesheets differ from the current pay run:\n\n"
+            + rows.joined(separator: "\n") + remainder
+            + "\n\nRegenerating recalculates pay, PAYG and super and replaces manual edits. Approved payslips return to Draft for review. Published payslips are never changed."
+    }
+
+    private func checkForTimesheetChanges() {
+        guard !isGenerating else { return }
+        isGenerating = true
+        Task {
+            do {
+                let changes = try await repo.payslipsNeedingRegeneration(weekStart: weekMonday)
+                isGenerating = false
+                if changes.isEmpty {
+                    runGeneration()
+                } else {
+                    regenerationChanges = changes
+                    showRegenerationPrompt = true
+                }
+            } catch {
+                isGenerating = false
+                toast = ToastMessage(kind: .error, text: "Couldn't check approved timesheets. \(error.localizedDescription)")
+                Haptics.error()
+            }
+        }
+    }
+
+    private func runGeneration(regenerating slips: [Payslip] = []) {
         guard !isGenerating else { return }
         isGenerating = true
         Task {
             defer { isGenerating = false }
             do {
                 let created = try await repo.generateDraftPayslips(weekStart: weekMonday)
-                toast = created > 0
-                    ? ToastMessage(kind: .success, text: "Created \(created) draft payslip\(created == 1 ? "" : "s").")
-                    : ToastMessage(kind: .info, text: "Nothing new to generate — existing payslips are never overwritten, and drafts need approved timesheets in the period.")
-                if created > 0 { Haptics.success() }
+                for slip in slips { try await repo.regenerateDraftPayslip(slip) }
+                regenerationChanges = []
+                if created > 0 || !slips.isEmpty {
+                    let createdText = created > 0 ? "Created \(created) new" : ""
+                    let separator = created > 0 && !slips.isEmpty ? " and " : ""
+                    let refreshedText = slips.isEmpty ? "" : "regenerated \(slips.count)"
+                    toast = ToastMessage(kind: .success, text: "\(createdText)\(separator)\(refreshedText) payslip\((created + slips.count) == 1 ? "" : "s") from the latest approved timesheets.")
+                    Haptics.success()
+                } else {
+                    toast = ToastMessage(kind: .info, text: "Pay run is up to date with approved timesheets.")
+                }
             } catch {
                 toast = ToastMessage(kind: .error, text: "Couldn't generate drafts. \(error.localizedDescription)")
                 Haptics.error()

@@ -66,7 +66,7 @@ struct RosterView: View {
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
                 .environment(\.defaultMinListRowHeight, 0)
-                .safeAreaInset(edge: .top) { header }
+                .phoneHeaderBar { header }
                 .onChange(of: selectedDayKey) { _, key in
                     withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                         proxy.scrollTo(key, anchor: .top)
@@ -162,7 +162,6 @@ struct RosterView: View {
         .padding(.horizontal, Theme.screenPadding)
         .padding(.top, 6)
         .padding(.bottom, 12)
-        .background(Theme.background)
     }
 
     private func miniStat(value: String, label: String, tint: Color = Theme.textPrimary) -> some View {

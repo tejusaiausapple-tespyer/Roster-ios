@@ -28,16 +28,27 @@ service cloud.firestore {
     // tfn + deletion are never staff-writable (TFN = manager; deletion = Worker only).
     function isValidSelfUserUpdate() {
       let changedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      // email/emailChangeRequired: staff self-service change-email flow (native
+      // apps) — the real credential change is Firebase Auth's own verified
+      // sendEmailVerification(beforeUpdatingEmail:), this only syncs the display copy.
       let allowedKeys = [
         'fullName',
         'phone',
         'dob',
         'address',
         'emergencyContact',
+        'emergencyContactName',
+        'emergencyContactPhone',
+        'emergencyContactEmail',
+        'emergencyContactAddress',
         'theme',
         'profileUpdateRequired',
+        'emergencyDetailsRequired',
+        'roleReviewRequired',
         'updatedAt',
-        'lastLoginAt'
+        'lastLoginAt',
+        'email',
+        'emailChangeRequired'
       ];
       return changedKeys.hasOnly(allowedKeys);
     }

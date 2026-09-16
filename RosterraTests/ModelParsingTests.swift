@@ -150,6 +150,18 @@ final class ModelParsingTests: XCTestCase {
         ])
         XCTAssertTrue(forced.needsProfileCompletion, "manager-forced update overrides completeness")
 
+        let emergencyRequired = TestSupport.user(extra: [
+            "dob": "1990-01-01", "address": "1 Test St", "phone": "0400000000",
+            "emergencyDetailsRequired": true,
+        ])
+        XCTAssertTrue(emergencyRequired.needsProfileCompletion, "required emergency details block staff access")
+
+        let roleReview = TestSupport.user(extra: [
+            "dob": "1990-01-01", "address": "1 Test St", "phone": "0400000000",
+            "roleReviewRequired": true,
+        ])
+        XCTAssertTrue(roleReview.needsProfileCompletion, "a changed role must be acknowledged")
+
         let manager = TestSupport.user(role: "manager")
         XCTAssertFalse(manager.needsProfileCompletion, "gate is staff-only")
     }
@@ -311,6 +323,36 @@ final class ModelParsingTests: XCTestCase {
     func testUserSuperRateParsing() {
         XCTAssertEqual(TestSupport.user(extra: ["superRate": 12.0]).superRate, 12.0)
         XCTAssertNil(TestSupport.user().superRate)
+    }
+
+    // MARK: - Contact validation
+
+    func testPhoneValidationSupportsAustraliaAndInternationalCountries() {
+        XCTAssertTrue(ContactValidation.isValidPhone("0412 345 678"))
+        XCTAssertTrue(ContactValidation.isValidPhone("+61 412 345 678"))
+        XCTAssertTrue(ContactValidation.isValidPhone("+64 21 123 4567"))
+        XCTAssertTrue(ContactValidation.isValidPhone("+44 20 7946 0958"))
+        XCTAssertTrue(ContactValidation.isValidPhone("+1 202-555-0123"))
+        XCTAssertTrue(ContactValidation.isValidPhone("+91 98765 43210"))
+        XCTAssertEqual(ContactValidation.normalizedPhone("0412 345 678"), "+61412345678")
+    }
+
+    func testPhoneValidationRejectsIncompleteOrImpossibleNumbers() {
+        XCTAssertFalse(ContactValidation.isValidPhone(""))
+        XCTAssertFalse(ContactValidation.isValidPhone("+61"))
+        XCTAssertFalse(ContactValidation.isValidPhone("0412 34"))
+        XCTAssertFalse(ContactValidation.isValidPhone("not a phone"))
+        XCTAssertNotNil(ContactValidation.phoneError("+61"))
+    }
+
+    func testEmailValidationRequiresACompleteDomain() {
+        XCTAssertTrue(ContactValidation.isValidEmail("person@gmail.com"))
+        XCTAssertTrue(ContactValidation.isValidEmail("person@outlook.com"))
+        XCTAssertTrue(ContactValidation.isValidEmail("payroll@example.com.au"))
+        XCTAssertFalse(ContactValidation.isValidEmail("person@"))
+        XCTAssertFalse(ContactValidation.isValidEmail("person@gmail"))
+        XCTAssertFalse(ContactValidation.isValidEmail("@outlook.com"))
+        XCTAssertFalse(ContactValidation.isValidEmail("person outlook.com"))
     }
 
     // MARK: - Availability round-trip

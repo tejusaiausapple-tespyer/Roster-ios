@@ -80,25 +80,11 @@ struct MacCommands: Commands {
                     .keyboardShortcut("7", modifiers: .command)
                 Button("Payroll") { navigation.select(.managerPayroll) }
                     .keyboardShortcut("8", modifiers: .command)
-            } else {
-                Button("Overview") { navigation.select(.staffHome) }
-                    .keyboardShortcut("1", modifiers: .command)
-                Button("My Roster") { navigation.select(.staffRoster) }
-                    .keyboardShortcut("2", modifiers: .command)
-                Button("My Tasks") { navigation.select(.staffTasks) }
-                    .keyboardShortcut("3", modifiers: .command)
-                Button("My Availability") { navigation.select(.staffAvailability) }
-                    .keyboardShortcut("4", modifiers: .command)
-                Button("Timesheet History") { navigation.select(.staffHistory) }
-                    .keyboardShortcut("5", modifiers: .command)
-                Button("My Payslips") { navigation.select(.staffPayslips) }
-                    .keyboardShortcut("6", modifiers: .command)
+                Divider()
+
+                Button("Account Settings") { navigation.select(.account) }
+                    .keyboardShortcut(",", modifiers: .command)
             }
-
-            Divider()
-
-            Button("Account Settings") { navigation.select(.account) }
-                .keyboardShortcut(",", modifiers: .command)
         }
     }
 }

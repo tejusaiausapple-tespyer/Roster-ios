@@ -51,6 +51,24 @@ enum ReleaseHistory {
 
     static let all: [AppRelease] = [
         AppRelease(
+            version: "1.2.2",
+            build: "37",
+            releaseDate: releaseDate(2026, 9, 15),
+            updateType: .patch,
+            summary: "New app icon, Liquid Glass header fade on every tab, and the Payslips title pill restored.",
+            features: [
+                "New app icon",
+                "iOS scroll-edge fade now applies to the navigation header and custom week/month bars on every tab",
+                "Mac Availability matches the staff-by-day matrix with week navigation, lock, and coverage chips",
+            ],
+            bugFixes: [
+                "Payslips tab now shows the screen title pill",
+                "Staff Account no longer leaves a blank gap under the header",
+                "Navigation bar minimize-on-scroll uses the current SwiftUI API",
+            ],
+            commitHash: "cf43314"
+        ),
+        AppRelease(
             version: "1.2.1",
             build: "36",
             releaseDate: releaseDate(2026, 9, 14),

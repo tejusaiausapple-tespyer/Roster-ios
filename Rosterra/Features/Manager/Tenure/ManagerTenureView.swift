@@ -65,7 +65,6 @@ struct ManagerTenureView: View {
         ZStack {
             Theme.background.ignoresSafeArea()
             VStack(spacing: 0) {
-                controlBar
                 if filtered.isEmpty {
                     emptyState
                     Spacer()
@@ -73,6 +72,7 @@ struct ManagerTenureView: View {
                     list
                 }
             }
+            .phoneHeaderBar { controlBar }
             .frame(maxWidth: Theme.maxContentWidth)
             .frame(maxWidth: .infinity)
         }
@@ -153,6 +153,7 @@ struct ManagerTenureView: View {
                 }
             }
             .padding(16)
+            .tracksTitlePillCollapse()
         }
         .macRefreshable { await repo.refreshFromServer() }
     }

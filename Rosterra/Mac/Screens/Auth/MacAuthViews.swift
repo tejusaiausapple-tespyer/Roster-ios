@@ -14,104 +14,293 @@ struct MacLoginView: View {
     @State private var showingResetPassword = false
     @State private var resetEmail = ""
     @State private var resetSuccessMessage: String?
+    @State private var showsPassword = false
+
+    private enum Field: Hashable {
+        case email, password
+    }
+
+    @FocusState private var focusedField: Field?
 
     init() {}
 
     var body: some View {
-        ZStack {
-            MacColor.windowBackground.ignoresSafeArea()
+        GeometryReader { proxy in
+            ZStack {
+                MacColor.windowBackground.ignoresSafeArea()
 
-            VStack(spacing: MacSpace.xl) {
-                // Branding
-                VStack(spacing: MacSpace.sm) {
-                    Image("AppLogo")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 64, height: 64)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .shadow(color: Color.black.opacity(0.08), radius: 10, y: 3)
+                if proxy.size.width >= 920 {
+                    HStack(spacing: 0) {
+                        brandPanel
+                            .frame(width: max(430, proxy.size.width * 0.46))
 
-                    Text("Rosterra")
-                        .font(MacType.display)
-                        .foregroundStyle(MacColor.textPrimary)
-
-                    Text("Sign in to your workplace account")
-                        .font(MacType.body)
-                        .foregroundStyle(MacColor.textSecondary)
-                }
-
-                // Login Card
-                VStack(spacing: MacSpace.lg) {
-                    if let errorMessage {
-                        HStack(spacing: MacSpace.sm) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(MacColor.error)
-                            Text(errorMessage)
-                                .font(MacType.captionStrong)
-                                .foregroundStyle(MacColor.error)
-                            Spacer()
+                        formPanel
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                } else {
+                    ScrollView {
+                        VStack(spacing: MacSpace.xxl) {
+                            compactBrand
+                            loginForm
+                                .frame(maxWidth: 440)
                         }
-                        .padding(MacSpace.md)
-                        .background(MacColor.error.opacity(0.1), in: RoundedRectangle(cornerRadius: MacRadius.small))
+                        .padding(.horizontal, MacSpace.xxl)
+                        .padding(.vertical, 52)
+                        .frame(maxWidth: .infinity, minHeight: proxy.size.height)
                     }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Email Address")
-                            .font(MacType.captionStrong)
-                            .foregroundStyle(MacColor.textSecondary)
-
-                        TextField("name@company.com", text: $email)
-                            .textFieldStyle(.roundedBorder)
-                            .font(MacType.body)
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("Password")
-                                .font(MacType.captionStrong)
-                                .foregroundStyle(MacColor.textSecondary)
-                            Spacer()
-                            Button("Forgot password?") {
-                                resetEmail = email
-                                showingResetPassword = true
-                            }
-                            .font(MacType.caption)
-                            .foregroundStyle(MacColor.accent)
-                            .buttonStyle(.plain)
-                        }
-
-                        SecureField("Enter your password", text: $password)
-                            .textFieldStyle(.roundedBorder)
-                            .font(MacType.body)
-                    }
-
-                    MacAsyncButton(
-                        variant: .prominent,
-                        size: .large,
-                        fullWidth: true
-                    ) {
-                        await performSignIn()
-                    } label: {
-                        Text("Sign In")
-                    }
-                    .keyboardShortcut(.defaultAction)
                 }
-                .padding(MacSpace.xl)
-                .frame(width: 400)
-                .background(MacColor.cardBackground)
-                .clipShape(RoundedRectangle(cornerRadius: MacRadius.large, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: MacRadius.large, style: .continuous)
-                        .strokeBorder(MacColor.cardBorder, lineWidth: 1)
-                )
-                .shadow(color: Color.black.opacity(0.06), radius: 20, y: 8)
             }
-            .padding(MacSpace.xxl)
         }
         .sheet(isPresented: $showingResetPassword) {
             resetPasswordSheet
                 .macObserved(repo: repo, auth: auth)
         }
+        .onAppear { focusedField = .email }
+    }
+
+    private var brandPanel: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Color(hex: 0x312E81), Color(hex: 0x4F46E5), Color(hex: 0x6366F1)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            Circle()
+                .stroke(Color.white.opacity(0.09), lineWidth: 1)
+                .frame(width: 520, height: 520)
+                .offset(x: -210, y: -250)
+            Circle()
+                .fill(Color.white.opacity(0.05))
+                .frame(width: 360, height: 360)
+                .offset(x: 230, y: 300)
+
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: MacSpace.md) {
+                    Image("AppLogo")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 48, height: 48)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.white.opacity(0.2)))
+                        .shadow(color: Color.black.opacity(0.18), radius: 12, y: 5)
+                    Text("Rosterra")
+                        .font(.system(size: 27, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+
+                Spacer()
+
+                Text("MANAGER WORKSPACE")
+                    .font(.system(size: 12, weight: .bold))
+                    .tracking(1.4)
+                    .foregroundStyle(Color.white.opacity(0.7))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(Color.white.opacity(0.1), in: Capsule())
+
+                Text("Run the week from one clear workspace.")
+                    .font(.system(size: 38, weight: .bold))
+                    .foregroundStyle(.white)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, MacSpace.xl)
+
+                Text("Plan rosters, approve time, manage your team and finish payroll without jumping between systems.")
+                    .font(.system(size: 18, weight: .regular))
+                    .foregroundStyle(Color.white.opacity(0.78))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, MacSpace.md)
+
+                VStack(alignment: .leading, spacing: MacSpace.md) {
+                    loginFeature("calendar.badge.checkmark", "Build and publish weekly rosters")
+                    loginFeature("clock.badge.checkmark", "Review timesheets and exceptions")
+                    loginFeature("banknote.fill", "Prepare and publish Australian pay runs")
+                }
+                .padding(.top, MacSpace.xxxl)
+
+                Spacer()
+
+                Label("Secure manager access", systemImage: "lock.shield.fill")
+                    .font(MacType.captionStrong)
+                    .foregroundStyle(Color.white.opacity(0.68))
+            }
+            .padding(48)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: MacRadius.extraLarge, style: .continuous))
+        .padding(.leading, MacSpace.xxl)
+        .padding(.vertical, MacSpace.xxl)
+    }
+
+    private func loginFeature(_ icon: String, _ title: String) -> some View {
+        HStack(spacing: MacSpace.md) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 32, height: 32)
+                .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
+            Text(title)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.9))
+        }
+    }
+
+    private var formPanel: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: MacSpace.xxxl)
+            loginForm
+                .frame(maxWidth: 440)
+                .padding(.horizontal, 52)
+            Spacer(minLength: MacSpace.xxxl)
+
+            Text("Rosterra Manager for macOS")
+                .font(MacType.caption)
+                .foregroundStyle(MacColor.textTertiary)
+                .padding(.bottom, MacSpace.xxl)
+        }
+    }
+
+    private var compactBrand: some View {
+        VStack(spacing: MacSpace.md) {
+            Image("AppLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 64, height: 64)
+                .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+                .shadow(color: Color.black.opacity(0.1), radius: 12, y: 4)
+            Text("Rosterra")
+                .font(MacType.display)
+                .foregroundStyle(MacColor.textPrimary)
+            Text("Manager workspace")
+                .font(MacType.captionStrong)
+                .foregroundStyle(MacColor.accent)
+        }
+    }
+
+    private var loginForm: some View {
+        VStack(alignment: .leading, spacing: MacSpace.xl) {
+            VStack(alignment: .leading, spacing: MacSpace.sm) {
+                Text("Welcome back")
+                    .font(.system(size: 32, weight: .bold))
+                    .foregroundStyle(MacColor.textPrimary)
+                Text("Sign in with your manager account to continue.")
+                    .font(MacType.body)
+                    .foregroundStyle(MacColor.textSecondary)
+            }
+
+            if let errorMessage {
+                HStack(alignment: .top, spacing: MacSpace.sm) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(MacColor.error)
+                    Text(errorMessage)
+                        .font(MacType.captionStrong)
+                        .foregroundStyle(MacColor.error)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .padding(MacSpace.md)
+                .background(MacColor.error.opacity(0.09), in: RoundedRectangle(cornerRadius: MacRadius.medium))
+                .overlay(RoundedRectangle(cornerRadius: MacRadius.medium).strokeBorder(MacColor.error.opacity(0.2)))
+            }
+
+            VStack(alignment: .leading, spacing: MacSpace.md) {
+                loginFieldLabel("Email address")
+                HStack(spacing: MacSpace.sm) {
+                    Image(systemName: "envelope.fill")
+                        .foregroundStyle(MacColor.textTertiary)
+                    TextField("manager@company.com", text: $email)
+                        .textFieldStyle(.plain)
+                        .font(MacType.body)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .textContentType(.emailAddress)
+                        .focused($focusedField, equals: .email)
+                        .onSubmit { focusedField = .password }
+                }
+                .padding(.horizontal, MacSpace.md)
+                .frame(height: 46)
+                .background(MacColor.cardBackgroundSecondary, in: RoundedRectangle(cornerRadius: MacRadius.medium))
+                .overlay(RoundedRectangle(cornerRadius: MacRadius.medium).strokeBorder(
+                    focusedField == .email ? MacColor.accent : MacColor.cardBorder,
+                    lineWidth: focusedField == .email ? 1.5 : 1
+                ))
+            }
+
+            VStack(alignment: .leading, spacing: MacSpace.md) {
+                HStack {
+                    loginFieldLabel("Password")
+                    Spacer()
+                    Button("Forgot password?") {
+                        resetEmail = email
+                        resetSuccessMessage = nil
+                        showingResetPassword = true
+                    }
+                    .font(MacType.captionStrong)
+                    .foregroundStyle(MacColor.accent)
+                    .buttonStyle(.plain)
+                }
+
+                HStack(spacing: MacSpace.sm) {
+                    Image(systemName: "lock.fill")
+                        .foregroundStyle(MacColor.textTertiary)
+                    Group {
+                        if showsPassword {
+                            TextField("Enter your password", text: $password)
+                        } else {
+                            SecureField("Enter your password", text: $password)
+                        }
+                    }
+                    .textFieldStyle(.plain)
+                    .font(MacType.body)
+                    .textContentType(.password)
+                    .focused($focusedField, equals: .password)
+                    .onSubmit { Task { await performSignIn() } }
+
+                    Button {
+                        showsPassword.toggle()
+                    } label: {
+                        Image(systemName: showsPassword ? "eye.slash.fill" : "eye.fill")
+                            .foregroundStyle(MacColor.textTertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(showsPassword ? "Hide password" : "Show password")
+                }
+                .padding(.horizontal, MacSpace.md)
+                .frame(height: 46)
+                .background(MacColor.cardBackgroundSecondary, in: RoundedRectangle(cornerRadius: MacRadius.medium))
+                .overlay(RoundedRectangle(cornerRadius: MacRadius.medium).strokeBorder(
+                    focusedField == .password ? MacColor.accent : MacColor.cardBorder,
+                    lineWidth: focusedField == .password ? 1.5 : 1
+                ))
+            }
+
+            MacAsyncButton(variant: .prominent, size: .large, fullWidth: true) {
+                await performSignIn()
+            } label: {
+                HStack(spacing: MacSpace.sm) {
+                    Text("Sign in to Manager Workspace")
+                    Image(systemName: "arrow.right")
+                }
+            }
+            .keyboardShortcut(.defaultAction)
+
+            HStack(spacing: 6) {
+                Image(systemName: "iphone")
+                Text("Staff members use Rosterra on iPhone.")
+            }
+            .font(MacType.caption)
+            .foregroundStyle(MacColor.textTertiary)
+            .frame(maxWidth: .infinity)
+        }
+        .padding(32)
+        .background(MacColor.cardBackground, in: RoundedRectangle(cornerRadius: MacRadius.extraLarge, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: MacRadius.extraLarge).strokeBorder(MacColor.cardBorder, lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.06), radius: 24, y: 10)
+    }
+
+    private func loginFieldLabel(_ title: String) -> some View {
+        Text(title)
+            .font(MacType.captionStrong)
+            .foregroundStyle(MacColor.textSecondary)
     }
 
     private func performSignIn() async {

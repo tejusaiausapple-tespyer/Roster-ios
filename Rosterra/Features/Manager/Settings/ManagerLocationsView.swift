@@ -159,7 +159,7 @@ struct ManagerLocationsView: View {
 }
 
 /// Add/edit form: suburb + state (capital city auto-fills, editable).
-private struct LocationEditorSheet: View {
+struct LocationEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let mode: ManagerLocationsView.EditorMode

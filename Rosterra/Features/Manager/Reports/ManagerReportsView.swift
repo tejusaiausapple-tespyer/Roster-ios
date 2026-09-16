@@ -101,12 +101,10 @@ struct ManagerReportsView: View {
         GeometryReader { _ in
             ZStack {
                 Theme.background.ignoresSafeArea()
-                VStack(spacing: 0) {
-                    controlBar
-                    reportScroll
-                    summaryBar
-                }
-                .frame(maxWidth: Theme.maxContentWidth)
+                reportScroll
+                    .phoneHeaderBar { controlBar }
+                    .safeAreaInset(edge: .bottom, spacing: 0) { summaryBar }
+                    .frame(maxWidth: Theme.maxContentWidth)
                 .frame(maxWidth: .infinity)
             }
         }

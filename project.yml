@@ -6,20 +6,33 @@ options:
   createIntermediateGroups: true
   groupSortPosition: top
 
+configFiles:
+  Debug: Config/Toolchain.xcconfig
+  Release: Config/Toolchain.xcconfig
+
 settings:
   base:
-    MARKETING_VERSION: "1.2.1"
-    CURRENT_PROJECT_VERSION: "36"
+    MARKETING_VERSION: "1.2.2"
+    CURRENT_PROJECT_VERSION: "37"
     SWIFT_VERSION: "5.0"
     DEVELOPMENT_TEAM: "GS2KGPX9P8"
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: NO
+  configs:
+    Release:
+      DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
 
 packages:
   Firebase:
     url: https://github.com/firebase/firebase-ios-sdk.git
     minVersion: "11.0.0"
     maxVersion: "13.0.0"
+  PhoneNumberKit:
+    url: https://github.com/PhoneNumberKit/PhoneNumberKit.git
+    from: "5.0.0"
+  PhoneNumberKitUI:
+    url: https://github.com/PhoneNumberKit/PhoneNumberKitUI.git
+    from: "1.0.0"
 
 schemes:
   Rosterra:
@@ -30,13 +43,19 @@ schemes:
         RosterraLiveActivity: all
     run:
       config: Debug
+      environmentVariables:
+        TOOLCHAINS: com.apple.dt.toolchain.XcodeDefault
     test:
       config: Debug
       gatherCoverageData: true
       targets:
         - RosterraTests
+      environmentVariables:
+        TOOLCHAINS: com.apple.dt.toolchain.XcodeDefault
     archive:
       config: Release
+      environmentVariables:
+        TOOLCHAINS: com.apple.dt.toolchain.XcodeDefault
 
 targets:
   Rosterra:
@@ -64,6 +83,10 @@ targets:
         product: FirebaseMessaging
       - package: Firebase
         product: FirebaseRemoteConfig
+      - package: PhoneNumberKit
+        product: PhoneNumberKit
+      - package: PhoneNumberKitUI
+        product: PhoneNumberKitUI
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.surainvestments.roster

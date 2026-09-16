@@ -83,6 +83,63 @@ extension View {
             .foregroundStyle(.black)
             .controlSize(size.controlSize)
     }
+
+    /// Accent-tinted Liquid Glass for a primary action inside a Mac detail
+    /// workspace. Kept separate from `.prominent`, whose neutral white style
+    /// is used by existing toolbar and form actions throughout the app.
+    @ViewBuilder
+    func macAccentGlassPill(size: MacButtonSize = .medium) -> some View {
+        if #available(iOS 26.0, *) {
+            self
+                .buttonStyle(.glassProminent)
+                .tint(MacColor.accent)
+                .controlSize(size.controlSize)
+        } else {
+            self.macButton(.prominent, size: size)
+        }
+    }
+
+    /// A glass capsule that keeps a visible outline and fill against white
+    /// detail headers, including while disabled.
+    func macVisibleGlassPill(
+        primary: Bool = false,
+        size: MacButtonSize = .medium
+    ) -> some View {
+        self.buttonStyle(MacVisibleGlassPillStyle(primary: primary, size: size))
+    }
+}
+
+private struct MacVisibleGlassPillStyle: ButtonStyle {
+    let primary: Bool
+    let size: MacButtonSize
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(size.font)
+            .foregroundStyle(primary ? MacColor.accent : MacColor.textPrimary)
+            .padding(.horizontal, size.horizontalPadding + 2)
+            .padding(.vertical, size.verticalPadding)
+            .background(
+                primary
+                    ? MacColor.accent.opacity(isEnabled ? 0.14 : 0.07)
+                    : MacColor.cardBackground.opacity(0.72),
+                in: Capsule()
+            )
+            .macGlassSurface(cornerRadius: MacRadius.pill)
+            .overlay(
+                Capsule().strokeBorder(
+                    primary
+                        ? MacColor.accent.opacity(isEnabled ? 0.42 : 0.2)
+                        : MacColor.cardBorder,
+                    lineWidth: 1
+                )
+            )
+            .contentShape(Capsule())
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .opacity(isEnabled ? 1 : 0.72)
+    }
 }
 
 @available(iOS 26.0, *)

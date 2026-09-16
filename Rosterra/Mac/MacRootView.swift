@@ -68,26 +68,68 @@ struct MacRootView: View {
 
     @ViewBuilder
     private var content: some View {
-        switch route {
-        case .setup:
-            MacSetupRequiredView()
-        case .restoring, .profileLoading:
-            MacSplashView()
-        case .login:
-            MacLoginView()
-        case .forcedPasswordChange:
-            MacChangePasswordView(isForced: true)
-        case .profileCompletion:
-            if let user = repo.currentUser {
-                MacProfileCompletionView(user: user)
-            } else {
+        if auth.uid != nil, repo.currentUser?.role == .staff {
+            // Staff profile and role-review requirements are completed in the
+            // iPhone app. Mac is a manager-only workspace and must not expose
+            // those staff gates before the role check.
+            MacManagerAccessRequiredView()
+        } else {
+            switch route {
+            case .setup:
+                MacSetupRequiredView()
+            case .restoring, .profileLoading:
                 MacSplashView()
+            case .login:
+                MacLoginView()
+            case .forcedPasswordChange:
+                MacChangePasswordView(isForced: true)
+            case .profileCompletion:
+                if let user = repo.currentUser {
+                    MacProfileCompletionView(user: user)
+                } else {
+                    MacSplashView()
+                }
+            case .deviceAuthGate:
+                MacDeviceAuthGateView()
+            case .managerMain:
+                MacShellView()
+            case .staffMain:
+                MacManagerAccessRequiredView()
             }
-        case .deviceAuthGate:
-            MacDeviceAuthGateView()
-        case .managerMain, .staffMain:
-            MacShellView()
         }
+    }
+}
+
+private struct MacManagerAccessRequiredView: View {
+    @Environment(AuthViewModel.self) private var auth
+
+    var body: some View {
+        VStack(spacing: MacSpace.xl) {
+            Image(systemName: "person.badge.shield.checkmark.fill")
+                .font(.system(size: 44, weight: .medium))
+                .foregroundStyle(MacColor.accent)
+                .frame(width: 82, height: 82)
+                .background(MacColor.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: MacRadius.extraLarge))
+
+            VStack(spacing: MacSpace.sm) {
+                Text("Manager access required")
+                    .font(MacType.pageTitle)
+                    .foregroundStyle(MacColor.textPrimary)
+                Text("Rosterra for Mac is the manager workspace. Staff can view rosters, timesheets and published payslips in the iPhone app.")
+                    .font(MacType.body)
+                    .foregroundStyle(MacColor.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 480)
+            }
+
+            Button("Sign Out") {
+                auth.signOut()
+            }
+            .macButton(.prominent)
+        }
+        .padding(MacSpace.xxxl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(MacColor.windowBackground)
     }
 }
 

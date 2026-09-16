@@ -32,13 +32,21 @@ struct PayslipsView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            Theme.background.ignoresSafeArea()
-
-            VStack(spacing: 0) {
-                monthBar
+        // NavigationStack hosts the toolbar `.principal` slot used by
+        // `.screenTitlePill` — without it the Payslips tab shows no title pill.
+        NavigationStack {
+            ZStack(alignment: .topLeading) {
+                Theme.background.ignoresSafeArea()
 
                 List {
+                    Section {
+                        TitlePillCollapseReporter()
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                    }
+                    .listSectionSpacing(0)
+
                     if loadFailed {
                         Banner(kind: .error,
                                title: "Couldn't load payslips",
@@ -73,43 +81,45 @@ struct PayslipsView: View {
                 }
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
+                .environment(\.defaultMinListRowHeight, 0)
+                .phoneHeaderBar { monthBar }
                 .macRefreshable { await load(forceRefresh: true) }
-            }
-            .zIndex(0)
+                .zIndex(0)
 
-            if isExpanded {
-                Color.black.opacity(0.001)
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                            isExpanded = false
+                if isExpanded {
+                    Color.black.opacity(0.001)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                isExpanded = false
+                            }
                         }
+                        .zIndex(1)
+
+                    VStack(alignment: .leading, spacing: 0) {
+                        Spacer()
+                            .frame(height: 60)
+
+                        FloatingMonthYearPicker(selectedMonthKey: $monthKey, isExpanded: $isExpanded)
+                            .padding(.horizontal, 16)
+                            .transition(.asymmetric(
+                                insertion: .scale(scale: 0.8, anchor: .topLeading).combined(with: .opacity),
+                                removal: .opacity
+                            ))
                     }
-                    .zIndex(1)
-
-                VStack(alignment: .leading, spacing: 0) {
-                    Spacer()
-                        .frame(height: 60)
-
-                    FloatingMonthYearPicker(selectedMonthKey: $monthKey, isExpanded: $isExpanded)
-                        .padding(.horizontal, 16)
-                        .transition(.asymmetric(
-                            insertion: .scale(scale: 0.8, anchor: .topLeading).combined(with: .opacity),
-                            removal: .opacity
-                        ))
+                    .ignoresSafeArea(edges: .bottom)
+                    .zIndex(2)
                 }
-                .ignoresSafeArea(edges: .bottom)
-                .zIndex(2)
             }
-        }
-        .navigationTitle("Payslips")
-        .navigationBarTitleDisplayMode(.inline)
-        .screenTitlePill("Payslips", icon: "banknote", fraction: 0)
-        .task(id: monthKey) { await load() }
-        .sheet(item: $activeSheet) { sheet in
-            switch sheet {
-            case .pdf(let slip):
-                PayslipPDFSheet(slip: slip, isManager: false)
+            .navigationTitle("Payslips")
+            .navigationBarTitleDisplayMode(.inline)
+            .screenTitlePill("Payslips", icon: "banknote", fraction: 0)
+            .task(id: monthKey) { await load() }
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .pdf(let slip):
+                    PayslipPDFSheet(slip: slip, isManager: false)
+                }
             }
         }
     }

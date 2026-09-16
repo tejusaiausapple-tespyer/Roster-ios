@@ -7,6 +7,7 @@ import SwiftUI
 struct MainTabView: View {
     @Environment(AppRouter.self) private var router
     @Environment(RosterRepository.self) private var repo
+    @Environment(TitlePillCollapse.self) private var titlePillCollapse
     @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
 
     var body: some View {
@@ -20,7 +21,10 @@ struct MainTabView: View {
             }
         }
         .tint(Theme.brand)
-        .onChange(of: router.selectedTab) { Haptics.tabChange() }
+        .onChange(of: router.selectedTab) {
+            titlePillCollapse.fraction = 0
+            Haptics.tabChange()
+        }
     }
 
     private var phoneTabs: some View {
@@ -42,6 +46,7 @@ struct MainTabView: View {
                 .tabItem { Label(AppRouter.Tab.account.title, systemImage: AppRouter.Tab.account.icon) }
                 .tag(AppRouter.Tab.account.rawValue)
         }
+        .phoneTabBarMinimizeOnScroll()
     }
 
     private var splitChrome: some View {
@@ -142,6 +147,7 @@ struct TabScroll<Content: View>: View {
             .tracksTitlePillCollapse()
         }
         .platformScrollIndicators()
+        .phoneScrollEdgeFade()
         .background(Theme.background.ignoresSafeArea())
     }
 }

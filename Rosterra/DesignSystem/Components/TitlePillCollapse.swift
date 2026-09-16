@@ -26,14 +26,17 @@ final class TitlePillCollapse {
 private struct ScreenTitlePillToolbar: ViewModifier {
     let title: String
     let icon: String?
-    let fraction: CGFloat
+    @Environment(TitlePillCollapse.self) private var collapse
 
     func body(content: Content) -> some View {
-        content.toolbar {
-            ToolbarItem(placement: .principal) {
-                ScreenTitlePill(title: title, icon: icon, fraction: fraction)
+        content
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    ScreenTitlePill(title: title, icon: icon, fraction: collapse.fraction)
+                }
             }
-        }
+            .phoneToolbarMinimizeOnScroll()
+            .phoneScrollEdgeFade()
     }
 }
 
@@ -41,13 +44,11 @@ extension View {
     /// Adds the collapsing screen title pill to the navigation bar. Replaces a
     /// manual `.toolbar { ToolbarItem(placement: .principal) { ScreenTitlePill } }`.
     ///
-    /// IMPORTANT: pass `fraction` from a `@Environment(TitlePillCollapse.self)`
-    /// read *in the screen's own `View` body* (as this argument). Toolbar
-    /// `.principal` content is only rebuilt when the view that declares the
-    /// toolbar re-renders; reading the fraction as this argument establishes the
-    /// observation dependency that drives that re-render.
-    func screenTitlePill(_ title: String, icon: String? = nil, fraction: CGFloat) -> some View {
-        modifier(ScreenTitlePillToolbar(title: title, icon: icon, fraction: fraction))
+    /// Reads collapse from `TitlePillCollapse` in the environment so every tab
+    /// fades the header on scroll without each screen passing `fraction`.
+    /// The `fraction` argument is ignored and kept so existing call sites compile.
+    func screenTitlePill(_ title: String, icon: String? = nil, fraction _: CGFloat = 0) -> some View {
+        modifier(ScreenTitlePillToolbar(title: title, icon: icon))
     }
 }
 

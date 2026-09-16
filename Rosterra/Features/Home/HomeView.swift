@@ -3,6 +3,7 @@ import SwiftUI
 struct HomeView: View {
     @Environment(RosterRepository.self) private var repo
     @Environment(AppRouter.self) private var router
+    @Environment(TitlePillCollapse.self) private var titlePillCollapse
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var activeSheet: HomeSheet?
@@ -75,15 +76,7 @@ struct HomeView: View {
             .toolbar {
                 if PlatformUI.isPhone {
                     ToolbarItem(placement: .principal) {
-                        Text(companyName)
-                            .font(.headline.weight(.bold))
-                            .foregroundStyle(Theme.brand)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 9)
-                            .glassCapsule()
-                            .fixedSize(horizontal: true, vertical: false)
+                        ScreenTitlePill(title: companyName, fraction: titlePillCollapse.fraction)
                             .accessibilityAddTraits(.isHeader)
                     }
                 } else {
@@ -127,9 +120,11 @@ struct HomeView: View {
             .padding(.horizontal, Theme.screenPadding)
             .padding(.top, 12)
             .padding(.bottom, 32)
+            .tracksTitlePillCollapse()
         }
         .phoneHomeSwipeActions()
         .platformScrollIndicators()
+        .phoneScrollEdgeFade()
         .background(Theme.background.ignoresSafeArea())
     }
 

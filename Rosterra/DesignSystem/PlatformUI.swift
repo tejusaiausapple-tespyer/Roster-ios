@@ -124,20 +124,72 @@ extension View {
         #endif
     }
 
-    /// iOS 27 can reclaim vertical space by minimizing the navigation bar as
-    /// the staff Home dashboard scrolls. Older SDKs and operating systems keep
-    /// the existing fixed bar.
+    /// iOS 26+ Liquid Glass fade where scroll content meets the navigation bar
+    /// and tab bar. No-op on Mac and older systems.
     @ViewBuilder
-    func phoneHomeToolbarBehavior() -> some View {
-        #if compiler(>=6.4)
-        if #available(iOS 27.0, *), PlatformUI.isPhone {
-            toolbarMinimizeBehavior(.onScrollDown, for: .navigationBar)
+    func phoneScrollEdgeFade() -> some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *), PlatformUI.isPhone {
+            scrollEdgeEffectStyle(.soft, for: .top)
+                .scrollEdgeEffectStyle(.soft, for: .bottom)
         } else {
             self
         }
         #else
         self
         #endif
+    }
+
+    /// Pins a custom header so iOS 26 applies the same scroll-edge fade the
+    /// navigation bar already uses. Falls back to `safeAreaInset` elsewhere.
+    @ViewBuilder
+    func phoneHeaderBar<Header: View>(@ViewBuilder header: () -> Header) -> some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *), PlatformUI.isPhone {
+            safeAreaBar(edge: .top, spacing: 0, content: header)
+        } else {
+            safeAreaInset(edge: .top, spacing: 0, content: header)
+        }
+        #else
+        safeAreaInset(edge: .top, spacing: 0, content: header)
+        #endif
+    }
+
+    /// Minimize the bottom tab bar as content scrolls. Tab-bar-only — headers
+    /// use `phoneToolbarMinimizeOnScroll`.
+    @ViewBuilder
+    func phoneTabBarMinimizeOnScroll() -> some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *), PlatformUI.isPhone {
+            tabBarMinimizeBehavior(.onScrollDown)
+        } else {
+            self
+        }
+        #else
+        self
+        #endif
+    }
+
+    /// Minimize the navigation bar (title pill) as content scrolls.
+    @ViewBuilder
+    func phoneToolbarMinimizeOnScroll() -> some View {
+        #if compiler(>=6.4)
+        if #available(iOS 27.0, *), PlatformUI.isPhone {
+            toolbarMinimizationBehavior(.onScrollDown, for: .navigationBar)
+        } else {
+            self
+        }
+        #else
+        self
+        #endif
+    }
+
+    /// iOS 27 can reclaim vertical space by minimizing the navigation bar as
+    /// the staff Home dashboard scrolls. Older SDKs and operating systems keep
+    /// the existing fixed bar.
+    @ViewBuilder
+    func phoneHomeToolbarBehavior() -> some View {
+        phoneToolbarMinimizeOnScroll()
     }
 
     /// Coordinates swipe actions on custom ScrollView rows, introduced in the

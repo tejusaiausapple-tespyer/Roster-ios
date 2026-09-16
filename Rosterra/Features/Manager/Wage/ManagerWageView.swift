@@ -125,34 +125,33 @@ struct ManagerWageView: View {
     }
 
     private var rootContent: some View {
-        VStack(spacing: 0) {
+        List {
+            // Zero-footprint scroll probe: own section with no spacing +
+            // defaultMinListRowHeight below. A loose row would form an
+            // implicit section (44pt min row height + section spacing)
+            // and push the first card ~100pt down.
+            Section {
+                TitlePillCollapseReporter()
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
+            .listSectionSpacing(0)
+            switch segment {
+            case .awards: awardsSection
+            case .lines: linesSections
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .environment(\.defaultMinListRowHeight, 1)
+        .phoneHeaderBar {
             Picker("Section", selection: $segment) {
                 ForEach(Segment.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-
-            List {
-                // Zero-footprint scroll probe: own section with no spacing +
-                // defaultMinListRowHeight below. A loose row would form an
-                // implicit section (44pt min row height + section spacing)
-                // and push the first card ~100pt down.
-                Section {
-                    TitlePillCollapseReporter()
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                }
-                .listSectionSpacing(0)
-                switch segment {
-                case .awards: awardsSection
-                case .lines: linesSections
-                }
-            }
-            .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
-            .environment(\.defaultMinListRowHeight, 1)
         }
         .contentLane()
         .background(Theme.background.ignoresSafeArea())

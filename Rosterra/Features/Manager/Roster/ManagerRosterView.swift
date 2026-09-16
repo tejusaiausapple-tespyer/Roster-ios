@@ -1029,33 +1029,31 @@ struct ManagerRosterView: View {
 
     private var agendaLayout: some View {
         ZStack {
-            VStack(spacing: 0) {
-                headerSection
+            ScrollView {
+                VStack(spacing: 12) {
+                    let dayShifts = shifts(on: selectedDayKey)
 
-                ScrollView {
-                    VStack(spacing: 12) {
-                        let dayShifts = shifts(on: selectedDayKey)
-
-                        if repo.isLoading {
-                            SkeletonCard()
-                            SkeletonCard()
-                        } else if dayShifts.isEmpty {
-                            emptyStateCard
-                        } else {
-                            ForEach(dayShifts) { shift in
-                                shiftCardRow(shift)
-                            }
+                    if repo.isLoading {
+                        SkeletonCard()
+                        SkeletonCard()
+                    } else if dayShifts.isEmpty {
+                        emptyStateCard
+                    } else {
+                        ForEach(dayShifts) { shift in
+                            shiftCardRow(shift)
                         }
                     }
-                    .padding(.horizontal, Theme.screenPadding)
-                    .padding(.top, 12)
-                    .padding(.bottom, 80)
-                    .tracksTitlePillCollapse()
                 }
-                .macRefreshable {
-                    await repo.refreshFromServer()
-                }
+                .padding(.horizontal, Theme.screenPadding)
+                .padding(.top, 12)
+                .padding(.bottom, 80)
+                .tracksTitlePillCollapse()
             }
+            .macRefreshable {
+                await repo.refreshFromServer()
+            }
+            .phoneHeaderBar { headerSection }
+
             createShiftFAB
         }
     }
