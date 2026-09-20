@@ -31,6 +31,12 @@ struct RootView: View {
                 @unknown default: break
                 }
             }
+            // Re-check immediately after login while the scene stays `.active`
+            // (launch alone would otherwise miss a mid-session credential change).
+            .onChange(of: auth.uid) { _, newUID in
+                guard newUID != nil else { return }
+                Task { await versionCheck.check() }
+            }
             .fullScreenCover(isPresented: Binding(
                 get: { versionCheck.isUpdateRequired },
                 set: { _ in }

@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// Full-screen, non-dismissable gate shown when the installed build is below
-/// `ios_minimum_supported_version` (or `ios_force_update` is set). Presented
-/// via `.fullScreenCover` from `RootView` — there is no "Later" here on purpose.
+/// the supported floor or a force-update targets the public App Store version.
+/// Presented via `.fullScreenCover` from `RootView` — there is no "Later" here
+/// on purpose.
 struct UpdateRequiredView: View {
     let minimumVersion: String
 
@@ -18,7 +19,7 @@ struct UpdateRequiredView: View {
                     Text("Update Required")
                         .font(.title2.weight(.bold))
                         .foregroundStyle(Theme.textPrimary)
-                    Text("A new version of Rosterra is required to continue. Update to version \(minimumVersion) or later from the \(AppConfig.appStoreName).")
+                    Text("This version of Rosterra can no longer be used. Update to version \(minimumVersion) or later from the \(AppConfig.appStoreName) to continue.")
                         .font(.subheadline)
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.center)

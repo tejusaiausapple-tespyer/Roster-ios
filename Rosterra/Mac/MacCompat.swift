@@ -259,6 +259,16 @@ extension PayslipPDFService {
         )
         return render(payslip, settings: settings)
     }
+
+    static func generatePayRunPDFData(for slips: [Payslip], company: MacCompanyDetails?) -> Data? {
+        guard !slips.isEmpty else { return nil }
+        let settings = AppSettings(
+            companyName: company?.name.isEmpty == false ? (company?.name ?? "Rosterra") : "Rosterra",
+            businessAddress: company?.address ?? "",
+            abn: company?.abn ?? ""
+        )
+        return renderPayRun(slips, settings: settings)
+    }
 }
 
 extension AuthViewModel {

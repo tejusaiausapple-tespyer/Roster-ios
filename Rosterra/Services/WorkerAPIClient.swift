@@ -16,6 +16,11 @@ enum WorkerAPIError: LocalizedError {
     }
 }
 
+struct StaffShiftHandover: Equatable, Sendable {
+    let shiftId: String
+    let names: [String]
+}
+
 /// Talks to the same Cloudflare Worker endpoints the web app uses for the three
 /// staff-facing server operations. All requests are authenticated with the
 /// Firebase ID token, exactly like the web client.
@@ -77,6 +82,21 @@ struct WorkerAPIClient {
             throw WorkerAPIError.server(
                 (result["error"] as? String) ?? "Availability could not be saved. Please try again.")
         }
+    }
+
+    /// Private lookup for the Home handover banner. The Worker verifies that
+    /// this user owns the published shift and that it is currently in its
+    /// final 30 minutes before returning next-starting staff names.
+    func shiftHandover(shiftId: String) async throws -> StaffShiftHandover? {
+        let result = try await post(path: "api/staff/shift-handover", body: ["shiftId": shiftId])
+        guard result["ok"] as? Bool == true else {
+            throw WorkerAPIError.server((result["error"] as? String) ?? "Handover details are unavailable.")
+        }
+        guard let handover = result["handover"] as? [String: Any],
+              let rawNames = handover["names"] as? [Any] else { return nil }
+        let names = rawNames.compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return names.isEmpty ? nil : StaffShiftHandover(shiftId: shiftId, names: names)
     }
 
     /// POST /api/complete-password-change — clears the first-login flag.

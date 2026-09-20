@@ -13,6 +13,10 @@ struct MacManagerTimesheetsWorkspace: View {
     @State private var showingRejectionSheet = false
     @State private var showingBulkConfirmation = false
     @State private var isBulkApproving = false
+    @State private var isEditingTimes = false
+    @State private var editedStart = Date()
+    @State private var editedEnd = Date()
+    @State private var editedBreak = 0
 
     init() {}
 
@@ -120,6 +124,7 @@ struct MacManagerTimesheetsWorkspace: View {
         }
         .onAppear { maintainSelection() }
         .onChange(of: filteredTimesheets.map(\.id)) { _, _ in maintainSelection() }
+        .onChange(of: selectedTimesheetID) { _, _ in isEditingTimes = false }
         .sheet(isPresented: $showingRejectionSheet) {
             rejectionSheet
                 .macObserved(repo: repo, toasts: toasts)
@@ -487,6 +492,10 @@ struct MacManagerTimesheetsWorkspace: View {
                         )
                         inspectorMetric("Est. cost", value: Self.aud(timesheet.workedHours * rate))
                     }
+
+                    if timesheet.isManagerTimeEditable {
+                        correctionCard(timesheet, shift: shift)
+                    }
                 }
 
                 if let notes = timesheet.staffNotes, !notes.isEmpty {
@@ -531,6 +540,7 @@ struct MacManagerTimesheetsWorkspace: View {
                         }
                     }
                     .padding(.top, MacSpace.sm)
+                    .disabled(isEditingTimes)
                 }
             }
             .padding(MacSpace.xl)
@@ -571,6 +581,89 @@ struct MacManagerTimesheetsWorkspace: View {
         .frame(maxWidth: .infinity)
     }
 
+    private func correctionCard(_ timesheet: Timesheet, shift: Shift?) -> some View {
+        MacCard(title: "Submitted time correction", icon: "pencil.line") {
+            if isEditingTimes {
+                VStack(spacing: MacSpace.md) {
+                    HStack {
+                        Text("Start")
+                            .font(MacType.body)
+                            .foregroundStyle(MacColor.textSecondary)
+                        Spacer()
+                        DatePicker("Start", selection: $editedStart, displayedComponents: .hourAndMinute)
+                            .labelsHidden()
+                    }
+
+                    HStack {
+                        Text("End")
+                            .font(MacType.body)
+                            .foregroundStyle(MacColor.textSecondary)
+                        Spacer()
+                        DatePicker("End", selection: $editedEnd, displayedComponents: .hourAndMinute)
+                            .labelsHidden()
+                    }
+
+                    Stepper(
+                        "Break: \(editedBreak)m",
+                        value: $editedBreak,
+                        in: BusinessRules.breakMinutesMin...BusinessRules.breakMinutesMax,
+                        step: BusinessRules.breakMinutesStep
+                    )
+                    .font(MacType.body)
+                    .foregroundStyle(MacColor.textSecondary)
+
+                    HStack {
+                        Text("Corrected hours")
+                            .font(MacType.captionStrong)
+                            .foregroundStyle(MacColor.textSecondary)
+                        Spacer()
+                        Text(RosterFormat.hours(correctedWorkedHours))
+                            .font(MacType.monoStrong)
+                            .foregroundStyle(MacColor.textPrimary)
+                    }
+
+                    HStack {
+                        Button("Cancel") {
+                            withAnimation(MacMotion.fast) { isEditingTimes = false }
+                        }
+                        .macButton(.ghost, size: .small)
+
+                        Spacer()
+
+                        MacAsyncButton(variant: .prominent, size: .small) {
+                            await saveCorrection(timesheet)
+                        } label: {
+                            Text("Save correction")
+                        }
+                    }
+                }
+            } else {
+                HStack(spacing: MacSpace.md) {
+                    Text(timesheet.status == .approved
+                         ? "Amend the approved start, finish or break. Unpublished payroll drafts will detect the revised hours on refresh."
+                         : "Correct a staff member’s submitted start, finish or break before approval.")
+                        .font(MacType.caption)
+                        .foregroundStyle(MacColor.textSecondary)
+                    Spacer(minLength: MacSpace.md)
+                    Button {
+                        beginCorrection(timesheet, shift: shift)
+                    } label: {
+                        Label("Adjust submitted times", systemImage: "pencil.line")
+                    }
+                    .macButton(.bordered, size: .small)
+                }
+            }
+        }
+    }
+
+    private var correctedWorkedHours: Double {
+        BusinessRules.calcWorkedHours(
+            start: TimeConvert.hhmm(from: editedStart),
+            end: TimeConvert.hhmm(from: editedEnd),
+            breakMinutes: editedBreak
+        )
+    }
+
     private func inspectorMetric(_ title: String, value: String, tint: Color = MacColor.textPrimary) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title.uppercased())
@@ -600,6 +693,33 @@ struct MacManagerTimesheetsWorkspace: View {
     }
 
     // MARK: - Actions
+
+    private func beginCorrection(_ timesheet: Timesheet, shift: Shift?) {
+        let dates = TimeConvert.pickerDates(
+            start: timesheet.actualStart,
+            end: timesheet.actualEnd,
+            shiftDateKey: shift?.date ?? ""
+        )
+        editedStart = dates.start
+        editedEnd = dates.end
+        editedBreak = timesheet.actualBreakMinutes
+        withAnimation(MacMotion.fast) { isEditingTimes = true }
+    }
+
+    private func saveCorrection(_ timesheet: Timesheet) async {
+        do {
+            try await repo.managerAdjustTimesheet(
+                id: timesheet.id,
+                actualStart: TimeConvert.hhmm(from: editedStart),
+                actualEnd: TimeConvert.hhmm(from: editedEnd),
+                breakMinutes: editedBreak
+            )
+            withAnimation(MacMotion.fast) { isEditingTimes = false }
+            toasts.show("Times corrected", style: .success)
+        } catch {
+            toasts.show("Couldn’t save correction. \(error.localizedDescription)", style: .error)
+        }
+    }
 
     private var rejectionSheet: some View {
         VStack(alignment: .leading, spacing: MacSpace.lg) {

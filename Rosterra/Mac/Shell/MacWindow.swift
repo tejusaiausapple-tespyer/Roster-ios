@@ -201,4 +201,269 @@ struct MacWindowConfigurator: UIViewControllerRepresentable {
         }
     }
 }
+
+/// Forces a SwiftUI `.sheet` on Mac Catalyst to ~`widthFraction` × `heightFraction`
+/// of the key app window. Frame hints alone are often ignored by Catalyst sheets.
+struct MacFractionalSheetSizer: UIViewControllerRepresentable {
+    var widthFraction: CGFloat
+    var heightFraction: CGFloat
+
+    func makeUIViewController(context: Context) -> Controller {
+        Controller(widthFraction: widthFraction, heightFraction: heightFraction)
+    }
+
+    func updateUIViewController(_ uiViewController: Controller, context: Context) {
+        uiViewController.widthFraction = widthFraction
+        uiViewController.heightFraction = heightFraction
+        uiViewController.applyPreferredSizeIfNeeded()
+    }
+
+    static func activeWindowSize() -> CGSize {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+        if let window = scene?.windows.first(where: \.isKeyWindow) ?? scene?.windows.first {
+            return window.bounds.size
+        }
+        if let scene {
+            return scene.coordinateSpace.bounds.size
+        }
+        return CGSize(width: 1440, height: 900)
+    }
+
+    final class Controller: UIViewController {
+        var widthFraction: CGFloat
+        var heightFraction: CGFloat
+
+        init(widthFraction: CGFloat, heightFraction: CGFloat) {
+            self.widthFraction = widthFraction
+            self.heightFraction = heightFraction
+            super.init(nibName: nil, bundle: nil)
+            view.backgroundColor = .clear
+            view.isUserInteractionEnabled = false
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            applyPreferredSizeIfNeeded()
+        }
+
+        override func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            applyPreferredSizeIfNeeded()
+        }
+
+        func applyPreferredSizeIfNeeded() {
+            guard let host = sheetHostController() else { return }
+            let windowSize = view.window?.bounds.size
+                ?? Self.parentWindowSize(from: host)
+                ?? MacFractionalSheetSizer.activeWindowSize()
+            let target = CGSize(
+                width: max(960, windowSize.width * widthFraction),
+                height: max(680, windowSize.height * heightFraction)
+            )
+            if abs(host.preferredContentSize.width - target.width) > 1
+                || abs(host.preferredContentSize.height - target.height) > 1 {
+                host.preferredContentSize = target
+            }
+        }
+
+        private func sheetHostController() -> UIViewController? {
+            var current: UIViewController? = self
+            while let controller = current {
+                if controller.presentingViewController != nil {
+                    return controller
+                }
+                if let parent = controller.parent {
+                    current = parent
+                    continue
+                }
+                return controller
+            }
+            return nil
+        }
+
+        private static func parentWindowSize(from host: UIViewController) -> CGSize? {
+            if let size = host.view.window?.bounds.size, size.width > 0, size.height > 0 {
+                return size
+            }
+            if let size = host.presentingViewController?.view.window?.bounds.size,
+               size.width > 0, size.height > 0 {
+                return size
+            }
+            return nil
+        }
+    }
+}
+
+/// Native Mac print panel for PDF files under Mac Catalyst.
+///
+/// `UIPrintInteractionController` is unreliable on Catalyst and often shows
+/// AppKit's "This application does not support printing" alert. This helper
+/// talks to AppKit (`NSPrintOperation`) through the Objective-C runtime instead.
+@MainActor
+enum MacPDFPrinter {
+    /// Presents the Mac print dialog for the PDF at `url`.
+    @discardableResult
+    static func print(at url: URL, jobName: String) -> Bool {
+        guard let data = try? Data(contentsOf: url), !data.isEmpty else { return false }
+        if printWithAppKit(data: data, jobName: jobName) {
+            return true
+        }
+        // Fallback: open in Preview so the user can still File → Print.
+        UIApplication.shared.open(url)
+        return true
+    }
+
+    private static func printWithAppKit(data: Data, jobName: String) -> Bool {
+        guard let imageView = makePDFImageView(data: data) else { return false }
+
+        guard
+            let printInfoClass = NSClassFromString("NSPrintInfo") as? NSObject.Type,
+            let shared = printInfoClass.perform(NSSelectorFromString("sharedPrintInfo"))?
+                .takeUnretainedValue() as? NSObject,
+            let printInfo = shared.perform(NSSelectorFromString("copy"))?
+                .takeUnretainedValue() as? NSObject
+        else { return false }
+
+        printInfo.setValue(jobName, forKey: "jobName")
+        printInfo.setValue(0, forKey: "orientation") // NSPortraitOrientation
+        printInfo.setValue(2, forKey: "horizontalPagination") // NSFitPagination
+        printInfo.setValue(2, forKey: "verticalPagination")
+
+        guard let opClass = NSClassFromString("NSPrintOperation") as? NSObject.Type else {
+            return false
+        }
+
+        let makeSel = NSSelectorFromString("printOperationWithView:printInfo:")
+        guard
+            opClass.responds(to: makeSel),
+            let operation = opClass.perform(makeSel, with: imageView, with: printInfo)?
+                .takeUnretainedValue() as? NSObject
+        else { return false }
+
+        operation.setValue(true, forKey: "showsPrintPanel")
+        operation.setValue(true, forKey: "showsProgressPanel")
+        if operation.responds(to: NSSelectorFromString("setJobTitle:")) {
+            operation.setValue(jobName, forKey: "jobTitle")
+        }
+
+        let runSel = NSSelectorFromString("runOperation")
+        guard operation.responds(to: runSel) else { return false }
+        _ = operation.perform(runSel)
+        return true
+    }
+
+    /// Stacks every PDF page into one tall image so multi-page pay runs print fully.
+    private static func makePDFImageView(data: Data) -> NSObject? {
+        guard
+            let provider = CGDataProvider(data: data as CFData),
+            let pdf = CGPDFDocument(provider),
+            pdf.numberOfPages > 0,
+            let firstPage = pdf.page(at: 1)
+        else {
+            return makeImageView(fromImageData: data, forceSize: nil)
+        }
+
+        let pageSize = firstPage.getBoxRect(.mediaBox).size
+        let pageCount = pdf.numberOfPages
+        let canvasSize = CGSize(
+            width: max(pageSize.width, 1),
+            height: max(pageSize.height, 1) * CGFloat(pageCount)
+        )
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 2
+        format.opaque = true
+        let combined = UIGraphicsImageRenderer(size: canvasSize, format: format).image { ctx in
+            UIColor.white.setFill()
+            ctx.fill(CGRect(origin: .zero, size: canvasSize))
+
+            for index in 1...pageCount {
+                guard let page = pdf.page(at: index) else { continue }
+                let box = page.getBoxRect(.mediaBox)
+                let y = pageSize.height * CGFloat(index - 1)
+                ctx.cgContext.saveGState()
+                ctx.cgContext.translateBy(x: 0, y: y + pageSize.height)
+                ctx.cgContext.scaleBy(x: 1, y: -1)
+                let s = min(pageSize.width / max(box.width, 1), pageSize.height / max(box.height, 1))
+                ctx.cgContext.translateBy(
+                    x: (pageSize.width - box.width * s) / 2,
+                    y: (pageSize.height - box.height * s) / 2
+                )
+                ctx.cgContext.scaleBy(x: s, y: s)
+                ctx.cgContext.drawPDFPage(page)
+                ctx.cgContext.restoreGState()
+            }
+        }
+
+        guard let png = combined.pngData() else {
+            return makeImageView(fromImageData: data, forceSize: nil)
+        }
+        return makeImageView(fromImageData: png, forceSize: canvasSize)
+    }
+
+    private static func makeImageView(fromImageData data: Data, forceSize: CGSize?) -> NSObject? {
+        guard
+            let imageClass = NSClassFromString("NSImage") as? NSObject.Type,
+            let imageAlloc = imageClass.perform(NSSelectorFromString("alloc"))?
+                .takeUnretainedValue() as? NSObject,
+            let image = imageAlloc.perform(NSSelectorFromString("initWithData:"), with: data)?
+                .takeUnretainedValue() as? NSObject
+        else { return nil }
+
+        let size: CGSize = {
+            if let forceSize, forceSize.width > 0, forceSize.height > 0 { return forceSize }
+            return (image.value(forKey: "size") as? CGSize) ?? CGSize(width: 595, height: 842)
+        }()
+
+        guard
+            let viewClass = NSClassFromString("NSImageView") as? NSObject.Type,
+            let viewAlloc = viewClass.perform(NSSelectorFromString("alloc"))?
+                .takeUnretainedValue() as? NSObject
+        else { return nil }
+
+        let frame = CGRect(origin: .zero, size: size)
+        let view: NSObject
+        if let inited = invokeInitWithFrame(viewAlloc, frame: frame) {
+            view = inited
+        } else if let inited = viewAlloc.perform(NSSelectorFromString("init"))?
+            .takeUnretainedValue() as? NSObject {
+            _ = invokeSetFrame(inited, frame)
+            view = inited
+        } else {
+            return nil
+        }
+
+        view.setValue(image, forKey: "image")
+        view.setValue(2, forKey: "imageScaling")
+        return view
+    }
+
+    private static func invokeInitWithFrame(_ object: NSObject, frame: CGRect) -> NSObject? {
+        let selector = NSSelectorFromString("initWithFrame:")
+        let cls: AnyClass? = object_getClass(object)
+        guard let method = (cls.flatMap { class_getInstanceMethod($0, selector) })
+                ?? class_getInstanceMethod(type(of: object), selector)
+        else { return nil }
+        let imp = method_getImplementation(method)
+        typealias Fn = @convention(c) (AnyObject, Selector, CGRect) -> Unmanaged<AnyObject>?
+        return unsafeBitCast(imp, to: Fn.self)(object, selector, frame)?
+            .takeUnretainedValue() as? NSObject
+    }
+
+    private static func invokeSetFrame(_ object: NSObject, _ frame: CGRect) -> Bool {
+        let selector = NSSelectorFromString("setFrame:")
+        let cls: AnyClass? = object_getClass(object)
+        guard let method = (cls.flatMap { class_getInstanceMethod($0, selector) })
+                ?? class_getInstanceMethod(type(of: object), selector)
+        else { return false }
+        let imp = method_getImplementation(method)
+        typealias Fn = @convention(c) (AnyObject, Selector, CGRect) -> Void
+        unsafeBitCast(imp, to: Fn.self)(object, selector, frame)
+        return true
+    }
+}
 #endif

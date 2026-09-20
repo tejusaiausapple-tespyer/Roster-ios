@@ -51,6 +51,27 @@ enum ReleaseHistory {
 
     static let all: [AppRelease] = [
         AppRelease(
+            version: "2.1",
+            build: "38",
+            releaseDate: releaseDate(2026, 9, 16),
+            updateType: .major,
+            summary: "A new Rosterra identity and a major upgrade across iPhone, iPad and Mac.",
+            features: [
+                "A completely new Rosterra app logo and refreshed visual identity across iPhone, iPad and Mac",
+                "iOS now checks the public App Store version on launch, foreground and login, with a secure mandatory-update gate for unsupported versions",
+                "Mac Payroll can generate, preview, share and print approved pay run PDFs containing period totals, staff earnings, final hours and recorded adjustments",
+                "Mac Company Details has been redesigned as a full-width, no-scroll business workspace",
+                "The Mac manager workspace includes expanded payroll, staff, reporting, roster and business-management workflows",
+            ],
+            bugFixes: [
+                "Pay run PDFs generate without blocking the app and use the native Mac print workflow",
+                "PDF previews use the available workspace and scale documents to a readable width",
+                "The Rosterra logo remains visible when the Mac sidebar is collapsed",
+                "Version-check failures safely preserve access unless a verified supported-version floor requires an update",
+            ],
+            commitHash: "pending"
+        ),
+        AppRelease(
             version: "1.2.2",
             build: "37",
             releaseDate: releaseDate(2026, 9, 15),

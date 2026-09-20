@@ -261,8 +261,9 @@ struct ManagerTimesheetDetailSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            // Correction editor: fix staff mistakes without a reject round-trip.
-            if timesheet.status == .pending {
+            // Correction editor: fix staff mistakes before approval or amend
+            // an approved record when later evidence shows the hours were wrong.
+            if liveTimesheet.isManagerTimeEditable {
                 Divider().overlay(Theme.separator)
                 if isEditingTimes {
                     editTimesForm
@@ -278,7 +279,10 @@ struct ManagerTimesheetDetailSheet: View {
                         editedBreak = liveTimesheet.actualBreakMinutes
                         withAnimation { isEditingTimes = true }
                     } label: {
-                        Label("Adjust submitted times", systemImage: "pencil.line")
+                        Label(
+                            liveTimesheet.status == .approved ? "Amend approved times" : "Adjust submitted times",
+                            systemImage: "pencil.line"
+                        )
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(Theme.brand)
                     }

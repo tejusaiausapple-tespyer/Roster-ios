@@ -137,6 +137,14 @@ struct UserAvailability: Codable, Equatable {
 }
 
 extension AppUser {
+    /// The availability that applies to one roster week. A submitted override
+    /// wins over the recurring template; accounts without either retain the
+    /// product default. Shared by the full manager matrix and compact roster
+    /// preview so the two views cannot disagree.
+    func resolvedAvailability(forWeekKey weekKey: String) -> UserAvailability {
+        weeklyAvailability[weekKey] ?? availability ?? .defaultAvailability
+    }
+
     /// Resolves this staff member's stated availability for a single date,
     /// honouring a per-week override (`weeklyAvailability[weekKey]`) before
     /// falling back to the recurring weekly template. Mirrors the lookup in
@@ -146,7 +154,7 @@ extension AppUser {
     func dayAvailability(on date: Date) -> DayAvailability {
         let weekKey = RosterCalendar.weekStartKey(date)
         let weekday = RosterCalendar.weekday(for: date)
-        let template = weeklyAvailability[weekKey] ?? availability ?? .defaultAvailability
+        let template = resolvedAvailability(forWeekKey: weekKey)
         return template[weekday]
     }
 

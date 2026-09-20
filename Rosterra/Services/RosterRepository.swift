@@ -269,10 +269,10 @@ final class RosterRepository {
         if role == .manager {
             // MANAGER LISTENERS:
             
-            // 1. All shifts in date range (any staff member, published or completed)
+            // 1. Complete shift history for managers, with only the future
+            // planning horizon capped. Staff retain the smaller ±window.
             roleListeners.append(
                 db.collection("shifts")
-                    .whereField("date", isGreaterThanOrEqualTo: range.start)
                     .whereField("date", isLessThanOrEqualTo: range.end)
                     .addSnapshotListener { [weak self] snap, error in
                         guard let self else { return }
@@ -726,7 +726,6 @@ final class RosterRepository {
             if currentRole == .manager {
                 async let _user = db.collection("users").document(uid).getDocument(source: .server)
                 async let _shifts = db.collection("shifts")
-                    .whereField("date", isGreaterThanOrEqualTo: range.start)
                     .whereField("date", isLessThanOrEqualTo: range.end)
                     .getDocuments(source: .server)
                 async let _timesheets = db.collection("timesheets")
@@ -2313,6 +2312,9 @@ final class RosterRepository {
         // Resets the shift-start reminder flags (matching the PWA) and is
         // the same condition that gates the shift-changed notification below.
         let startChanged = existing != nil && (existing!.date != date || existing!.rosteredStart != start)
+        let handoverChanged = existing != nil && (
+            existing!.date != date || existing!.rosteredEnd != end || existing!.location != (location ?? "")
+        )
 
         var data: [String: Any] = [
             "staffId": staffId,
@@ -2338,6 +2340,9 @@ final class RosterRepository {
         if startChanged {
             data["startReminder6hSent"] = false
             data["startReminder30mSent"] = false
+        }
+        if !isUpdate || handoverChanged {
+            data["handoverReminder30mSent"] = false
         }
 
         try await docRef.setData(data, merge: true)
@@ -2395,6 +2400,50 @@ final class RosterRepository {
         }
     }
 
+    /// Deletes a set of roster drafts after re-reading their status inside a
+    /// Firestore transaction. This protects bulk roster cleanup from racing a
+    /// publish action in another manager session: anything no longer in draft
+    /// state is skipped rather than deleted.
+    @discardableResult
+    func deleteDraftShifts(ids: [String]) async throws -> Int {
+        let uniqueIDs = Array(Set(ids)).sorted()
+        guard !uniqueIDs.isEmpty else { return 0 }
+
+        var deletedCount = 0
+        // Keep each transaction comfortably below Firestore's 500-operation
+        // limit (one read and, when eligible, one delete per shift).
+        for start in stride(from: 0, to: uniqueIDs.count, by: 200) {
+            let end = min(start + 200, uniqueIDs.count)
+            let chunk = Array(uniqueIDs[start..<end])
+            let result = try await db.runTransaction { transaction, errorPointer -> Any? in
+                var draftReferences: [DocumentReference] = []
+
+                for id in chunk {
+                    let reference = self.db.collection("shifts").document(id)
+                    let snapshot: DocumentSnapshot
+                    do {
+                        snapshot = try transaction.getDocument(reference)
+                    } catch let fetchError as NSError {
+                        errorPointer?.pointee = fetchError
+                        return nil
+                    }
+
+                    if snapshot.data()?["status"] as? String == ShiftStatus.draft.rawValue {
+                        draftReferences.append(reference)
+                    }
+                }
+
+                for reference in draftReferences {
+                    transaction.deleteDocument(reference)
+                }
+                return NSNumber(value: draftReferences.count)
+            }
+            deletedCount += (result as? NSNumber)?.intValue ?? 0
+        }
+
+        return deletedCount
+    }
+
     /// Fields written when a shift is published. Mirrors the PWA's
     /// `publishShifts` (dataStore.ts): status + publishedAt + updatedAt, and
     /// backfills `shiftStartAt`/`submittableAfter` so drafts created before
@@ -2405,7 +2454,8 @@ final class RosterRepository {
             "publishedAt": nowISO(),
             "updatedAt": FieldValue.serverTimestamp(),
             "shiftStartAt": Timestamp(date: BusinessRules.shiftStartDateTime(date: date, time: start)),
-            "submittableAfter": Timestamp(date: BusinessRules.shiftEndDateTime(date: date, start: start, end: end))
+            "submittableAfter": Timestamp(date: BusinessRules.shiftEndDateTime(date: date, start: start, end: end)),
+            "handoverReminder30mSent": false
         ]
     }
 
@@ -2480,15 +2530,16 @@ final class RosterRepository {
     }
 
     /// Approve a pending timesheet — sets status = .approved, managerNotes, approvedBy, and approvedAt.
-    /// Manager correction of a submitted timesheet's times (typo fixes, staff
-    /// forgot to end shift, …). The rostered times on the shift are untouched
-    /// — they stay the primary reference — and the attendance record keeps
-    /// the original verified clock-in/out for audit.
+    /// Manager correction of a pending or approved timesheet's times (typo
+    /// fixes, a break discovered after approval, staff forgot to end shift,
+    /// …). The rostered times on the shift are untouched — they stay the
+    /// primary reference — and the attendance record keeps the original
+    /// verified clock-in/out for audit.
     func managerAdjustTimesheet(id: String, actualStart: String, actualEnd: String,
                                 breakMinutes: Int) async throws {
         let worked = BusinessRules.calcWorkedHours(start: actualStart, end: actualEnd,
                                                    breakMinutes: breakMinutes)
-        try await db.collection("timesheets").document(id).updateData([
+        try await updateTimesheetIfActionable(id: id, actionableStatuses: [.pending, .approved], data: [
             "actualStart": actualStart,
             "actualEnd": actualEnd,
             "actualBreakMinutes": breakMinutes,

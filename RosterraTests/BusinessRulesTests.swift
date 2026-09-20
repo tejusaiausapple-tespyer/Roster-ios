@@ -50,6 +50,14 @@ final class BusinessRulesTests: XCTestCase {
         XCTAssertEqual(BusinessRules.calcWorkedHours(start: "09:00", end: "17:00", breakMinutes: 30), 7.5)
     }
 
+    func testManagerAddedBreakReducesWorkedHours() {
+        let withoutBreak = BusinessRules.calcWorkedHours(start: "09:00", end: "17:00", breakMinutes: 0)
+        let withBreak = BusinessRules.calcWorkedHours(start: "09:00", end: "17:00", breakMinutes: 30)
+        XCTAssertEqual(withoutBreak, 8)
+        XCTAssertEqual(withBreak, 7.5)
+        XCTAssertEqual(withoutBreak - withBreak, 0.5)
+    }
+
     func testCalcWorkedHoursCrossesMidnight() {
         XCTAssertEqual(BusinessRules.calcWorkedHours(start: "22:00", end: "06:00", breakMinutes: 0), 8.0)
     }
@@ -133,11 +141,34 @@ final class BusinessRulesTests: XCTestCase {
         XCTAssertEqual(range.end, "2026-07-27")   // 56 days forward
     }
 
+    func testStaffShiftDateRangeKeepsFourCompletePastWeeksOnSunday() {
+        let now = TestSupport.instant("2026-09-20", "12:00") // a Sunday
+        let range = BusinessRules.staffShiftDateRange(at: now)
+        XCTAssertEqual(range.start, "2026-08-17") // Monday four full weeks back
+    }
+
     func testShiftWeekOffsetBoundsFromAMonday() {
         let now = TestSupport.instant("2026-06-01", "12:00") // Monday
         let bounds = BusinessRules.shiftWeekOffsetBounds(at: now)
         XCTAssertEqual(bounds.min, -4) // 28 days = exactly 4 Mondays back
         XCTAssertEqual(bounds.max, 8)  // 56 days = exactly 8 Mondays forward
+    }
+
+    func testManagerShiftBoundsReachEarliestRosterData() {
+        let now = TestSupport.instant("2026-09-20", "12:00")
+        let shifts = [
+            TestSupport.shift(id: "old", date: "2026-06-01"),
+            TestSupport.shift(id: "recent", date: "2026-09-14"),
+        ]
+
+        let bounds = BusinessRules.managerShiftWeekOffsetBounds(shifts: shifts, at: now)
+        XCTAssertEqual(bounds.min, -15)
+        XCTAssertEqual(bounds.max, 8)
+    }
+
+    func testStaffAvailabilityWindowIsFourWeeksEitherSide() {
+        XCTAssertEqual(BusinessRules.availabilityMinWeekOffset, -4)
+        XCTAssertEqual(BusinessRules.availabilityMaxWeekOffset, 4)
     }
 
     func testManagerTimesheetCutoffIs90Days() {
@@ -187,10 +218,10 @@ final class BusinessRulesTests: XCTestCase {
     func testRecurringWeekKeysSpanHorizon() {
         let now = TestSupport.instant("2026-06-01", "12:00") // Monday
         let keys = BusinessRules.recurringWeekKeys(fromMonday: now, at: now)
-        // Current Monday through +12 weeks inclusive = 13 keys
-        XCTAssertEqual(keys.count, 13)
+        // Current Monday through +4 weeks inclusive = 5 keys
+        XCTAssertEqual(keys.count, 5)
         XCTAssertEqual(keys.first, "2026-06-01")
-        XCTAssertEqual(keys.last, "2026-08-24")
+        XCTAssertEqual(keys.last, "2026-06-29")
     }
 
     // MARK: - Display status & action gates

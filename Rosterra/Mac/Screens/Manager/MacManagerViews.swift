@@ -1,5 +1,6 @@
 #if targetEnvironment(macCatalyst)
 import SwiftUI
+import PDFKit
 
 // MARK: - Mac Manager Timesheets View
 
@@ -1716,6 +1717,7 @@ struct MacManagerPayrollView: View {
     @State private var isSavingPayslip = false
     @State private var regenerationChanges: [PayslipRegenerationChange] = []
     @State private var showRegenerationPrompt = false
+    @State private var showPayRunPDFSheet = false
 
     init() {}
 
@@ -1785,6 +1787,11 @@ struct MacManagerPayrollView: View {
 
     private var submittedCount: Int {
         periodSlips.filter { $0.status == .submitted }.count
+    }
+
+    /// Print PDF is only offered once every slip in the period is approved (or published/archived).
+    private var canPrintPayRunPDF: Bool {
+        PayslipPDFService.payRunIsPrintable(periodSlips)
     }
 
     private var payslipHasChanges: Bool {
@@ -1884,6 +1891,15 @@ struct MacManagerPayrollView: View {
                 }
             }
         }
+        .fullScreenCover(isPresented: $showPayRunPDFSheet) {
+            MacPayRunPDFOverlay(
+                slips: periodSlips,
+                settings: repo.appSettings,
+                weekLabel: RosterFormat.weekRange(monday: weekMonday),
+                onClose: { showPayRunPDFSheet = false }
+            )
+            .macObserved(repo: repo, toasts: toasts)
+        }
     }
 
     private var periodBar: some View {
@@ -1966,7 +1982,22 @@ struct MacManagerPayrollView: View {
     }
 
     private var payslipRegister: some View {
-        MacCard(title: "Pay run register", subtitle: "Open a payslip to review its hours, rates, deductions and audit trail", icon: "list.bullet.rectangle") {
+        MacCard(
+            title: "Pay run register",
+            subtitle: "Open a payslip to review its hours, rates, deductions and audit trail",
+            icon: "list.bullet.rectangle",
+            headerTrailing: {
+                if canPrintPayRunPDF {
+                    Button {
+                        showPayRunPDFSheet = true
+                    } label: {
+                        Label("Print PDF", systemImage: "printer.fill")
+                    }
+                    .macButton(.bordered, size: .small)
+                    .help("Preview, save or print this approved pay run PDF")
+                }
+            }
+        ) {
             if repo.isLoading {
                 MacLoadingView(message: "Loading payroll…")
                     .frame(height: 260)
@@ -2580,13 +2611,15 @@ struct MacManagerPayrollView: View {
               let original = originalPayslip,
               let manager = repo.currentUser,
               slip.status.isEditable else { return }
+        let updated = PayrollCalculator.recalculatingPAYGIfNeeded(for: slip, comparedTo: original)
+        workingPayslip = updated
         isSavingPayslip = true
         Task {
             defer { isSavingPayslip = false }
             do {
-                try await repo.savePayslip(slip, original: original, editedBy: manager)
-                originalPayslip = slip
-                toasts.show("Saved \(slip.staffName)’s payslip.", style: .success)
+                try await repo.savePayslip(updated, original: original, editedBy: manager)
+                originalPayslip = updated
+                toasts.show("Saved \(updated.staffName)’s payslip.", style: .success)
             } catch {
                 toasts.show("Couldn’t save payslip. \(error.localizedDescription)", style: .error)
             }
@@ -2616,19 +2649,21 @@ struct MacManagerPayrollView: View {
         guard let slip = workingPayslip,
               let original = originalPayslip,
               let manager = repo.currentUser else { return }
+        let updatedSlip = PayrollCalculator.recalculatingPAYGIfNeeded(for: slip, comparedTo: original)
+        workingPayslip = updatedSlip
         isSavingPayslip = true
         Task {
             defer { isSavingPayslip = false }
             do {
                 if payslipHasChanges {
-                    try await repo.savePayslip(slip, original: original, editedBy: manager)
+                    try await repo.savePayslip(updatedSlip, original: original, editedBy: manager)
                 }
                 if status == .submitted {
-                    try await repo.publishPayslips([slip], by: manager)
+                    try await repo.publishPayslips([updatedSlip], by: manager)
                 } else {
-                    try await repo.setPayslipStatus(slip, to: status, by: manager)
+                    try await repo.setPayslipStatus(updatedSlip, to: status, by: manager)
                 }
-                var updated = slip
+                var updated = updatedSlip
                 updated.status = status
                 workingPayslip = updated
                 originalPayslip = updated
@@ -2703,6 +2738,184 @@ struct MacManagerPayrollView: View {
                 }
             } catch {
                 toasts.show("Couldn’t generate payroll. \(error.localizedDescription)", style: .error)
+            }
+        }
+    }
+}
+
+// MARK: - Pay run PDF preview (Print PDF)
+
+/// Full-screen pay-run PDF preview so the register is readable (not a tiny
+/// A4 letterbox inside a Catalyst sheet).
+private struct MacPayRunPDFOverlay: View {
+    let slips: [Payslip]
+    let settings: AppSettings
+    let weekLabel: String
+    var onClose: () -> Void
+
+    @State private var pdfURL: URL?
+    @State private var renderFailed = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            headerBar
+            Divider()
+            Group {
+                if let pdfURL {
+                    MacFitPDFView(url: pdfURL)
+                } else if renderFailed {
+                    ContentUnavailableView(
+                        "Couldn’t create PDF",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text("Try again in a moment.")
+                    )
+                } else {
+                    VStack(spacing: MacSpace.md) {
+                        ProgressView()
+                            .controlSize(.regular)
+                        Text("Preparing pay run PDF…")
+                            .font(MacType.body)
+                            .foregroundStyle(MacColor.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(uiColor: .secondarySystemBackground))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(MacColor.cardBackground)
+        .task { await renderPDF() }
+        .onDisappear {
+            if let pdfURL {
+                try? FileManager.default.removeItem(at: pdfURL)
+            }
+        }
+    }
+
+    private var headerBar: some View {
+        HStack(spacing: MacSpace.md) {
+            Button("Done", action: onClose)
+                .macButton(.bordered, size: .small)
+                .keyboardShortcut(.cancelAction)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Pay run PDF")
+                    .font(MacType.sectionHeader)
+                    .foregroundStyle(MacColor.textPrimary)
+                Text(weekLabel)
+                    .font(MacType.caption)
+                    .foregroundStyle(MacColor.textTertiary)
+            }
+
+            Spacer(minLength: 0)
+
+            if let pdfURL {
+                Button {
+                    printPDF(at: pdfURL)
+                } label: {
+                    Label("Print", systemImage: "printer")
+                }
+                .macButton(.bordered, size: .small)
+                .help("Print with the Mac print dialog")
+                .keyboardShortcut("p", modifiers: .command)
+
+                ShareLink(item: pdfURL) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                .macButton(.prominent, size: .small)
+                .help("Save or share this pay run PDF")
+            }
+        }
+        .padding(.horizontal, MacSpace.xl)
+        .padding(.vertical, MacSpace.md)
+        .background(MacColor.cardBackground)
+    }
+
+    private func renderPDF() async {
+        let slips = self.slips
+        let settings = self.settings
+        let safeWeek = weekLabel
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: " ", with: "")
+        let url: URL? = await Task.detached(priority: .userInitiated) {
+            let data = PayslipPDFService.renderPayRun(slips, settings: settings)
+            let fileURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("PayRun-\(safeWeek)-\(UUID().uuidString.prefix(8)).pdf")
+            do {
+                try data.write(to: fileURL, options: .atomic)
+                return fileURL
+            } catch {
+                return nil
+            }
+        }.value
+
+        if let url {
+            pdfURL = url
+        } else {
+            renderFailed = true
+        }
+    }
+
+    private func printPDF(at url: URL) {
+        // UIPrintInteractionController surfaces AppKit's
+        // "This application does not support printing" on Mac Catalyst.
+        // Drive the native Mac print panel instead.
+        if MacPDFPrinter.print(at: url, jobName: "Pay run · \(weekLabel)") {
+            return
+        }
+        // Last resort: open the PDF (Preview) so the user can print from there.
+        UIApplication.shared.open(url)
+    }
+}
+
+/// Fits the PDF to the preview **width** and scrolls vertically so the register
+/// text stays readable (fit-to-page letterboxing made it look tiny).
+private struct MacFitPDFView: UIViewRepresentable {
+    let url: URL
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> PDFView {
+        let view = PDFView()
+        view.autoScales = false
+        view.displayMode = .singlePageContinuous
+        view.displayDirection = .vertical
+        view.backgroundColor = .secondarySystemBackground
+        view.minScaleFactor = 0.2
+        view.maxScaleFactor = 4.0
+        view.document = PDFDocument(url: url)
+        context.coordinator.observe(view)
+        context.coordinator.fitWidth(view)
+        return view
+    }
+
+    func updateUIView(_ view: PDFView, context: Context) {
+        if view.document?.documentURL != url {
+            view.document = PDFDocument(url: url)
+        }
+        context.coordinator.fitWidth(view)
+    }
+
+    final class Coordinator {
+        private var observation: NSKeyValueObservation?
+
+        func observe(_ view: PDFView) {
+            observation = view.observe(\.bounds, options: [.new]) { [weak self] view, _ in
+                self?.fitWidth(view)
+            }
+        }
+
+        func fitWidth(_ view: PDFView) {
+            DispatchQueue.main.async {
+                guard view.bounds.width > 1, view.bounds.height > 1,
+                      let page = view.document?.page(at: 0) else { return }
+                let pageRect = page.bounds(for: view.displayBox)
+                guard pageRect.width > 0 else { return }
+                // Use most of the horizontal space; scroll for the rest of the page.
+                let horizontalInset: CGFloat = 48
+                let scale = (view.bounds.width - horizontalInset * 2) / pageRect.width
+                view.scaleFactor = min(max(scale, 0.35), 2.0)
             }
         }
     }

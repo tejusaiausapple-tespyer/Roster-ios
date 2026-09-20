@@ -47,4 +47,12 @@ struct Timesheet: Identifiable, Equatable {
         case .approved, .absent: return false
         }
     }
+
+    /// Managers may correct submitted times before approval, or amend an
+    /// approved record when later evidence (for example, an observed break)
+    /// shows the recorded hours were wrong. Other terminal/non-worked states
+    /// stay locked.
+    var isManagerTimeEditable: Bool {
+        status == .pending || status == .approved
+    }
 }

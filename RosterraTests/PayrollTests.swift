@@ -137,6 +137,41 @@ final class PayrollTests: XCTestCase {
         XCTAssertEqual(PayrollCalculator.calculatedPAYG(for: notClaimed), 90)
     }
 
+    func testSavingChangedHoursRecalculatesPAYG() {
+        var original = makeSlip(ordinaryHours: 20, baseRate: 25, payg: 21)
+        original.payg = PayrollCalculator.calculatedPAYG(for: original)
+        var edited = original
+        edited.ordinaryHours = 40
+
+        let updated = PayrollCalculator.recalculatingPAYGIfNeeded(for: edited, comparedTo: original)
+
+        XCTAssertEqual(updated.payg, PayrollCalculator.calculatedPAYG(for: edited))
+        XCTAssertEqual(updated.payg, 138)
+        XCTAssertEqual(updated.totals.superAmount, 120)
+    }
+
+    func testSavingChangedHoursPreservesExplicitPAYGOverride() {
+        let original = makeSlip(ordinaryHours: 20, baseRate: 25, payg: 21)
+        var edited = original
+        edited.ordinaryHours = 40
+        edited.payg = 175
+
+        let updated = PayrollCalculator.recalculatingPAYGIfNeeded(for: edited, comparedTo: original)
+
+        XCTAssertEqual(updated.payg, 175)
+    }
+
+    func testChangingThresholdRecalculatesPAYG() {
+        let original = makeSlip(ordinaryHours: 20, baseRate: 25,
+                                claimsTaxFreeThreshold: true, payg: 21)
+        var edited = original
+        edited.claimsTaxFreeThreshold = false
+
+        let updated = PayrollCalculator.recalculatingPAYGIfNeeded(for: edited, comparedTo: original)
+
+        XCTAssertEqual(updated.payg, 90)
+    }
+
     func testClaimsTaxFreeThresholdRoundTrips() {
         let notClaimed = makeSlip(ordinaryHours: 1, baseRate: 1, claimsTaxFreeThreshold: false)
         XCTAssertEqual(Payslip(id: notClaimed.id, data: notClaimed.asDictionary)?.claimsTaxFreeThreshold, false)
@@ -280,7 +315,7 @@ final class PayrollTests: XCTestCase {
     func testEditableStatuses() {
         XCTAssertTrue(PayslipStatus.draft.isEditable)
         XCTAssertTrue(PayslipStatus.underReview.isEditable)
-        XCTAssertFalse(PayslipStatus.approved.isEditable)
+        XCTAssertTrue(PayslipStatus.approved.isEditable)
         XCTAssertFalse(PayslipStatus.submitted.isEditable)
         XCTAssertFalse(PayslipStatus.archived.isEditable)
     }

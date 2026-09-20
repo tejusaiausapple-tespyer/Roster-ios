@@ -21,10 +21,9 @@ enum BusinessRules {
     /// keep their own full 5-year history (a single person's data is small).
     static let managerTimesheetWindowDaysBack = 90
 
-    /// Availability may be set up to 12 weeks ahead.
-    static let availabilityMaxWeekOffset = 12
-    /// Availability navigation lower bound (2 weeks back, though locked).
-    static let availabilityMinWeekOffset = -2
+    /// Staff can review four past weeks and set availability four weeks ahead.
+    static let availabilityMaxWeekOffset = 4
+    static let availabilityMinWeekOffset = -4
 
     // MARK: - Pay defaults (fallbacks when a staff member has no value set)
 
@@ -94,7 +93,9 @@ enum BusinessRules {
 
     /// Staff shift date range as inclusive `yyyy-MM-dd` keys.
     static func staffShiftDateRange(at now: Date = Date()) -> (start: String, end: String) {
-        let start = RosterCalendar.addDays(-shiftWindowDaysBack, to: now)
+        // Align the lower bound to Monday. A rolling 28-day cutoff applied on
+        // Sunday exposes only three complete previous weeks.
+        let start = RosterCalendar.addDays(-shiftWindowDaysBack, to: RosterCalendar.weekStart(now))
         let end = RosterCalendar.addDays(shiftWindowDaysForward, to: now)
         return (RosterCalendar.dayFormatter.string(from: start),
                 RosterCalendar.dayFormatter.string(from: end))
@@ -126,6 +127,28 @@ enum BusinessRules {
         let minWeeks = cal.dateComponents([.weekOfYear], from: todayMonday, to: startMonday).weekOfYear ?? -4
         let maxWeeks = cal.dateComponents([.weekOfYear], from: todayMonday, to: endMonday).weekOfYear ?? 8
         return (min: minWeeks, max: maxWeeks)
+    }
+
+    /// Managers can navigate back to the earliest roster record currently
+    /// loaded, while retaining the normal forward-planning horizon.
+    static func managerShiftWeekOffsetBounds(
+        shifts: [Shift],
+        at now: Date = Date()
+    ) -> (min: Int, max: Int) {
+        let staffBounds = shiftWeekOffsetBounds(at: now)
+        guard let earliestKey = shifts.map(\.date).min(),
+              let earliestDate = RosterCalendar.dateFromKey(earliestKey) else {
+            return staffBounds
+        }
+
+        let currentMonday = RosterCalendar.weekStart(now)
+        let earliestMonday = RosterCalendar.weekStart(earliestDate)
+        let earliestOffset = RosterCalendar.calendar.dateComponents(
+            [.weekOfYear],
+            from: currentMonday,
+            to: earliestMonday
+        ).weekOfYear ?? staffBounds.min
+        return (min: min(staffBounds.min, earliestOffset), max: staffBounds.max)
     }
 
     // MARK: - Week lock (mirrors isRosterWeekLockedForStaff)

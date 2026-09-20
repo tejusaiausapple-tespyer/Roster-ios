@@ -217,7 +217,11 @@ final class ShiftReminderSchedulerTests: XCTestCase {
         // Unit tests run under the iPhone simulator idiom, so this is the
         // behavior exercised here; iPad/Mac's sidebar tags every tab and
         // would route straight to .availability.
+        #if targetEnvironment(macCatalyst)
+        assertManagerEvent("availability-updated", opens: .availability)
+        #else
         assertManagerEvent("availability-updated", opens: .account)
+        #endif
     }
 
     @MainActor

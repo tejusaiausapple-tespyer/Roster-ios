@@ -81,7 +81,9 @@ struct ManagerRosterView: View {
     }
 
     private var now: Date { Date() }
-    private var bounds: (min: Int, max: Int) { BusinessRules.shiftWeekOffsetBounds(at: now) }
+    private var bounds: (min: Int, max: Int) {
+        BusinessRules.managerShiftWeekOffsetBounds(shifts: repo.shifts, at: now)
+    }
     private var monday: Date { RosterCalendar.addWeeks(weekOffset, to: RosterCalendar.weekStart(now)) }
     private var weekDays: [Date] { RosterCalendar.weekDays(for: monday) }
     private var weekKeys: [String] { weekDays.map { RosterCalendar.dayFormatter.string(from: $0) } }

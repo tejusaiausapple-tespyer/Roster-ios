@@ -8,8 +8,20 @@ struct MacSidebarToggleButton: View {
         Button {
             nav.toggleSidebar()
         } label: {
-            Image(systemName: "sidebar.leading")
+            if nav.isSidebarVisible {
+                Image(systemName: "sidebar.leading")
+                    .frame(width: 22, height: 22)
+            } else {
+                Image("AppLogo")
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 24, height: 24)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .accessibilityHidden(true)
+            }
         }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
         .help(nav.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar")
         .accessibilityLabel(nav.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar")
     }

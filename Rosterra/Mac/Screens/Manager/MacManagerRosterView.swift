@@ -17,10 +17,13 @@ struct MacManagerRosterView: View {
     @State private var dragOverDate: String?
     @State private var isMutatingShift = false
     @State private var isTogglingWeekLock = false
+    @State private var isAvailabilityPreviewPresented = false
 
     init() {}
 
-    private var bounds: (min: Int, max: Int) { BusinessRules.shiftWeekOffsetBounds() }
+    private var bounds: (min: Int, max: Int) {
+        BusinessRules.managerShiftWeekOffsetBounds(shifts: repo.shifts)
+    }
     private var monday: Date { RosterCalendar.addWeeks(weekOffset, to: RosterCalendar.weekStart(Date())) }
     private var weekDays: [Date] { RosterCalendar.weekDays(for: monday) }
     private var weekKeys: [String] { weekDays.map { RosterCalendar.dateString(from: $0) } }
@@ -251,6 +254,22 @@ struct MacManagerRosterView: View {
         .help("Copy last week's shifts into this week as drafts")
     }
 
+    @ViewBuilder
+    private var deleteDraftsButton: some View {
+        if weekOffset > 0, draftCount > 0 {
+            Button {
+                activeSheet = .deleteDrafts
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "trash")
+                    Text("Delete drafts")
+                }
+            }
+            .rosterToolbarDestructivePill()
+            .help("Delete draft shifts from this future roster")
+        }
+    }
+
     private var addShiftButton: some View {
         Button {
             openCreate()
@@ -280,6 +299,7 @@ struct MacManagerRosterView: View {
                 HStack(spacing: MacSpace.sm) {
                     lockButton(compact: false)
                     copyButton(compact: false)
+                    deleteDraftsButton
                     addShiftButton
                 }
             }
@@ -297,6 +317,7 @@ struct MacManagerRosterView: View {
                     publishButton
                     lockButton(compact: false)
                     copyButton(compact: false)
+                    deleteDraftsButton
                     addShiftButton
                     Spacer()
                 }
@@ -415,13 +436,15 @@ struct MacManagerRosterView: View {
                 .padding(.horizontal, MacSpace.lg)
                 .padding(.vertical, MacSpace.sm)
                 .macGlassSurface(cornerRadius: MacRadius.pill)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Spacer(minLength: MacSpace.sm)
+                availabilityPreviewPill
 
                 Label("Published shifts are locked", systemImage: "lock.fill")
                     .padding(.horizontal, MacSpace.md)
                     .padding(.vertical, MacSpace.sm)
                     .macGlassSurface(cornerRadius: MacRadius.pill)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .font(MacType.caption)
             .foregroundStyle(MacColor.textPrimary)
@@ -435,6 +458,39 @@ struct MacManagerRosterView: View {
                     .macGlassSurface(cornerRadius: MacRadius.pill)
             }
         }
+    }
+
+    private var availabilityPreviewPill: some View {
+        Button {
+            withAnimation(MacMotion.fast) {
+                isAvailabilityPreviewPresented.toggle()
+            }
+        } label: {
+            Label("View Availability", systemImage: "eye")
+                .padding(.horizontal, MacSpace.md)
+                .padding(.vertical, MacSpace.sm)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.black)
+        .macGlassSurface(cornerRadius: MacRadius.pill)
+        .contentShape(Capsule(style: .continuous))
+        .fixedSize(horizontal: true, vertical: false)
+        .popover(
+            isPresented: $isAvailabilityPreviewPresented,
+            attachmentAnchor: .rect(.bounds),
+            arrowEdge: .bottom
+        ) {
+            MacRosterAvailabilityPreview(
+                staff: activeStaff,
+                weekDays: weekDays,
+                weekKey: weekStartKey,
+                dateRange: dateRange,
+                isLocked: isWeekAvailabilityLocked
+            )
+        }
+        .help("Click to view staff availability for \(dateRange)")
+        .accessibilityLabel("View availability for \(dateRange)")
+        .accessibilityHint("Click to open the selected week's staff availability")
     }
 
     @ViewBuilder
@@ -547,6 +603,16 @@ struct MacManagerRosterView: View {
                 monday: monday,
                 onCancel: { activeSheet = nil },
                 onCopy: { ids in await copyLastWeek(staffIDs: ids) }
+            )
+        case .deleteDrafts:
+            MacRosterDeleteDraftsSheet(
+                staff: activeStaff,
+                drafts: weekDrafts,
+                destination: dateRange,
+                onCancel: { activeSheet = nil },
+                onDelete: { staffIDs in
+                    await deleteRosterDrafts(staffIDs: staffIDs)
+                }
             )
         case .drop(let shift, let targetDate):
             MacRosterDropSheet(
@@ -703,6 +769,30 @@ struct MacManagerRosterView: View {
         shiftToDelete = nil
     }
 
+    @MainActor
+    private func deleteRosterDrafts(staffIDs: Set<String>?) async {
+        let targets = weekDrafts.filter { shift in
+            staffIDs?.contains(shift.staffId) ?? true
+        }
+        guard !targets.isEmpty else {
+            toasts.show("There are no matching draft shifts to delete.", style: .info)
+            return
+        }
+
+        do {
+            let deleted = try await repo.deleteDraftShifts(ids: targets.map(\.id))
+            activeSheet = nil
+            if deleted == targets.count {
+                toasts.show("\(deleted) draft shift\(deleted == 1 ? "" : "s") deleted", style: .success)
+            } else {
+                let skipped = targets.count - deleted
+                toasts.show("\(deleted) drafts deleted · \(skipped) skipped because they changed", style: .warning)
+            }
+        } catch {
+            toasts.show("Unable to delete roster drafts. \(error.localizedDescription)", style: .error)
+        }
+    }
+
     private func copyLastWeek(staffIDs: Set<String>?) async {
         let lastMonday = RosterCalendar.addDays(-7, to: monday)
         let lastWeekKeys = RosterCalendar.weekDays(for: lastMonday).map { RosterCalendar.dateString(from: $0) }
@@ -758,6 +848,175 @@ struct MacManagerRosterView: View {
         } catch {
             toasts.show(error.localizedDescription, style: .error)
         }
+    }
+}
+
+// MARK: - Availability quick preview
+
+private struct MacRosterAvailabilityPreview: View {
+    let staff: [AppUser]
+    let weekDays: [Date]
+    let weekKey: String
+    let dateRange: String
+    let isLocked: Bool
+
+    private let nameColumnWidth: CGFloat = 220
+    private let dayColumnWidth: CGFloat = 118
+    private let columnSpacing: CGFloat = 8
+
+    private var tableWidth: CGFloat {
+        nameColumnWidth
+            + dayColumnWidth * CGFloat(Weekday.allCases.count)
+            + columnSpacing * CGFloat(Weekday.allCases.count)
+            + MacSpace.md * 2
+    }
+
+    private var panelWidth: CGFloat {
+        tableWidth + MacSpace.xl * 2
+    }
+
+    private var matrixHeight: CGFloat {
+        min(620, max(180, CGFloat(staff.count) * 44 + 58))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MacSpace.md) {
+            HStack(alignment: .firstTextBaseline, spacing: MacSpace.md) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Week availability")
+                        .font(MacType.sectionHeader)
+                        .foregroundStyle(MacColor.textPrimary)
+                    Text(dateRange)
+                        .font(MacType.caption)
+                        .foregroundStyle(MacColor.textSecondary)
+                }
+
+                Spacer()
+
+                Label(
+                    isLocked ? "Locked" : "Live availability",
+                    systemImage: isLocked ? "lock.fill" : "arrow.triangle.2.circlepath"
+                )
+                .font(MacType.captionStrong)
+                .foregroundStyle(isLocked ? MacColor.textSecondary : MacColor.success)
+            }
+
+            if staff.isEmpty {
+                MacEmptyState(
+                    title: "No active staff",
+                    subtitle: "Active staff availability will appear here.",
+                    icon: "person.2.slash"
+                )
+                .frame(height: 260)
+            } else {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        headerRow
+                        ForEach(staff) { user in
+                            staffRow(user)
+                        }
+                    }
+                    .frame(width: tableWidth, alignment: .leading)
+                }
+                .scrollIndicators(.visible)
+                .frame(width: tableWidth, height: matrixHeight)
+                .background(MacColor.cardBackground.opacity(0.72))
+                .clipShape(RoundedRectangle(cornerRadius: MacRadius.large, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: MacRadius.large, style: .continuous)
+                        .strokeBorder(MacColor.cardBorder, lineWidth: 1)
+                }
+            }
+
+            Label("Read-only preview · Edit from Team Availability", systemImage: "eye")
+                .font(MacType.caption)
+                .foregroundStyle(MacColor.textTertiary)
+        }
+        .padding(MacSpace.xl)
+        .frame(width: panelWidth)
+        .macGlassSurface(cornerRadius: MacRadius.extraLarge)
+        .presentationBackground(.clear)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Staff availability for \(dateRange)")
+    }
+
+    private var headerRow: some View {
+        HStack(spacing: columnSpacing) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("TEAM")
+                    .font(MacType.captionStrong)
+                    .foregroundStyle(MacColor.textTertiary)
+                Text("\(staff.count) active staff")
+                    .font(MacType.caption)
+                    .foregroundStyle(MacColor.textSecondary)
+            }
+            .frame(width: nameColumnWidth, alignment: .leading)
+
+            ForEach(Array(weekDays.enumerated()), id: \.offset) { index, date in
+                VStack(spacing: 2) {
+                    Text(Weekday.allCases[index].shortLabel.uppercased())
+                        .font(MacType.captionStrong)
+                    Text(RosterCalendar.dayOfMonth(from: date))
+                        .font(MacType.caption)
+                        .foregroundStyle(MacColor.textTertiary)
+                }
+                .foregroundStyle(MacColor.textPrimary)
+                .frame(width: dayColumnWidth)
+            }
+        }
+        .padding(.horizontal, MacSpace.md)
+        .padding(.vertical, 9)
+        .frame(width: tableWidth)
+        .background(MacColor.tableHeaderBackground.opacity(0.9))
+        .overlay(Rectangle().fill(MacColor.separator).frame(height: 1), alignment: .bottom)
+    }
+
+    private func staffRow(_ user: AppUser) -> some View {
+        let availability = user.resolvedAvailability(forWeekKey: weekKey)
+        return HStack(spacing: columnSpacing) {
+            HStack(spacing: MacSpace.sm) {
+                MacAvatar(name: user.fullName, size: 28)
+                Text(user.fullName)
+                    .font(MacType.captionStrong)
+                    .foregroundStyle(MacColor.textPrimary)
+                    .lineLimit(1)
+            }
+            .frame(width: nameColumnWidth, alignment: .leading)
+
+            ForEach(Weekday.allCases) { day in
+                availabilityCell(availability[day])
+                    .frame(width: dayColumnWidth)
+            }
+        }
+        .padding(.horizontal, MacSpace.md)
+        .padding(.vertical, 5)
+        .frame(width: tableWidth)
+        .overlay(Rectangle().fill(MacColor.separator.opacity(0.55)).frame(height: 1), alignment: .bottom)
+    }
+
+    private func availabilityCell(_ day: DayAvailability) -> some View {
+        let label: String
+        let tint: Color
+        if !day.available {
+            label = "Off"
+            tint = MacColor.error
+        } else if day.allDay {
+            label = "All day"
+            tint = MacColor.success
+        } else {
+            label = "\(day.start.map(RosterFormat.time) ?? "—")–\(day.end.map(RosterFormat.time) ?? "—")"
+            tint = MacColor.warning
+        }
+
+        return Text(label)
+            .font(MacType.badge)
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .minimumScaleFactor(0.55)
+            .frame(maxWidth: .infinity, minHeight: 34)
+            .padding(.horizontal, 5)
+            .background(tint.opacity(0.11), in: RoundedRectangle(cornerRadius: MacRadius.medium, style: .continuous))
+            .help(day.summary)
     }
 }
 
@@ -840,6 +1099,7 @@ private enum MacRosterSheet: Identifiable {
     case edit(Shift)
     case publish
     case copyWeek
+    case deleteDrafts
     case drop(shift: Shift, targetDate: String)
 
     var id: String {
@@ -848,6 +1108,7 @@ private enum MacRosterSheet: Identifiable {
         case .edit(let shift): return "edit-\(shift.id)"
         case .publish: return "publish"
         case .copyWeek: return "copy-week"
+        case .deleteDrafts: return "delete-drafts"
         case .drop(let shift, let targetDate): return "drop-\(shift.id)-\(targetDate)"
         }
     }
@@ -1690,6 +1951,189 @@ private struct MacRosterCopyWeekSheet: View {
     }
 }
 
+// MARK: - Delete future roster drafts
+
+private struct MacRosterDeleteDraftsSheet: View {
+    let staff: [AppUser]
+    let drafts: [Shift]
+    let destination: String
+    let onCancel: () -> Void
+    let onDelete: (Set<String>?) async -> Void
+
+    @State private var allStaff = true
+    @State private var selectedStaffIDs: Set<String> = []
+    @State private var search = ""
+    @State private var isConfirming = false
+    @State private var isDeleting = false
+
+    private var staffWithDrafts: [AppUser] {
+        let staffIDs = Set(drafts.map(\.staffId))
+        return staff
+            .filter { staffIDs.contains($0.id) }
+            .filter { search.isEmpty || $0.fullName.localizedCaseInsensitiveContains(search) }
+    }
+
+    private var targetDrafts: [Shift] {
+        guard !allStaff else { return drafts }
+        return drafts.filter { selectedStaffIDs.contains($0.staffId) }
+    }
+
+    @ViewBuilder
+    var body: some View {
+        if #available(iOS 18.0, *) {
+            content.presentationSizing(.fitted)
+        } else {
+            content
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: MacSpace.lg) {
+            HStack(alignment: .top, spacing: MacSpace.md) {
+                Image(systemName: "trash.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(MacColor.error)
+                    .frame(width: 40, height: 40)
+                    .background(MacColor.error.opacity(0.12), in: Circle())
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Delete draft roster")
+                        .font(MacType.sectionHeader)
+                        .foregroundStyle(MacColor.textPrimary)
+                    Text(destination)
+                        .font(MacType.body)
+                        .foregroundStyle(MacColor.textSecondary)
+                }
+
+                Spacer()
+
+                Button(action: onCancel) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(MacColor.textSecondary)
+                        .frame(width: 30, height: 30)
+                        .background(MacColor.cardBackgroundSecondary, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isDeleting)
+                .help("Cancel")
+            }
+
+            Picker("Drafts to delete", selection: $allStaff) {
+                Text("All staff").tag(true)
+                Text("Selected staff").tag(false)
+            }
+            .pickerStyle(.segmented)
+
+            if !allStaff {
+                TextField("Search staff", text: $search)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Search staff whose roster drafts should be deleted")
+
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(staffWithDrafts) { person in
+                            let count = drafts.filter { $0.staffId == person.id }.count
+                            Button {
+                                if selectedStaffIDs.contains(person.id) {
+                                    selectedStaffIDs.remove(person.id)
+                                } else {
+                                    selectedStaffIDs.insert(person.id)
+                                }
+                            } label: {
+                                HStack(spacing: MacSpace.md) {
+                                    Image(systemName: selectedStaffIDs.contains(person.id) ? "checkmark.square.fill" : "square")
+                                        .foregroundStyle(selectedStaffIDs.contains(person.id) ? MacColor.accent : MacColor.textTertiary)
+                                    MacAvatar(name: person.fullName, size: 28)
+                                    Text(person.fullName)
+                                        .font(MacType.body)
+                                        .foregroundStyle(MacColor.textPrimary)
+                                    Spacer()
+                                    Text("\(count) draft\(count == 1 ? "" : "s")")
+                                        .font(MacType.caption)
+                                        .foregroundStyle(MacColor.textSecondary)
+                                }
+                                .padding(.vertical, MacSpace.sm)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityValue(selectedStaffIDs.contains(person.id) ? "Selected" : "Not selected")
+
+                            if person.id != staffWithDrafts.last?.id {
+                                Divider()
+                            }
+                        }
+
+                        if staffWithDrafts.isEmpty {
+                            Text("No matching staff with draft shifts")
+                                .font(MacType.body)
+                                .foregroundStyle(MacColor.textSecondary)
+                                .padding(MacSpace.xl)
+                        }
+                    }
+                    .padding(.horizontal, MacSpace.md)
+                }
+                .frame(height: min(250, max(96, CGFloat(staffWithDrafts.count) * 46)))
+                .background(MacColor.cardBackgroundSecondary, in: RoundedRectangle(cornerRadius: MacRadius.large, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: MacRadius.large, style: .continuous)
+                        .strokeBorder(MacColor.cardBorder, lineWidth: 1)
+                }
+            }
+
+            HStack(spacing: MacSpace.md) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(MacColor.error)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(targetDrafts.count) draft shift\(targetDrafts.count == 1 ? "" : "s") will be deleted")
+                        .font(MacType.bodyStrong)
+                        .foregroundStyle(MacColor.textPrimary)
+                    Text("Published shifts are protected and will not be removed.")
+                        .font(MacType.caption)
+                        .foregroundStyle(MacColor.textSecondary)
+                }
+            }
+            .padding(MacSpace.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(MacColor.error.opacity(0.08), in: RoundedRectangle(cornerRadius: MacRadius.medium, style: .continuous))
+
+            HStack {
+                Button("Cancel", action: onCancel)
+                    .macVisibleGlassPill()
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button {
+                    isConfirming = true
+                } label: {
+                    Label("Delete drafts", systemImage: "trash")
+                }
+                .macButton(.destructive, size: .large)
+                .disabled(targetDrafts.isEmpty || isDeleting)
+            }
+        }
+        .padding(MacSpace.xl)
+        .frame(width: 520)
+        .disabled(isDeleting)
+        .interactiveDismissDisabled(isDeleting)
+        .confirmationDialog(
+            "Delete \(targetDrafts.count) draft shift\(targetDrafts.count == 1 ? "" : "s")?",
+            isPresented: $isConfirming,
+            titleVisibility: .visible
+        ) {
+            Button("Delete draft roster", role: .destructive) {
+                isDeleting = true
+                Task {
+                    await onDelete(allStaff ? nil : selectedStaffIDs)
+                    isDeleting = false
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This cannot be undone. Published shifts will remain unchanged.")
+        }
+    }
+}
+
 private struct MacRosterPublishSheet: View {
     let draftCount: Int
     let onCancel: () -> Void
@@ -1747,62 +2191,252 @@ private struct MacRosterDropSheet: View {
     let onMove: () async -> Void
     let onCopy: () async -> Void
 
+    @State private var actionInProgress: DropAction?
+
+    private enum DropAction: Equatable {
+        case copy
+        case move
+    }
+
+    @ViewBuilder
     var body: some View {
+        if #available(iOS 18.0, *) {
+            content
+                .presentationSizing(.fitted)
+        } else {
+            content
+        }
+    }
+
+    private var content: some View {
         let staff = repo.user(id: shift.staffId)?.fullName ?? "Staff"
-        VStack(alignment: .leading, spacing: MacSpace.lg) {
-            HStack {
-                Text("Move or copy shift?")
-                    .font(MacType.sectionHeader)
-                    .foregroundStyle(MacColor.textPrimary)
-                Spacer()
+        return VStack(alignment: .leading, spacing: MacSpace.xl) {
+            HStack(alignment: .top, spacing: MacSpace.md) {
+                ZStack {
+                    Circle()
+                        .fill(MacColor.accent.opacity(0.12))
+                    Image(systemName: "arrow.left.arrow.right")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(MacColor.accent)
+                }
+                .frame(width: 40, height: 40)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Move or copy shift")
+                        .font(MacType.sectionHeader)
+                        .foregroundStyle(MacColor.textPrimary)
+                    Text("Choose what should happen to the original shift.")
+                        .font(MacType.body)
+                        .foregroundStyle(MacColor.textSecondary)
+                }
+
+                Spacer(minLength: MacSpace.md)
+
                 Button(action: onCancel) {
                     Image(systemName: "xmark")
-                        .foregroundStyle(MacColor.textTertiary)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(MacColor.textSecondary)
+                        .frame(width: 30, height: 30)
+                        .background(MacColor.cardBackgroundSecondary, in: Circle())
                 }
                 .buttonStyle(.plain)
+                .disabled(actionInProgress != nil)
+                .help("Cancel")
             }
 
-            Text("Choose whether to move this shift to the selected day or copy it.")
-                .font(MacType.body)
-                .foregroundStyle(MacColor.textSecondary)
+            VStack(alignment: .leading, spacing: MacSpace.md) {
+                HStack(spacing: MacSpace.md) {
+                    MacAvatar(name: staff, size: 36)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(staff)
+                            .font(MacType.bodyStrong)
+                            .foregroundStyle(MacColor.textPrimary)
+                        Label(
+                            "\(RosterFormat.time(shift.rosteredStart)) – \(RosterFormat.time(shift.rosteredEnd))",
+                            systemImage: "clock"
+                        )
+                        .font(MacType.captionStrong)
+                        .foregroundStyle(MacColor.textSecondary)
+                    }
+                }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("\(staff)")
-                    .font(MacType.bodyStrong)
-                    .foregroundStyle(MacColor.textPrimary)
-                Text("\(RosterFormat.dateShort(shift.date)) → \(RosterFormat.dateShort(targetDate))")
-                    .font(MacType.captionStrong)
-                    .foregroundStyle(MacColor.textSecondary)
-                Text("\(RosterFormat.time(shift.rosteredStart)) – \(RosterFormat.time(shift.rosteredEnd))")
-                    .font(MacType.mono)
-                    .foregroundStyle(MacColor.textTertiary)
+                HStack(spacing: MacSpace.md) {
+                    dateCard(label: "FROM", date: shift.date)
+
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(MacColor.textTertiary)
+
+                    dateCard(label: "TO", date: targetDate)
+                }
             }
-            .padding(MacSpace.md)
+            .padding(MacSpace.lg)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(MacColor.cardBackgroundSecondary, in: RoundedRectangle(cornerRadius: MacRadius.medium, style: .continuous))
+            .background(
+                MacColor.cardBackgroundSecondary,
+                in: RoundedRectangle(cornerRadius: MacRadius.large, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: MacRadius.large, style: .continuous)
+                    .strokeBorder(MacColor.cardBorder, lineWidth: 1)
+            }
+
+            HStack(spacing: MacSpace.md) {
+                actionCard(
+                    .copy,
+                    title: "Copy shift",
+                    detail: "Keep the original shift",
+                    icon: "doc.on.doc",
+                    tint: MacColor.accent,
+                    primary: false
+                )
+
+                actionCard(
+                    .move,
+                    title: "Move shift",
+                    detail: "Remove it from the old day",
+                    icon: "arrow.right.circle.fill",
+                    tint: MacColor.accent,
+                    primary: true
+                )
+            }
 
             HStack {
+                Text("No changes are made until you choose an action.")
+                    .font(MacType.caption)
+                    .foregroundStyle(MacColor.textTertiary)
                 Spacer()
                 Button("Cancel", action: onCancel)
-                    .macButton(.bordered)
-                MacAsyncButton(variant: .secondary) {
-                    await onCopy()
-                } label: {
-                    Text("Copy shift")
-                }
-                MacAsyncButton(variant: .prominent) {
-                    await onMove()
-                } label: {
-                    Text("Move shift")
-                }
+                    .macVisibleGlassPill()
+                    .disabled(actionInProgress != nil)
             }
         }
         .padding(MacSpace.xl)
-        .frame(width: 440)
+        .frame(width: 560)
+        .interactiveDismissDisabled(actionInProgress != nil)
+    }
+
+    private func dateCard(label: String, date: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(MacType.badge)
+                .foregroundStyle(MacColor.textTertiary)
+            Text(RosterFormat.dateShort(date))
+                .font(MacType.bodyStrong)
+                .foregroundStyle(MacColor.textPrimary)
+        }
+        .padding(.horizontal, MacSpace.md)
+        .padding(.vertical, MacSpace.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(MacColor.cardBackground, in: RoundedRectangle(cornerRadius: MacRadius.medium, style: .continuous))
+    }
+
+    private func actionCard(
+        _ action: DropAction,
+        title: String,
+        detail: String,
+        icon: String,
+        tint: Color,
+        primary: Bool
+    ) -> some View {
+        Button {
+            perform(action)
+        } label: {
+            VStack(alignment: .leading, spacing: MacSpace.md) {
+                HStack {
+                    Image(systemName: icon)
+                        .font(.system(size: 18, weight: .semibold))
+                    Spacer()
+                    if actionInProgress == action {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(primary ? .white : tint)
+                    } else {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .bold))
+                            .opacity(0.65)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(MacType.bodyStrong)
+                    Text(detail)
+                        .font(MacType.caption)
+                        .opacity(0.78)
+                }
+            }
+            .foregroundStyle(primary ? Color.white : MacColor.textPrimary)
+            .padding(MacSpace.lg)
+            .frame(maxWidth: .infinity, minHeight: 112, alignment: .leading)
+            .background(
+                primary ? tint : MacColor.cardBackgroundSecondary,
+                in: RoundedRectangle(cornerRadius: MacRadius.large, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: MacRadius.large, style: .continuous)
+                    .strokeBorder(primary ? Color.white.opacity(0.2) : tint.opacity(0.28), lineWidth: 1)
+            }
+        }
+        .buttonStyle(MacRosterDropActionButtonStyle())
+        .disabled(actionInProgress != nil)
+    }
+
+    private func perform(_ action: DropAction) {
+        guard actionInProgress == nil else { return }
+        actionInProgress = action
+        Task {
+            switch action {
+            case .copy:
+                await onCopy()
+            case .move:
+                await onMove()
+            }
+            await MainActor.run {
+                actionInProgress = nil
+            }
+        }
+    }
+}
+
+private struct MacRosterDropActionButtonStyle: ButtonStyle {
+    @State private var isHovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.985 : (isHovered ? 1.008 : 1))
+            .offset(y: isHovered && !configuration.isPressed ? -1 : 0)
+            .shadow(color: Color.black.opacity(isHovered ? 0.1 : 0), radius: 8, y: 3)
+            .opacity(configuration.isPressed ? 0.88 : 1)
+            .onHover { hovering in
+                withAnimation(MacMotion.fast) {
+                    isHovered = hovering
+                }
+            }
+            .animation(MacMotion.fast, value: configuration.isPressed)
     }
 }
 
 private extension View {
+    @ViewBuilder
+    func rosterToolbarDestructivePill() -> some View {
+        if #available(iOS 26.0, *) {
+            self
+                .font(MacType.captionStrong)
+                .foregroundStyle(MacColor.error)
+                .buttonStyle(.glass)
+                .tint(.clear)
+                .fixedSize(horizontal: true, vertical: false)
+        } else {
+            self
+                .font(MacType.captionStrong)
+                .foregroundStyle(MacColor.error)
+                .buttonStyle(.bordered)
+                .tint(MacColor.error)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
     @ViewBuilder
     func rosterToolbarGlassPill() -> some View {
         if #available(iOS 26.0, *) {

@@ -54,6 +54,15 @@ final class MacRosterCopyPlanTests: XCTestCase {
 /// boundary between loosely-typed Firestore documents and the typed domain.
 final class ModelParsingTests: XCTestCase {
 
+    func testManagerCanCorrectPendingAndApprovedTimesheets() {
+        XCTAssertTrue(TestSupport.timesheet(status: "pending").isManagerTimeEditable)
+        XCTAssertTrue(TestSupport.timesheet(status: "approved").isManagerTimeEditable)
+        XCTAssertFalse(TestSupport.timesheet(status: "draft").isManagerTimeEditable)
+        XCTAssertFalse(TestSupport.timesheet(status: "rejected").isManagerTimeEditable)
+        XCTAssertFalse(TestSupport.timesheet(status: "absent_reported").isManagerTimeEditable)
+        XCTAssertFalse(TestSupport.timesheet(status: "absent").isManagerTimeEditable)
+    }
+
     // MARK: - FS coercions
 
     func testStringHelpers() {
@@ -178,6 +187,25 @@ final class ModelParsingTests: XCTestCase {
         XCTAssertNotNil(week)
         XCTAssertEqual(week?[.monday].available, false)
         XCTAssertEqual(week?[.tuesday].available, true, "unspecified days fall back to default")
+    }
+
+    func testResolvedAvailabilityUsesWeekOverrideThenRecurringTemplate() {
+        let user = TestSupport.user(extra: [
+            "availability": [
+                "monday": ["available": true, "allDay": false, "start": "08:00", "end": "12:00"],
+            ],
+            "weeklyAvailability": [
+                "2026-06-01": [
+                    "monday": ["available": false, "allDay": false],
+                ],
+            ],
+        ])
+
+        XCTAssertFalse(user.resolvedAvailability(forWeekKey: "2026-06-01")[.monday].available)
+        let recurring = user.resolvedAvailability(forWeekKey: "2026-06-08")[.monday]
+        XCTAssertTrue(recurring.available)
+        XCTAssertEqual(recurring.start, "08:00")
+        XCTAssertEqual(recurring.end, "12:00")
     }
 
     // MARK: - Shift / Timesheet

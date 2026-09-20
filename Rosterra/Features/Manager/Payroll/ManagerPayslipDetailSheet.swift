@@ -729,7 +729,13 @@ struct PDFKitView: UIViewRepresentable {
         let view = PDFView()
         view.autoScales = true
         view.displayMode = .singlePageContinuous
+        view.displayDirection = .vertical
         view.backgroundColor = .secondarySystemBackground
+        #if targetEnvironment(macCatalyst)
+        // Fill the large Mac preview panel instead of leaving letterboxed margins.
+        view.minScaleFactor = 0.5
+        view.maxScaleFactor = 4.0
+        #endif
         view.document = PDFDocument(url: url)
         return view
     }
@@ -738,5 +744,11 @@ struct PDFKitView: UIViewRepresentable {
         if view.document?.documentURL != url {
             view.document = PDFDocument(url: url)
         }
+        #if targetEnvironment(macCatalyst)
+        // Re-fit after the hosting panel grows to ~90% of the window.
+        DispatchQueue.main.async {
+            view.autoScales = true
+        }
+        #endif
     }
 }

@@ -1,11 +1,12 @@
 #if targetEnvironment(macCatalyst)
 import SwiftUI
 
-struct MacCard<Content: View>: View {
+struct MacCard<Content: View, HeaderTrailing: View>: View {
     private let title: String?
     private let subtitle: String?
     private let icon: String?
     private let padding: CGFloat
+    private let headerTrailing: () -> HeaderTrailing
     private let content: () -> Content
 
     init(
@@ -13,12 +14,14 @@ struct MacCard<Content: View>: View {
         subtitle: String? = nil,
         icon: String? = nil,
         padding: CGFloat = MacSpace.lg,
+        @ViewBuilder headerTrailing: @escaping () -> HeaderTrailing = { EmptyView() },
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
         self.subtitle = subtitle
         self.icon = icon
         self.padding = padding
+        self.headerTrailing = headerTrailing
         self.content = content
     }
 
@@ -44,6 +47,7 @@ struct MacCard<Content: View>: View {
                         }
                     }
                     Spacer(minLength: 0)
+                    headerTrailing()
                 }
                 .padding(.horizontal, padding)
                 .padding(.top, padding)
@@ -60,6 +64,25 @@ struct MacCard<Content: View>: View {
                 .strokeBorder(MacColor.cardBorder, lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.04), radius: 10, x: 0, y: 2)
+    }
+}
+
+extension MacCard where HeaderTrailing == EmptyView {
+    init(
+        title: String? = nil,
+        subtitle: String? = nil,
+        icon: String? = nil,
+        padding: CGFloat = MacSpace.lg,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.init(
+            title: title,
+            subtitle: subtitle,
+            icon: icon,
+            padding: padding,
+            headerTrailing: { EmptyView() },
+            content: content
+        )
     }
 }
 

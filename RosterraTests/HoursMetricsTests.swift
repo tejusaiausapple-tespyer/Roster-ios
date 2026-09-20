@@ -144,6 +144,51 @@ final class HomeDashboardSnapshotTests: XCTestCase {
         )
     }
 
+    func testHandoverCandidateOnlyAppearsDuringFinalThirtyMinutes() {
+        let shift = TestSupport.shift(
+            id: "ending",
+            date: "2026-09-12",
+            start: "10:00",
+            end: "14:00"
+        )
+
+        XCTAssertNil(
+            HomeDashboardSnapshot.handoverCandidate(
+                shifts: [shift],
+                now: TestSupport.instant("2026-09-12", "13:29")
+            )
+        )
+        XCTAssertEqual(
+            HomeDashboardSnapshot.handoverCandidate(
+                shifts: [shift],
+                now: TestSupport.instant("2026-09-12", "13:30")
+            )?.id,
+            "ending"
+        )
+        XCTAssertNil(
+            HomeDashboardSnapshot.handoverCandidate(
+                shifts: [shift],
+                now: TestSupport.instant("2026-09-12", "14:00")
+            )
+        )
+    }
+
+    func testHandoverCandidateIgnoresDraftShifts() {
+        let draft = TestSupport.shift(
+            id: "draft",
+            date: "2026-09-12",
+            start: "10:00",
+            end: "14:00",
+            status: "draft"
+        )
+        XCTAssertNil(
+            HomeDashboardSnapshot.handoverCandidate(
+                shifts: [draft],
+                now: TestSupport.instant("2026-09-12", "13:45")
+            )
+        )
+    }
+
     func testMissedTimesheetsOnlyIncludesSubmittableMissingOrDraftRecords() {
         let now = TestSupport.instant("2026-09-12", "18:00")
         let newestMissing = TestSupport.shift(

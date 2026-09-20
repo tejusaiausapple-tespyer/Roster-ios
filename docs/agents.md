@@ -161,7 +161,7 @@ Rosterra/
 | `RosterFormat.swift` | Formatting helpers for dates, times, hours display |
 | `FirestoreValue.swift` | `FS` enum — safe Firestore document field extraction |
 | `AppSettings.swift` | `AppSettings` — company name from Firestore |
-| `AppRelease.swift` | `AppRelease` struct + `ReleaseHistory` enum — static in-app release registry (version, build, date, features, bug fixes, commit hash). `ReleaseHistory.current` returns the latest entry; `ReleaseHistory.all` is the full history newest-first. To add a release: prepend to `all` and bump `MARKETING_VERSION` + `CURRENT_PROJECT_VERSION` in `project.yml`. |
+| `AppRelease.swift` | `AppRelease` struct + `ReleaseHistory` enum — static in-app release registry (version, build, date, features, bug fixes, commit hash). `ReleaseHistory.current` returns the latest entry; `ReleaseHistory.all` is the full history newest-first. To add a release: prepend to `all` and bump `MARKETING_VERSION` + `CURRENT_PROJECT_VERSION` in `project.yml`. **Not** the mandatory update gate — after App Store goes live, follow [`VERSION_CHECK.md`](./VERSION_CHECK.md) to set Firebase Remote Config. |
 | `RosterLocation.swift` | `RosterLocation` — manager-defined work location (suburb + AU state + auto capital city). Stored as an array on `settings/locations`; `shifts.location` stays a plain string (`"Suburb, STATE"`) for PWA compatibility |
 
 ### Services (all in `Services/`)
@@ -176,7 +176,8 @@ Rosterra/
 | `CalendarService.swift` | Add shifts to iOS Calendar (EventKit) or generate ICS files |
 | `KeychainHelper.swift` | Keychain read/write/delete operations |
 | `FirebaseBootstrap.swift` | Firebase initialization + Firestore configuration |
-| `AppConfig.swift` | Static config (API URL, relying party, timeouts) |
+| `AppConfig.swift` | Static config (API URL, relying party, timeouts, App Store URL) |
+| `AppVersionCheckService.swift` | Hybrid iOS update gate — Apple Lookup + Firebase Remote Config (`ios_minimum_supported_version`, `ios_force_update`). Ops steps: [`VERSION_CHECK.md`](./VERSION_CHECK.md) |
 | `TaskPhotoCache.swift` | Local file system cache for task completion photos |
 | `Haptics.swift` | Haptic feedback convenience methods |
 | `NotificationService.swift` | Registers/syncs FCM push tokens (`fcmToken` + `notificationTokens` subcollection on the user doc). Push delivery enabled 2026-07-15; no longer gated on the Apple Developer account. Local "backup" alerts (timesheet decision/roster-published) were removed 2026-07-19 — server push is the only path now (see `docs/ROADMAP-PROGRESS.md`'s notification audit remediation entry) |

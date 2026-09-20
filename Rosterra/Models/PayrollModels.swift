@@ -466,6 +466,24 @@ enum PayrollCalculator {
                                          claimsTaxFreeThreshold: slip.claimsTaxFreeThreshold)
     }
 
+    /// Refreshes PAYG after earnings-related edits, unless the manager also
+    /// entered a deliberate PAYG override during the same editing session.
+    /// Keeping this decision in the calculator makes every save path apply the
+    /// same rule and keeps the UI from persisting a tax amount based on stale
+    /// hours or rates.
+    static func recalculatingPAYGIfNeeded(for edited: Payslip, comparedTo original: Payslip) -> Payslip {
+        guard round2(edited.payg) == round2(original.payg) else { return edited }
+
+        let taxableEarningsChanged = round2(taxableEarnings(for: edited))
+            != round2(taxableEarnings(for: original))
+        let declarationChanged = edited.claimsTaxFreeThreshold != original.claimsTaxFreeThreshold
+        guard taxableEarningsChanged || declarationChanged else { return edited }
+
+        var updated = edited
+        updated.payg = calculatedPAYG(for: updated)
+        return updated
+    }
+
     /// Field-level diff between two payslip snapshots — one `PayslipAuditEntry`
     /// per manager-editable field that changed, `[]` if nothing did. Powers
     /// `RosterRepository.savePayslip`'s audit trail. Numeric fields are

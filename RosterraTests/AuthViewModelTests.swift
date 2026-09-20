@@ -53,7 +53,10 @@ final class AuthViewModelTests: XCTestCase {
     /// `DeviceAuthService` uses directly (not via its `enable(uid:)`, which
     /// would trigger a real biometric/passcode prompt — unusable in a unit
     /// test) and cleans it up afterward.
-    func testRestoredSessionWithGateEnabledRequiresVerification() {
+    func testRestoredSessionWithGateEnabledRequiresVerification() throws {
+        #if targetEnvironment(macCatalyst)
+        throw XCTSkip("Unsigned Mac Catalyst test hosts cannot persist the Keychain seed used by this test.")
+        #else
         let uid = "test-uid-\(UUID().uuidString)"
         let keychainKey = "roster_device_auth_\(uid)"
         KeychainHelper.set("2026-01-01T00:00:00Z", for: keychainKey)
@@ -67,6 +70,7 @@ final class AuthViewModelTests: XCTestCase {
 
         XCTAssertTrue(vm.deviceAuthEnabled, "precondition: seeded Keychain entry should read as enabled")
         XCTAssertFalse(vm.deviceAuthVerified, "a restored session must still pass the gate")
+        #endif
     }
 
     /// A restored session already marked verified this run (e.g. a second

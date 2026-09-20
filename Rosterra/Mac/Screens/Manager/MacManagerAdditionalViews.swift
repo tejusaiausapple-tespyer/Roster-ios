@@ -2224,29 +2224,280 @@ struct MacManagerCompanyView: View {
                 .macButton(.success, size: .small)
             }
         ) {
-            ScrollView {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: MacSpace.xxl) {
-                        companySummary
-                            .frame(width: 300)
+            GeometryReader { proxy in
+                let summaryWidth = min(320, max(250, proxy.size.width * 0.27))
 
-                        editor
-                            .frame(minWidth: 600, maxWidth: 760)
-                    }
+                HStack(alignment: .top, spacing: MacSpace.xl) {
+                    workspaceSummary
+                        .frame(width: summaryWidth)
 
-                    VStack(spacing: MacSpace.xl) {
-                        companySummary
-                        editor
+                    VStack(spacing: MacSpace.lg) {
+                        workspaceIdentity
+                        workspaceAddress
+                        workspaceContact
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
-                .padding(MacSpace.xxl)
-                .frame(maxWidth: 1120)
-                .frame(maxWidth: .infinity)
+                .padding(.horizontal, MacSpace.xxl)
+                .padding(.vertical, MacSpace.xl)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
         .disabled(isSaving)
         .onAppear { loadIfNeeded() }
         .onChange(of: repo.appSettings) { _, _ in loadIfNeeded() }
+    }
+
+    private var workspaceSummary: some View {
+        VStack(alignment: .leading, spacing: MacSpace.lg) {
+            VStack(alignment: .leading, spacing: MacSpace.lg) {
+                HStack(alignment: .top) {
+                    Image(systemName: "building.2.fill")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 48, height: 48)
+                        .background(.white.opacity(0.16), in: RoundedRectangle(cornerRadius: MacRadius.large))
+
+                    Spacer()
+
+                    Label(isDirty ? "Editing" : "Saved", systemImage: isDirty ? "pencil" : "checkmark")
+                        .font(MacType.captionStrong)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.white.opacity(0.15), in: Capsule())
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(companyName.trimmingCharacters(in: .whitespaces).isEmpty ? "Your Company" : companyName)
+                        .font(MacType.pageTitle)
+                        .foregroundStyle(.white)
+                        .lineLimit(3)
+                        .minimumScaleFactor(0.75)
+
+                    Label(
+                        current.businessAddress.isEmpty ? "Add a business address" : current.businessAddress,
+                        systemImage: "mappin.and.ellipse"
+                    )
+                    .font(MacType.caption)
+                    .foregroundStyle(.white.opacity(0.8))
+                    .lineLimit(2)
+                }
+
+                Spacer(minLength: 4)
+
+                VStack(alignment: .leading, spacing: MacSpace.sm) {
+                    HStack {
+                        Text("Profile completeness")
+                        Spacer()
+                        Text("\(profileCompletion)%").fontWeight(.semibold)
+                    }
+                    .font(MacType.caption)
+                    .foregroundStyle(.white.opacity(0.92))
+
+                    ProgressView(value: Double(profileCompletion), total: 100)
+                        .tint(.white)
+                }
+            }
+            .padding(MacSpace.xl)
+            .frame(maxWidth: .infinity, minHeight: 210, alignment: .topLeading)
+            .background(
+                LinearGradient(
+                    colors: [Color(hex: 0x4F46E5), Color(hex: 0x312E81)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                in: RoundedRectangle(cornerRadius: MacRadius.extraLarge, style: .continuous)
+            )
+            .shadow(color: MacColor.accent.opacity(0.18), radius: 16, x: 0, y: 7)
+
+            VStack(alignment: .leading, spacing: 0) {
+                summaryHeading("Business profile", icon: "doc.text.fill")
+                Divider().padding(.vertical, MacSpace.md)
+                summaryRow(icon: "number", title: "ABN", value: abn.isEmpty ? "Not provided" : abn)
+                Divider().padding(.vertical, MacSpace.md)
+                summaryRow(icon: "phone.fill", title: "Phone", value: phoneLocal.isEmpty ? "Not provided" : "+61 \(phoneLocal)")
+                Divider().padding(.vertical, MacSpace.md)
+                summaryRow(icon: "envelope.fill", title: "Email", value: contactEmail.isEmpty ? "Not provided" : contactEmail)
+            }
+            .padding(MacSpace.lg)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .background(MacColor.cardBackground, in: RoundedRectangle(cornerRadius: MacRadius.large))
+            .overlay(RoundedRectangle(cornerRadius: MacRadius.large).stroke(MacColor.cardBorder))
+
+            Spacer(minLength: 0)
+
+            HStack(alignment: .top, spacing: MacSpace.md) {
+                Image(systemName: "info.circle.fill")
+                    .foregroundStyle(MacColor.accent)
+                Text("These details appear on dashboards, pay runs and employee payslips.")
+                    .font(MacType.caption)
+                    .foregroundStyle(MacColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(MacSpace.lg)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(MacColor.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: MacRadius.large))
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private var workspaceIdentity: some View {
+        workspacePanel(
+            number: "01",
+            title: "Business identity",
+            subtitle: "Legal details used on company and payroll documents.",
+            icon: "building.columns.fill"
+        ) {
+            HStack(alignment: .bottom, spacing: MacSpace.md) {
+                formField("Company name", prompt: "Company name", text: $companyName)
+                    .frame(minWidth: 240)
+
+                formField("ABN", prompt: "XX XXX XXX XXX", text: $abn)
+                    .onChange(of: abn) { _, value in
+                        let formatted = RosterFormat.abn(value)
+                        if formatted != value { abn = formatted }
+                    }
+
+                formField("ACN (optional)", prompt: "XXX XXX XXX", text: $acn)
+                    .onChange(of: acn) { _, value in
+                        let formatted = RosterFormat.acn(value)
+                        if formatted != value { acn = formatted }
+                    }
+            }
+        }
+    }
+
+    private var workspaceAddress: some View {
+        workspacePanel(
+            number: "02",
+            title: "Business address",
+            subtitle: "Primary registered or trading location.",
+            icon: "mappin.and.ellipse"
+        ) {
+            VStack(spacing: MacSpace.md) {
+                formField("Street address", prompt: "Street address", text: $street)
+
+                HStack(alignment: .bottom, spacing: MacSpace.md) {
+                    formField("Suburb", prompt: "Suburb", text: $suburb)
+                    formField("City", prompt: "City", text: $city)
+                    stateField
+                        .frame(maxWidth: 170)
+                }
+            }
+        }
+    }
+
+    private var workspaceContact: some View {
+        workspacePanel(
+            number: "03",
+            title: "Contact & payroll",
+            subtitle: "Contact details and optional information used by payroll.",
+            icon: "person.crop.circle.fill"
+        ) {
+            HStack(alignment: .top, spacing: MacSpace.lg) {
+                VStack(spacing: MacSpace.md) {
+                    phoneField
+                    formField("Email address", prompt: "accounts@example.com", text: $contactEmail)
+                        .textContentType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+                .frame(maxWidth: 340)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Additional business information")
+                        .font(MacType.captionStrong)
+                        .foregroundStyle(MacColor.textSecondary)
+                    TextField(
+                        "Bank details, payroll notes, or other information",
+                        text: $businessNotes,
+                        axis: .vertical
+                    )
+                    .textFieldStyle(.plain)
+                    .lineLimit(3...5)
+                    .padding(11)
+                    .frame(maxWidth: .infinity, minHeight: 88, alignment: .topLeading)
+                    .background(MacColor.cardBackgroundSecondary, in: RoundedRectangle(cornerRadius: MacRadius.medium))
+                    .overlay(RoundedRectangle(cornerRadius: MacRadius.medium).stroke(MacColor.cardBorder))
+
+                    Text("Optional. Do not enter passwords or sensitive credentials.")
+                        .font(MacType.caption)
+                        .foregroundStyle(MacColor.textTertiary)
+                }
+            }
+        }
+    }
+
+    private var stateField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("State / territory")
+                .font(MacType.captionStrong)
+                .foregroundStyle(MacColor.textSecondary)
+            Picker("State or territory", selection: $state) {
+                ForEach(RosterLocation.states, id: \.self) { item in
+                    Text(item).tag(item)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 7)
+            .frame(height: 38)
+            .background(MacColor.cardBackgroundSecondary, in: RoundedRectangle(cornerRadius: MacRadius.medium))
+            .overlay(RoundedRectangle(cornerRadius: MacRadius.medium).stroke(MacColor.cardBorder))
+            .onChange(of: state) { _, newValue in
+                city = RosterLocation.capital(for: newValue)
+            }
+        }
+    }
+
+    private func workspacePanel<Content: View>(
+        number: String,
+        title: String,
+        subtitle: String,
+        icon: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: MacSpace.md) {
+            HStack(spacing: MacSpace.md) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(MacColor.accent)
+                    .frame(width: 32, height: 32)
+                    .background(MacColor.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: MacRadius.medium))
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(MacType.sectionHeader)
+                        .foregroundStyle(MacColor.textPrimary)
+                    Text(subtitle)
+                        .font(MacType.caption)
+                        .foregroundStyle(MacColor.textTertiary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Text(number)
+                    .font(MacType.monoStrong)
+                    .foregroundStyle(MacColor.textTertiary.opacity(0.65))
+            }
+
+            Divider()
+            content()
+        }
+        .padding(MacSpace.lg)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(MacColor.cardBackground, in: RoundedRectangle(cornerRadius: MacRadius.large))
+        .overlay(RoundedRectangle(cornerRadius: MacRadius.large).stroke(MacColor.cardBorder))
+        .shadow(color: Color.black.opacity(0.035), radius: 8, x: 0, y: 2)
+    }
+
+    private func summaryHeading(_ title: String, icon: String) -> some View {
+        Label(title, systemImage: icon)
+            .font(MacType.sectionHeader)
+            .foregroundStyle(MacColor.textPrimary)
     }
 
     private var companySummary: some View {

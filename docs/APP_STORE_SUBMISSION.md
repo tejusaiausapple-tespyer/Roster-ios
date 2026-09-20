@@ -8,6 +8,37 @@ Apple ID: `6791077796` · Product page: https://apps.apple.com/app/id6791077796
 
 ---
 
+## Version 2.1 (Build 38) — What’s New
+
+### iPhone and iPad — App Store Connect text
+
+Rosterra 2.1 introduces a new app identity and important reliability improvements:
+
+- A completely new Rosterra app logo and refreshed visual identity.
+- Mandatory update protection helps keep staff and managers on a supported version.
+- Improved launch, login and foreground version checks.
+- Payroll PDF reliability and general workflow refinements.
+
+This release also includes interface improvements and fixes across the staff and manager experience.
+
+### Mac — App Store Connect text
+
+Rosterra 2.1 is a major upgrade to the Mac manager workspace:
+
+- A completely new Rosterra app logo and refreshed visual identity.
+- Generate, preview, share and print approved pay run PDFs.
+- Pay run reports include period totals, employee earnings, final hours and recorded hour or rate adjustments.
+- A redesigned full-width Company Details workspace with no scrolling.
+- The Rosterra logo remains available when the navigation sidebar is collapsed.
+- Expanded manager workflows across payroll, staff, reporting, rosters and business administration.
+
+This release also improves PDF performance, native Mac printing and overall stability.
+
+> Copy the relevant block into App Store Connect → platform version →
+> **What’s New in This Version**. Keep build numbers out of the public text.
+
+---
+
 ## App Review notes (paste into ASC → App Review Information → Notes)
 
 Rosterra is invite-only workforce software (staff scheduling, timesheets, and
@@ -123,3 +154,16 @@ Crashlytics. It does NOT use Firebase Analytics (that is only on the web app).
 - [ ] ASC: screenshots, description, Support URL, Privacy URL, Age Rating,
       App Privacy answers (include TFN), and App Review notes (above).
 - [ ] Submit to TestFlight (internal/external) before production.
+
+---
+
+## After each App Store release — version gate
+
+The iOS app blocks outdated builds via Apple Lookup + Firebase Remote Config.
+Shipping a binary alone does **not** raise the mandatory floor.
+
+See **[`VERSION_CHECK.md`](./VERSION_CHECK.md)** for the full checklist:
+
+1. Confirm `https://itunes.apple.com/lookup?id=6791077796` shows the new `version`.
+2. Set `ios_minimum_supported_version` and/or `ios_force_update` in Remote Config.
+3. Publish Remote Config, then smoke-test an old build.

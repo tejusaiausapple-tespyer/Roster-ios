@@ -9,6 +9,7 @@ struct MacAccountView: View {
     @AppStorage("preferredColorScheme") private var preferredColorSchemeSetting: String = "system"
     @State private var showingChangePassword = false
     @State private var showingSignOutConfirmation = false
+    @State private var activeInfoPage: InfoPage?
 
     init() {}
 
@@ -16,7 +17,23 @@ struct MacAccountView: View {
         repo.currentUser
     }
 
+    private enum InfoPage: String, Identifiable {
+        case version
+        case privacy
+        case terms
+
+        var id: String { rawValue }
+    }
+
     var body: some View {
+        if let activeInfoPage {
+            infoPage(activeInfoPage)
+        } else {
+            accountSettingsPage
+        }
+    }
+
+    private var accountSettingsPage: some View {
         MacScreen(
             title: "Account Settings",
             subtitle: "Manage your profile, security, and application preferences"
@@ -127,6 +144,100 @@ struct MacAccountView: View {
                         }
                     }
 
+                    // About & Legal
+                    MacCard(title: "About & Legal", icon: "info.circle.fill") {
+                        VStack(spacing: 0) {
+                            infoRow(
+                                title: "Version Information",
+                                detail: ReleaseHistory.current.versionString,
+                                icon: "info.circle"
+                            ) {
+                                activeInfoPage = .version
+                            }
+
+                            Divider()
+                                .padding(.leading, 36)
+
+                            infoRow(
+                                title: "Privacy Policy",
+                                detail: "Last updated \(PrivacyPolicyContent.lastUpdated)",
+                                icon: "hand.raised"
+                            ) {
+                                activeInfoPage = .privacy
+                            }
+
+                            Divider()
+                                .padding(.leading, 36)
+
+                            infoRow(
+                                title: "Terms of Service",
+                                detail: "Effective \(TermsOfServiceContent.effectiveDate)",
+                                icon: "doc.text"
+                            ) {
+                                activeInfoPage = .terms
+                            }
+                        }
+                    }
+
+                    // Version & release information
+                    MacCard(title: "Rosterra for Mac", icon: "app.badge.fill") {
+                        let release = ReleaseHistory.current
+                        HStack(alignment: .top, spacing: MacSpace.xl) {
+                            Image("AppLogo")
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 64, height: 64)
+                                .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+                                .shadow(color: MacColor.accent.opacity(0.18), radius: 8, x: 0, y: 4)
+
+                            VStack(alignment: .leading, spacing: MacSpace.md) {
+                                HStack(alignment: .firstTextBaseline) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Version \(release.version)")
+                                            .font(MacType.sectionHeader)
+                                            .foregroundStyle(MacColor.textPrimary)
+                                        Text("Build \(release.build) · \(release.formattedReleaseDate)")
+                                            .font(MacType.caption)
+                                            .foregroundStyle(MacColor.textTertiary)
+                                    }
+
+                                    Spacer()
+
+                                    Text(release.updateType.label)
+                                        .font(MacType.captionStrong)
+                                        .foregroundStyle(MacColor.accent)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
+                                        .background(MacColor.accent.opacity(0.1), in: Capsule())
+                                }
+
+                                Text(release.summary)
+                                    .font(MacType.body)
+                                    .foregroundStyle(MacColor.textSecondary)
+
+                                Divider()
+
+                                VStack(alignment: .leading, spacing: MacSpace.sm) {
+                                    Text("WHAT’S NEW")
+                                        .font(MacType.badge)
+                                        .tracking(0.7)
+                                        .foregroundStyle(MacColor.textTertiary)
+
+                                    ForEach(Array(release.features.prefix(4).enumerated()), id: \.offset) { _, item in
+                                        Label {
+                                            Text(item)
+                                                .font(MacType.caption)
+                                                .foregroundStyle(MacColor.textSecondary)
+                                        } icon: {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .foregroundStyle(MacColor.success)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Sign Out Card
                     MacCard {
                         HStack {
@@ -162,6 +273,66 @@ struct MacAccountView: View {
                 auth.signOut()
             }
             Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private func infoRow(
+        title: String,
+        detail: String,
+        icon: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: MacSpace.md) {
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(MacColor.accent)
+                    .frame(width: 22)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(MacType.bodyStrong)
+                        .foregroundStyle(MacColor.textPrimary)
+                    Text(detail)
+                        .font(MacType.caption)
+                        .foregroundStyle(MacColor.textTertiary)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(MacColor.textTertiary)
+            }
+            .padding(.vertical, MacSpace.md)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func infoPage(_ page: InfoPage) -> some View {
+        NavigationStack {
+            Group {
+                switch page {
+                case .version:
+                    AppVersionHistoryView()
+                case .privacy:
+                    PrivacyPolicyView()
+                case .terms:
+                    TermsOfServiceView()
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .navigation) {
+                    Button {
+                        activeInfoPage = nil
+                    } label: {
+                        Label("Account Settings", systemImage: "chevron.left")
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .help("Back to Account Settings")
+                }
+            }
         }
     }
 

@@ -7,6 +7,8 @@ struct HomeView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var activeSheet: HomeSheet?
+    @State private var currentTime = Date()
+    @State private var shiftHandover: StaffShiftHandover?
 
     private enum HomeSheet: Identifiable {
         case messages
@@ -20,7 +22,7 @@ struct HomeView: View {
     }
     @State private var toastMessage: ToastMessage?
 
-    private var now: Date { Date() }
+    private var now: Date { currentTime }
     private var todayKey: String { RosterCalendar.todayKey(now) }
 
     private var dashboard: HomeDashboardSnapshot {
@@ -98,6 +100,7 @@ struct HomeView: View {
                 }
             }
             .toast($toastMessage)
+            .task { await monitorShiftHandover() }
         }
     }
 
@@ -105,6 +108,9 @@ struct HomeView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 24) {
                 phoneGreeting
+                if let handover = visibleShiftHandover {
+                    shiftHandoverBanner(handover)
+                }
                 if repo.isLoading {
                     SkeletonCard()
                     SkeletonCard()
@@ -135,6 +141,9 @@ struct HomeView: View {
                 SkeletonCard()
             } else {
                 companyHeader
+                if let handover = visibleShiftHandover {
+                    shiftHandoverBanner(handover)
+                }
                 todaySection
                 dailyJobsCard
                 tasksDashboardCard
@@ -197,6 +206,81 @@ struct HomeView: View {
         }
         .accessibilityLabel("Notifications, \(badgeCount) unread")
         .help("Notifications, \(badgeCount) unread")
+    }
+
+    // MARK: Shift handover
+
+    private var handoverCandidate: Shift? {
+        HomeDashboardSnapshot.handoverCandidate(shifts: repo.shifts, now: now)
+    }
+
+    private var visibleShiftHandover: StaffShiftHandover? {
+        guard let shiftHandover, handoverCandidate?.id == shiftHandover.shiftId else { return nil }
+        return shiftHandover
+    }
+
+    private func shiftHandoverBanner(_ handover: StaffShiftHandover) -> some View {
+        let names = ListFormatter.localizedString(byJoining: handover.names)
+        let verb = handover.names.count == 1 ? "starts" : "start"
+        let endTime = handoverCandidate.map { RosterFormat.time($0.rosteredEnd) } ?? "soon"
+
+        return HStack(spacing: 14) {
+            Image(systemName: "person.crop.circle.badge.clock")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(Theme.brand)
+                .frame(width: 42, height: 42)
+                .background(Theme.brand.opacity(0.12), in: Circle())
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Who’s starting next")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text("\(names) \(verb) at \(endTime).")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+
+            Spacer(minLength: 4)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.brand.opacity(0.08), in: RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: Theme.cornerMedium, style: .continuous)
+                .strokeBorder(Theme.brand.opacity(0.22), lineWidth: 1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Who is starting next. \(names) \(verb) at \(endTime).")
+    }
+
+    @MainActor
+    private func monitorShiftHandover() async {
+        while !Task.isCancelled {
+            currentTime = Date()
+            if let candidate = handoverCandidate {
+                do {
+                    let fetched = try await WorkerAPIClient.shared.shiftHandover(shiftId: candidate.id)
+                    // The request may finish as the window closes or the roster
+                    // refreshes. Never display a response for a stale shift.
+                    currentTime = Date()
+                    shiftHandover = handoverCandidate?.id == candidate.id ? fetched : nil
+                } catch {
+                    // A transient network failure must not leak stale details
+                    // from a different shift. Keeping the same shift's existing
+                    // banner avoids flicker while offline.
+                    if shiftHandover?.shiftId != candidate.id { shiftHandover = nil }
+                }
+            } else {
+                shiftHandover = nil
+            }
+
+            do {
+                try await Task.sleep(for: .seconds(60))
+            } catch {
+                return
+            }
+        }
     }
 
     // MARK: iPhone dashboard
@@ -1101,6 +1185,19 @@ struct HomeDashboardSnapshot {
         if activeClockShiftId == shiftId { return true }
         guard activeClockShiftId == nil else { return false }
         return !hasTimesheet
+    }
+
+    /// Selects only a published shift currently inside its final 30 minutes.
+    /// The Worker independently enforces the same window and ownership before
+    /// returning any names; this client check only controls banner timing.
+    static func handoverCandidate(shifts: [Shift], now: Date) -> Shift? {
+        let windowStart = now.addingTimeInterval(30 * 60)
+        return shifts
+            .filter { shift in
+                shift.status == .published && shift.submittableAfterDate > now &&
+                    shift.submittableAfterDate <= windowStart
+            }
+            .min { $0.submittableAfterDate < $1.submittableAfterDate }
     }
 
     static func missedTimesheetShifts(
