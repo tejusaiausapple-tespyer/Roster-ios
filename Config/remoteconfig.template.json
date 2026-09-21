@@ -1,0 +1,34 @@
+{
+  "parameters": {
+    "ios_latest_version": {
+      "defaultValue": { "value": "2.2" },
+      "description": "Latest Rosterra version publicly available in the Australian App Store.",
+      "valueType": "STRING"
+    },
+    "ios_minimum_supported_version": {
+      "defaultValue": { "value": "2.2" },
+      "description": "Minimum iOS/iPadOS version allowed to continue into the app.",
+      "valueType": "STRING"
+    },
+    "ios_force_update": {
+      "defaultValue": { "value": "false" },
+      "description": "Emergency switch that requires the latest public iOS version.",
+      "valueType": "BOOLEAN"
+    },
+    "mac_latest_version": {
+      "defaultValue": { "value": "2.2" },
+      "description": "Latest Rosterra version publicly available for Mac.",
+      "valueType": "STRING"
+    },
+    "mac_minimum_supported_version": {
+      "defaultValue": { "value": "2.2" },
+      "description": "Minimum Mac Catalyst version allowed to continue into the app.",
+      "valueType": "STRING"
+    },
+    "mac_force_update": {
+      "defaultValue": { "value": "false" },
+      "description": "Emergency switch that requires the latest public Mac version.",
+      "valueType": "BOOLEAN"
+    }
+  }
+}

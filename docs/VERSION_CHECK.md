@@ -57,7 +57,7 @@ Do this **only after** the new version is visible on Apple’s lookup API (propa
 Open (replace version expectation with yours):
 
 ```text
-https://itunes.apple.com/lookup?id=6791077796
+https://itunes.apple.com/lookup?id=6791077796&country=au
 ```
 
 In the JSON, check `results[0].version` matches the marketing version you just shipped (same as `MARKETING_VERSION` in `project.yml`).
@@ -76,7 +76,9 @@ If the lookup still shows the **old** version, **do not** raise the Firebase flo
 
 In Firebase Console → Remote Config → **Publish changes**.
 
-The app fetches with `minimumFetchInterval = 0` on launch / foreground / login, so clients pick up the new values on the next check.
+The app fetches on cold launch, foreground and login, and keeps a real-time
+Remote Config listener while it is open. Existing clients pick up the new
+values on their next successful online check.
 
 ### 4. Smoke-test on a device
 
@@ -127,6 +129,8 @@ The static changelog in `Rosterra/Models/AppRelease.swift` (`ReleaseHistory`) is
 ## Gotchas
 
 - **Never raise the floor before Apple lookup shows the new version.**
+- Always query the Australian storefront (`country=au`); the API defaults to
+  the US storefront, where Rosterra is not listed.
 - Floor ahead of Store is intentionally **not** enforced as mandatory (avoids an unrecoverable loop).
 - Unparseable installed version fails open (does not block).
 - Staff and managers are both gated on iOS before any dashboard.

@@ -31,6 +31,10 @@ struct MacRootView: View {
             auth.bind(repository: repo)
             MacWindow.configureAllScenes()
         }
+        .task {
+            await versionCheck.check()
+            versionCheck.startListeningForUpdates()
+        }
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .active:
@@ -43,6 +47,30 @@ struct MacRootView: View {
                 auth.handleScenePhase(.background)
             @unknown default:
                 break
+            }
+        }
+        .onChange(of: auth.uid) { _, newUID in
+            guard newUID != nil else { return }
+            Task { await versionCheck.check() }
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { versionCheck.isUpdateRequired },
+            set: { _ in }
+        )) {
+            if case .required(let minimumVersion) = versionCheck.status {
+                UpdateRequiredView(minimumVersion: minimumVersion)
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { versionCheck.isUpdateAvailable },
+            set: { isPresented in
+                if !isPresented { versionCheck.dismissOptionalUpdate() }
+            }
+        )) {
+            if case .optional(let latestVersion) = versionCheck.status {
+                UpdateAvailableSheet(latestVersion: latestVersion) {
+                    versionCheck.dismissOptionalUpdate()
+                }
             }
         }
         .onChange(of: repo.currentUser?.status) { _, status in

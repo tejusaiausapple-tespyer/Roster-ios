@@ -227,6 +227,22 @@ final class AppVersionCheckServiceTests: XCTestCase {
         let decoded = try JSONDecoder().decode(AppStoreLookupResponse.self, from: json)
         XCTAssertNil(decoded.latestVersion)
     }
+
+    func testAppStoreLookupUsesAustralianStorefront() throws {
+        let url = AppStoreVersionLookup.lookupURL(
+            appStoreID: "6791077796",
+            countryCode: "AU"
+        )
+        let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        let query = Dictionary(uniqueKeysWithValues: try XCTUnwrap(components.queryItems).map {
+            ($0.name, $0.value)
+        })
+
+        XCTAssertEqual(components.host, "itunes.apple.com")
+        XCTAssertEqual(components.path, "/lookup")
+        XCTAssertEqual(query["id"], "6791077796")
+        XCTAssertEqual(query["country"], "au")
+    }
 }
 
 // MARK: - Stub helpers

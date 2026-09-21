@@ -77,10 +77,23 @@ struct AppStoreVersionLookup: AppStoreVersionLooking {
 
     init(
         session: URLSession = .shared,
-        appStoreID: String = AppStoreVersionLookup.appStoreID
+        appStoreID: String = AppStoreVersionLookup.appStoreID,
+        countryCode: String = "au"
     ) {
         self.session = session
-        self.url = URL(string: "https://itunes.apple.com/lookup?id=\(appStoreID)")!
+        self.url = Self.lookupURL(appStoreID: appStoreID, countryCode: countryCode)
+    }
+
+    /// Rosterra is distributed through the Australian storefront. Apple's
+    /// lookup API otherwise defaults to the US storefront, where this app ID
+    /// returns no results and silently disables Store-version detection.
+    static func lookupURL(appStoreID: String, countryCode: String) -> URL {
+        var components = URLComponents(string: "https://itunes.apple.com/lookup")!
+        components.queryItems = [
+            URLQueryItem(name: "id", value: appStoreID),
+            URLQueryItem(name: "country", value: countryCode.lowercased()),
+        ]
+        return components.url!
     }
 
     func fetchLatestVersion() async -> String? {
@@ -179,6 +192,13 @@ enum AppVersionCheck {
 
 protocol AppVersionChecking: AnyObject {
     func checkForUpdate() async -> AppUpdateStatus
+    func startListeningForUpdates(onUpdate: @escaping @Sendable () -> Void)
+    func stopListeningForUpdates()
+}
+
+extension AppVersionChecking {
+    func startListeningForUpdates(onUpdate: @escaping @Sendable () -> Void) {}
+    func stopListeningForUpdates() {}
 }
 
 // MARK: - AppVersionCheckService (Remote Config + App Store)
@@ -212,6 +232,7 @@ final class AppVersionCheckService: AppVersionChecking {
     private let remoteConfig: RemoteConfig
     private let installedVersion: String
     private let appStoreLookup: AppStoreVersionLooking?
+    private var configUpdateListener: ConfigUpdateListenerRegistration?
 
     init(
         remoteConfig: RemoteConfig = RemoteConfig.remoteConfig(),
@@ -268,5 +289,30 @@ final class AppVersionCheckService: AppVersionChecking {
             forceUpdate: forceUpdate
         )
         #endif
+    }
+
+    /// Keeps an open foreground listener so a newly published mandatory floor
+    /// can be enforced without waiting for another launch or scene transition.
+    func startListeningForUpdates(onUpdate: @escaping @Sendable () -> Void) {
+        guard configUpdateListener == nil else { return }
+        configUpdateListener = remoteConfig.addOnConfigUpdateListener { update, error in
+            if let error {
+                print("AppVersionCheckService: real-time update failed: \(error.localizedDescription)")
+                return
+            }
+            guard let update else { return }
+            let relevantKeys: Set<String> = [
+                Key.latestVersion,
+                Key.minimumSupportedVersion,
+                Key.forceUpdate,
+            ]
+            guard !update.updatedKeys.isDisjoint(with: relevantKeys) else { return }
+            onUpdate()
+        }
+    }
+
+    func stopListeningForUpdates() {
+        configUpdateListener?.remove()
+        configUpdateListener = nil
     }
 }

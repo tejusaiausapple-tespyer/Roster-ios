@@ -65,6 +65,24 @@ final class AppVersionCheckViewModel {
         } while needsRecheck
     }
 
+    /// Begins a single foreground Remote Config listener for this app session.
+    /// A pushed policy change is re-evaluated through the same serialized path
+    /// as launch, login and foreground checks.
+    @MainActor
+    func startListeningForUpdates() {
+        if !hasInjectedService {
+            guard FirebaseBootstrap.hasConfigFile else { return }
+        }
+
+        let service = self.service ?? AppVersionCheckService()
+        self.service = service
+        service.startListeningForUpdates { [weak self] in
+            Task { @MainActor in
+                await self?.check()
+            }
+        }
+    }
+
     func dismissOptionalUpdate() {
         if case .optional(let latestVersion) = status {
             dismissedOptionalVersion = latestVersion

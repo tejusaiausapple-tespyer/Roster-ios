@@ -51,6 +51,45 @@ enum ReleaseHistory {
 
     static let all: [AppRelease] = [
         AppRelease(
+            version: "2.2.1",
+            build: "40",
+            releaseDate: releaseDate(2026, 9, 21),
+            updateType: .patch,
+            summary: "Reliable update notifications across iPhone, iPad and Mac.",
+            features: [
+                "Update requirements can refresh immediately while the app is open",
+                "Mac now presents the same required and optional update screens as iPhone and iPad",
+            ],
+            bugFixes: [
+                "App Store version checks now use the Australian storefront where Rosterra is available",
+                "Version checks now run reliably on cold launch as well as foreground and login",
+                "The production minimum-version policy is stored alongside the release configuration",
+            ],
+            commitHash: "pending"
+        ),
+        AppRelease(
+            version: "2.2",
+            build: "39",
+            releaseDate: releaseDate(2026, 9, 20),
+            updateType: .minor,
+            summary: "Faster Mac roster planning, stronger timesheet controls and more reliable payroll calculations.",
+            features: [
+                "Mac Roster now includes an in-place weekly availability preview, improved move and copy controls, and bulk deletion for draft shifts",
+                "Mac Team Availability has a redesigned no-scroll weekly matrix with clearer coverage and availability states",
+                "Managers can review the complete roster history while staff retain a focused four-week availability window",
+                "Managers can edit submitted timesheet hours and add or correct breaks, including after approval",
+                "Staff receive an upcoming handover reminder showing who starts the next shift",
+                "Mac Account settings now includes version information, Privacy Policy and Terms of Service",
+            ],
+            bugFixes: [
+                "Editing payroll hours now recalculates PAYG withholding and superannuation before saving",
+                "Manager-added breaks correctly reduce worked hours",
+                "Availability previews no longer clip corners or hide weekly data",
+                "Mac sheets, cards and action buttons use more consistent sizing and presentation",
+            ],
+            commitHash: "pending"
+        ),
+        AppRelease(
             version: "2.1",
             build: "38",
             releaseDate: releaseDate(2026, 9, 16),

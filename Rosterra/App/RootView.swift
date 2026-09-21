@@ -15,11 +15,12 @@ struct RootView: View {
             .background(Theme.background.ignoresSafeArea())
             .animation(.easeInOut(duration: 0.28), value: route)
             .onAppear { auth.bind(repository: repo) }
-            // scenePhase transitions to .active on cold launch too (there's
-            // no separate "first activation" case), so this alone already
-            // covers launch — a `.task { await versionCheck.check() }`
-            // alongside it fired a second, redundant check on every cold
-            // launch instead of only on genuine return-from-background.
+            // `onChange(scenePhase)` is not guaranteed to fire for the initial
+            // active value, so cold launch needs an explicit first check.
+            .task {
+                await versionCheck.check()
+                versionCheck.startListeningForUpdates()
+            }
             .onChange(of: scenePhase) { _, newPhase in
                 switch newPhase {
                 case .active:

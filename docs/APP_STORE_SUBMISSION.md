@@ -8,31 +8,27 @@ Apple ID: `6791077796` · Product page: https://apps.apple.com/app/id6791077796
 
 ---
 
-## Version 2.1 (Build 38) — What’s New
+## Version 2.2.1 (Build 40) — What’s New
 
 ### iPhone and iPad — App Store Connect text
 
-Rosterra 2.1 introduces a new app identity and important reliability improvements:
+Rosterra 2.2.1 improves update reliability:
 
-- A completely new Rosterra app logo and refreshed visual identity.
-- Mandatory update protection helps keep staff and managers on a supported version.
-- Improved launch, login and foreground version checks.
-- Payroll PDF reliability and general workflow refinements.
+- New App Store versions are detected through the correct Australian storefront.
+- Update checks run reliably when the app first opens, returns to the foreground, or signs in.
+- Required-version changes can refresh immediately while the app is open.
 
-This release also includes interface improvements and fixes across the staff and manager experience.
+This release also includes stability improvements across iPhone and iPad.
 
 ### Mac — App Store Connect text
 
-Rosterra 2.1 is a major upgrade to the Mac manager workspace:
+Rosterra 2.2.1 improves update reliability on Mac:
 
-- A completely new Rosterra app logo and refreshed visual identity.
-- Generate, preview, share and print approved pay run PDFs.
-- Pay run reports include period totals, employee earnings, final hours and recorded hour or rate adjustments.
-- A redesigned full-width Company Details workspace with no scrolling.
-- The Rosterra logo remains available when the navigation sidebar is collapsed.
-- Expanded manager workflows across payroll, staff, reporting, rosters and business administration.
+- Mac now presents required and optional update screens consistently.
+- Version checks run on cold launch, foreground and login.
+- Required-version policy changes can refresh immediately while the app is open.
 
-This release also improves PDF performance, native Mac printing and overall stability.
+This release also includes general stability improvements.
 
 > Copy the relevant block into App Store Connect → platform version →
 > **What’s New in This Version**. Keep build numbers out of the public text.
