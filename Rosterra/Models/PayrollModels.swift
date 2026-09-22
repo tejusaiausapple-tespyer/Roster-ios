@@ -44,6 +44,11 @@ enum PayslipStatus: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Only in-progress payslips may be rebuilt by Generate Payslips.
+    /// Approval freezes the calculated snapshot; later generation runs must
+    /// leave it (and every subsequent state) unchanged.
+    var isRegeneratable: Bool { self == .draft || self == .underReview }
+
     /// Staff may see the payslip in these states.
     var isStaffVisible: Bool { self == .submitted || self == .archived }
 }
@@ -86,7 +91,7 @@ struct PayrollGapItem: Identifiable, Equatable {
 
 /// An unpublished payslip whose snapshotted hours no longer match the latest
 /// approved timesheets. Regeneration is always an explicit manager action
-/// because it replaces manual adjustments and returns an approved slip to Draft.
+/// because it replaces manual adjustments on a draft or under-review slip.
 struct PayslipRegenerationChange: Identifiable, Equatable {
     var id: String { payslip.id }
     let payslip: Payslip

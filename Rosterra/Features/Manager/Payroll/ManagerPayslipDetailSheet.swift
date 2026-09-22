@@ -556,8 +556,11 @@ struct ManagerPayslipDetailSheet: View {
             defer { isWorking = false }
             do {
                 if regenerate {
-                    try await repo.regenerateDraftPayslip(slip)
-                    toast = ToastMessage(kind: .success, text: "Recalculated from current timesheets.")
+                    if try await repo.regenerateDraftPayslip(slip) {
+                        toast = ToastMessage(kind: .success, text: "Recalculated from current timesheets.")
+                    } else {
+                        toast = ToastMessage(kind: .info, text: "This payslip is no longer refreshable and was not changed.")
+                    }
                 } else {
                     // Persist pending edits with the transition so nothing is lost.
                     if isDirty {

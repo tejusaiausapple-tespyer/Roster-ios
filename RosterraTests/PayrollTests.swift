@@ -320,6 +320,14 @@ final class PayrollTests: XCTestCase {
         XCTAssertFalse(PayslipStatus.archived.isEditable)
     }
 
+    func testOnlyInProgressPayslipsCanBeRegenerated() {
+        XCTAssertTrue(PayslipStatus.draft.isRegeneratable)
+        XCTAssertTrue(PayslipStatus.underReview.isRegeneratable)
+        XCTAssertFalse(PayslipStatus.approved.isRegeneratable)
+        XCTAssertFalse(PayslipStatus.submitted.isRegeneratable)
+        XCTAssertFalse(PayslipStatus.archived.isRegeneratable)
+    }
+
     func testStaffVisibility() {
         // The core product rule: staff see nothing before submission.
         XCTAssertFalse(PayslipStatus.draft.isStaffVisible)

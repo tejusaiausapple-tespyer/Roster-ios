@@ -15,6 +15,7 @@ This directory contains all project documentation for the Rosterra iOS app.
 | [`WHEN_DEVELOPER_ACCOUNT_READY.md`](WHEN_DEVELOPER_ACCOUNT_READY.md) | Setup | Push notification enablement — resolved 2026-07-15, now a closure note |
 | [`VERSION_CHECK.md`](VERSION_CHECK.md) | Ops / Release | Hybrid App Store + Firebase Remote Config update gate — keys, post-release checklist, rollback |
 | [`smoke-test.md`](smoke-test.md) | QA | Manual regression checklist — run before merging any milestone/change |
+| [`roster-access-receipts-plan.md`](roster-access-receipts-plan.md) | Planning / Privacy | Deferred, staff-authorised roster access receipt and OTP design; not approved for implementation |
 | [`manager-roster-redesign-plan.md`](manager-roster-redesign-plan.md) | Archive | Completed 2026 roster redesign plan (historical reference) |
 
 ---

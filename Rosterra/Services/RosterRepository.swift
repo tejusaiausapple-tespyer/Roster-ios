@@ -1791,7 +1791,7 @@ final class RosterRepository {
 
         return payslips.compactMap { slip in
             guard slip.periodStart == periodStart,
-                  slip.status != .submitted, slip.status != .archived,
+                  slip.status.isRegeneratable,
                   let user = usersById[slip.staffId] else { return nil }
             let latest = buildDraftPayslip(
                 docId: slip.id,
@@ -2075,29 +2075,55 @@ final class RosterRepository {
         return eligible.count
     }
 
-    /// Regenerate an unpublished payslip from current timesheet + wage data,
-    /// REPLACING its amounts (explicit manager action; keeps the audit trail).
-    /// An approved payslip returns to Draft because its approved calculation is
-    /// no longer the one being paid. Submitted/archived records stay immutable.
-    func regenerateDraftPayslip(_ slip: Payslip) async throws {
-        guard slip.status != .submitted, slip.status != .archived,
+    /// Regenerate a draft/under-review payslip from current timesheet + wage
+    /// data, REPLACING its amounts (explicit manager action; keeps the audit
+    /// trail). Approved/submitted/archived records are immutable to generation.
+    ///
+    /// The status is re-read inside the write transaction so a stale screen (or
+    /// another manager approving the slip concurrently) cannot overwrite an
+    /// approved record. Returns false when the latest server state is protected.
+    @discardableResult
+    func regenerateDraftPayslip(_ slip: Payslip) async throws -> Bool {
+        guard slip.status.isRegeneratable,
               let manager = currentUser,
-              let user = usersById[slip.staffId] else { return }
+              let user = usersById[slip.staffId] else { return false }
         // Fresh from the server, not the live shifts/timesheets cache — see
         // fetchApprovedWorkedHours.
         let hoursByStaff = try await fetchApprovedWorkedHours(periodStart: slip.periodStart, periodEnd: slip.periodEnd)
         let byDate = hoursByStaff[slip.staffId] ?? [:]
-        var fresh = buildDraftPayslip(docId: slip.id, user: user,
+        let fresh = buildDraftPayslip(docId: slip.id, user: user,
                                       profile: staffWageProfile(for: slip.staffId),
                                       periodStart: slip.periodStart, periodEnd: slip.periodEnd,
                                       workedHoursByDate: byDate, generatedBy: manager)
-        fresh.audit = slip.audit
-        fresh.audit.append(PayslipAuditEntry(action: "regenerated", userId: manager.id,
-                                             userName: manager.fullName,
-                                             detail: slip.status == .approved
-                                                ? "Recalculated from current timesheets and returned to Draft for approval"
-                                                : "Recalculated from current timesheets and wage assignment"))
-        try await db.collection("payslips").document(slip.id).setData(fresh.asDictionary)
+        let docRef = db.collection("payslips").document(slip.id)
+        let result = try await db.runTransaction { transaction, errorPointer -> Any? in
+            let snapshot: DocumentSnapshot
+            do {
+                snapshot = try transaction.getDocument(docRef)
+            } catch let fetchError as NSError {
+                errorPointer?.pointee = fetchError
+                return nil
+            }
+
+            guard let data = snapshot.data(),
+                  let current = Payslip(id: snapshot.documentID, data: data),
+                  current.status.isRegeneratable else {
+                return NSNumber(value: false)
+            }
+
+            var regenerated = fresh
+            regenerated.status = current.status
+            regenerated.audit = current.audit
+            regenerated.audit.append(PayslipAuditEntry(
+                action: "regenerated",
+                userId: manager.id,
+                userName: manager.fullName,
+                detail: "Recalculated from current timesheets and wage assignment"
+            ))
+            transaction.setData(regenerated.asDictionary, forDocument: docRef)
+            return NSNumber(value: true)
+        }
+        return (result as? NSNumber)?.boolValue ?? false
     }
 
     // MARK: - Staff payslips (month-keyed, cache-first)

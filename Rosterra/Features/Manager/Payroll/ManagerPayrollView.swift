@@ -438,7 +438,7 @@ struct ManagerPayrollView: View {
             : ""
         return "The latest approved timesheets differ from the current pay run:\n\n"
             + rows.joined(separator: "\n") + remainder
-            + "\n\nRegenerating recalculates pay, PAYG and super and replaces manual edits. Approved payslips return to Draft for review. Published payslips are never changed."
+            + "\n\nRegenerating recalculates pay, PAYG and super and replaces manual edits on Draft and Under Review payslips only. Approved and published payslips are never changed."
     }
 
     private func checkForTimesheetChanges() {
@@ -469,13 +469,16 @@ struct ManagerPayrollView: View {
             defer { isGenerating = false }
             do {
                 let created = try await repo.generateDraftPayslips(weekStart: weekMonday)
-                for slip in slips { try await repo.regenerateDraftPayslip(slip) }
+                var regenerated = 0
+                for slip in slips where slip.status.isRegeneratable {
+                    if try await repo.regenerateDraftPayslip(slip) { regenerated += 1 }
+                }
                 regenerationChanges = []
-                if created > 0 || !slips.isEmpty {
+                if created > 0 || regenerated > 0 {
                     let createdText = created > 0 ? "Created \(created) new" : ""
-                    let separator = created > 0 && !slips.isEmpty ? " and " : ""
-                    let refreshedText = slips.isEmpty ? "" : "regenerated \(slips.count)"
-                    toast = ToastMessage(kind: .success, text: "\(createdText)\(separator)\(refreshedText) payslip\((created + slips.count) == 1 ? "" : "s") from the latest approved timesheets.")
+                    let separator = created > 0 && regenerated > 0 ? " and " : ""
+                    let refreshedText = regenerated == 0 ? "" : "regenerated \(regenerated)"
+                    toast = ToastMessage(kind: .success, text: "\(createdText)\(separator)\(refreshedText) payslip\((created + regenerated) == 1 ? "" : "s") from the latest approved timesheets.")
                     Haptics.success()
                 } else {
                     toast = ToastMessage(kind: .info, text: "Pay run is up to date with approved timesheets.")
