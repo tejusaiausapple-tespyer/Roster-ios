@@ -70,6 +70,14 @@ struct WorkerAPIClient {
 
     // MARK: - Staff endpoints
 
+    /// Revoke this account's Firebase sessions across iOS, macOS, Android and web.
+    func signOutEverywhere(password: String) async throws {
+        let result = try await post(path: "api/sign-out-everywhere", body: ["password": password])
+        guard result["ok"] as? Bool == true else {
+            throw WorkerAPIError.server((result["error"] as? String) ?? "Could not sign out other devices.")
+        }
+    }
+
     /// POST /api/staff/availability — server enforces the trusted week lock.
     func saveAvailability(userId: String, weeklyAvailability: [String: UserAvailability]) async throws {
         var weekly: [String: Any] = [:]

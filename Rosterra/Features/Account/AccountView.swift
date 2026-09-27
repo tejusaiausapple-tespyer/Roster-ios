@@ -25,7 +25,7 @@ struct AccountView: View {
     @State private var showNotificationExplainer = false
 
     private enum AccountSheet: Identifiable {
-        case changePassword, changeEmail, verifyPassword, verifyPasskey, imagePicker
+        case changePassword, changeEmail, verifyPassword, verifyPasskey, signOutEverywhere, imagePicker
         var id: String { String(describing: self) }
     }
 
@@ -108,6 +108,22 @@ struct AccountView: View {
                             symbolName: "person.badge.key.fill"
                         ) { verifiedPassword in
                             Task { await enablePasskey(email: email, password: verifiedPassword) }
+                        }
+                    }
+                case .signOutEverywhere:
+                    if let email = user?.email {
+                        VerifyPasswordSheet(
+                            email: email,
+                            heading: "Sign Out Everywhere",
+                            detail: "Confirm your password. Every device using this account will need to sign in again.",
+                            navigationTitle: "Sign Out Everywhere",
+                            symbolName: "rectangle.portrait.and.arrow.right",
+                            actionLabel: "Sign Out All Devices"
+                        ) { password in
+                            Task {
+                                do { try await auth.signOutEverywhere(password: password) }
+                                catch { toastMessage = ToastMessage(kind: .error, text: error.localizedDescription) }
+                            }
                         }
                     }
                 case .imagePicker:
@@ -451,6 +467,11 @@ struct AccountView: View {
             } label: {
                 Label("Change password", systemImage: "key")
             }
+            Button {
+                activeSheet = .signOutEverywhere
+            } label: {
+                Label("Sign out everywhere", systemImage: "rectangle.portrait.and.arrow.right")
+            }
         } header: {
             Text("Security")
         } footer: {
@@ -707,6 +728,7 @@ struct VerifyPasswordSheet: View {
     var detail: String = "Confirm your password to securely store your credentials on this device."
     var navigationTitle: String = "Enable Biometrics"
     var symbolName: String = "faceid"
+    var actionLabel: String = "Verify & Enable"
     let onVerifySuccess: (String) -> Void
     
     @State private var password = ""
@@ -759,7 +781,7 @@ struct VerifyPasswordSheet: View {
                         if isVerifying {
                             ProgressView().tint(.white)
                         } else {
-                            Text("Verify & Enable")
+                            Text(actionLabel)
                         }
                     }
                     .buttonStyle(PrimaryButtonStyle())

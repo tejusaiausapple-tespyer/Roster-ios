@@ -98,6 +98,7 @@ struct MacManagerTenureView: View {
             actions: {
                 MacRefreshButton("Refresh tenure data") {
                     await repo.refreshFromServer()
+                    await repo.refreshManagerShiftHistory()
                 }
             }
         ) {

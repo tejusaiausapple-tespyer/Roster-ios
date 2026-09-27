@@ -169,6 +169,9 @@ struct MacManagerRosterView: View {
                 }
             }
         }
+        .task(id: weekStartKey) {
+            await repo.loadManagerShiftWeekIfNeeded(monday)
+        }
         .sheet(item: $activeSheet) { sheet in
             sheetContent(sheet)
                 .macObserved(repo: repo, toasts: toasts)

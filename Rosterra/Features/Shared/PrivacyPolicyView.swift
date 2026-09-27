@@ -52,7 +52,7 @@ struct PrivacyPolicyView: View {
 }
 
 enum PrivacyPolicyContent {
-    static let lastUpdated = "16 July 2026"
+    static let lastUpdated = "24 September 2026"
 
     static let intro = """
     This Privacy Policy explains how SURA INVESTMENTS PTY LTD ("we", "our", or "us") collects, uses, stores, and protects personal information when you use the Rosterra application for iOS, iPadOS, and macOS, and our related website.
@@ -99,7 +99,7 @@ enum PrivacyPolicyContent {
         ]),
         Section(id: "analytics", heading: "Usage Analytics", paragraphs: [
             "The Rosterra iOS, iPadOS, and macOS apps do not use Firebase Analytics or advertising identifiers.",
-            "The signed-in web version of Rosterra may use Firebase Analytics to collect limited usage events (such as sign-in activity, timesheet submissions, and feature usage) to improve performance and resolve issues. Analytics data is not used for advertising purposes.",
+            "The former full web app used Firebase Analytics to collect limited usage events (such as sign-in activity, timesheet submissions, and feature usage) to improve performance and resolve issues. Analytics data is not used for advertising purposes. The manager backup portal does not use usage analytics.",
             "Our public marketing website does not use cookies, advertising technologies, or visitor analytics.",
         ]),
         Section(id: "use", heading: "How We Use Your Information", paragraphs: [
@@ -110,7 +110,7 @@ enum PrivacyPolicyContent {
         Section(id: "sharing", heading: "Sharing Your Information", paragraphs: [
             "We only share personal information where necessary to operate the service.",
             "This may include:",
-            "• Your employer, who controls your workplace data.\n• Google Firebase and Google Cloud Platform, which provide secure hosting, authentication, storage, crash diagnostics, and notification services (and, for the signed-in web app, limited analytics).\n• Service providers who assist in operating the App under appropriate confidentiality and security obligations.\n• Government authorities where required by law.",
+            "• Your employer, who controls your workplace data.\n• Google Firebase and Google Cloud Platform, which provide secure hosting, authentication, storage, crash diagnostics, and notification services (and, for the former full web app, limited analytics).\n• Service providers who assist in operating the App under appropriate confidentiality and security obligations.\n• Government authorities where required by law.",
             "We do not share your personal information with third parties for marketing purposes.",
         ]),
         Section(id: "storage", heading: "Data Storage and Security", paragraphs: [
@@ -140,7 +140,7 @@ enum PrivacyPolicyContent {
         Section(id: "cookies", heading: "Cookies and Tracking", paragraphs: [
             "Our public website does not use cookies, advertising technologies, or visitor analytics.",
             "Rosterra does not use App Tracking Transparency, advertising identifiers, or third-party advertising trackers.",
-            "The iOS, iPadOS, and macOS apps use Firebase Crashlytics for crash diagnostics only. The signed-in web app may use Firebase Analytics as described above.",
+            "The iOS, iPadOS, and macOS apps use Firebase Crashlytics for crash diagnostics only. The former full web app used Firebase Analytics as described above. The manager backup portal does not use usage analytics.",
         ]),
         Section(id: "transfers", heading: "International Data Transfers", paragraphs: [
             "Because Rosterra uses Google Cloud and Firebase services, your information may be processed or stored on servers located outside Australia. Where this occurs, we take reasonable steps to ensure your personal information receives appropriate protection consistent with applicable privacy laws.",

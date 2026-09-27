@@ -549,7 +549,7 @@ struct ForgotPasswordSheet: View {
             Text("Check your email")
                 .font(.system(.title3, design: .rounded).weight(.bold))
                 .foregroundStyle(Theme.textPrimary)
-            Text("If an account exists for \(email), a password reset link is on its way. Check your inbox.")
+            Text("If \(email) matches your sign-in account, check its inbox and spam folder for a reset link. If nothing arrives, ask your manager to verify your account email or set a temporary password.")
                 .font(.subheadline)
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
@@ -570,6 +570,7 @@ struct ForgotPasswordSheet: View {
         defer { isWorking = false }
         do {
             try await AuthService.shared.sendPasswordReset(email: trimmed)
+            email = trimmed
             Haptics.success()
             withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { sent = true }
         } catch {

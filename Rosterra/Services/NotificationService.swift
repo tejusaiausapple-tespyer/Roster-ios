@@ -261,16 +261,15 @@ final class NotificationService: NSObject {
         router.handleNotificationUserInfo(info)
     }
 
-    /// Silent background push (content-available) — pull fresh Firestore data
-    /// so the next foreground open is current. Listeners alone may not wake
-    /// while suspended.
+    /// Silent background push (content-available) — sync clocks and auth state.
+    /// Active listeners and user foreground actions handle data freshness to prevent
+    /// push bursts from triggering uncached server read storms across devices.
     @MainActor
     func handleBackgroundPush(_ userInfo: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
         guard Auth.auth().currentUser != nil else { return .noData }
-        guard let repository else { return .noData }
+        guard repository != nil else { return .noData }
         await ServerClock.shared.sync()
         await PendingEmailChange.reconcileIfNeeded()
-        await repository.refreshFromServer()
         return .newData
     }
 

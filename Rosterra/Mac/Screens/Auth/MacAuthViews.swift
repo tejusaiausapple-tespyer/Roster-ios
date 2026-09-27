@@ -14,6 +14,7 @@ struct MacLoginView: View {
     @State private var showingResetPassword = false
     @State private var resetEmail = ""
     @State private var resetSuccessMessage: String?
+    @State private var resetErrorMessage: String?
     @State private var showsPassword = false
 
     private enum Field: Hashable {
@@ -232,6 +233,7 @@ struct MacLoginView: View {
                     Button("Forgot password?") {
                         resetEmail = email
                         resetSuccessMessage = nil
+                        resetErrorMessage = nil
                         showingResetPassword = true
                     }
                     .font(MacType.captionStrong)
@@ -350,6 +352,15 @@ struct MacLoginView: View {
 
                 TextField("Email address", text: $resetEmail)
                     .textFieldStyle(.roundedBorder)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .textContentType(.emailAddress)
+
+                if let resetErrorMessage {
+                    Text(resetErrorMessage)
+                        .font(MacType.body)
+                        .foregroundStyle(MacColor.error)
+                }
 
                 HStack {
                     Button("Cancel") { showingResetPassword = false }
@@ -357,14 +368,17 @@ struct MacLoginView: View {
 
                     MacAsyncButton(variant: .prominent) {
                         do {
-                            try await auth.sendPasswordReset(email: resetEmail)
-                            resetSuccessMessage = "Password reset email sent. Check your inbox."
+                            resetErrorMessage = nil
+                            let address = resetEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+                            try await auth.sendPasswordReset(email: address)
+                            resetSuccessMessage = "If \(address) matches your sign-in account, check its inbox and spam folder for a reset link. If nothing arrives, ask your manager to verify your account email or set a temporary password."
                         } catch {
-                            errorMessage = error.localizedDescription
+                            resetErrorMessage = error.localizedDescription
                         }
                     } label: {
                         Text("Send Reset Link")
                     }
+                    .disabled(resetEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }

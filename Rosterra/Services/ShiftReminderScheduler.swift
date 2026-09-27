@@ -6,15 +6,16 @@ import Foundation
 ///
 /// Reminder set per shift (all relative to the *rostered* start/end):
 ///   • 24 h before  — "You have a shift tomorrow at 9:00 AM."
-///   • 1 h  before  — "Your shift starts in 1 hour."
+///   • 6 h  before  — "Your shift starts in 6 hours, at 9:00 AM."
+///   • 1 h  before  — "Your shift starts in 1 hour, at 9:00 AM."
+///   • 30 m before  — "Your shift starts in 30 minutes, at 9:00 AM."
 ///   • 5 m  before  — "Start Shift is now available." (early check-in window)
 ///   • 10 m after start — "Don't forget to start your shift." (cancelled on clock-in)
 ///   • 10 m after end   — "Don't forget to end your shift."  (only while clocked in)
 ///   • 15 m after end   — "Submit your hours" (when timesheet not yet submitted)
 ///
-/// The 6h/30m pre-shift moments are deliberately NOT scheduled here — the
-/// server (Worker cron `shiftStart.ts`) already sends push reminders at
-/// those exact offsets, so a local slot at the same time would double-fire.
+/// Pre-shift reminders are fully scheduled on-device with UNUserNotificationCenter,
+/// surviving app kill and working completely offline with zero server reads.
 ///
 /// `sync` is idempotent: it clears every previously scheduled shift reminder
 /// and rebuilds from the current roster, so shift edits/cancellations are
@@ -42,8 +43,14 @@ enum ShiftReminderScheduler {
         Slot(tag: "24h", minutesBeforeStart: 24 * 60, title: "Shift tomorrow") { shift in
             "You have a shift tomorrow at \(RosterFormat.time(shift.rosteredStart))."
         },
+        Slot(tag: "6h", minutesBeforeStart: 6 * 60, title: "Shift today") { shift in
+            "Your shift starts in 6 hours, at \(RosterFormat.time(shift.rosteredStart))."
+        },
         Slot(tag: "1h", minutesBeforeStart: 60, title: "Shift soon") { shift in
             "Your shift starts in 1 hour, at \(RosterFormat.time(shift.rosteredStart))."
+        },
+        Slot(tag: "30m", minutesBeforeStart: 30, title: "Shift starting soon") { shift in
+            "Your shift starts in 30 minutes, at \(RosterFormat.time(shift.rosteredStart))."
         },
         Slot(tag: "5m", minutesBeforeStart: 5, title: "Ready to start?") { _ in
             "Your shift starts in 5 minutes — Start Shift is now available."

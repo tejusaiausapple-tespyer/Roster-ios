@@ -8,6 +8,10 @@ struct MacAccountView: View {
 
     @AppStorage("preferredColorScheme") private var preferredColorSchemeSetting: String = "system"
     @State private var showingChangePassword = false
+    @State private var showingSignOutEverywhere = false
+    @State private var signOutEverywherePassword = ""
+    @State private var signOutEverywhereWorking = false
+    @State private var signOutEverywhereError: String?
     @State private var showingSignOutConfirmation = false
     @State private var activeInfoPage: InfoPage?
 
@@ -114,6 +118,21 @@ struct MacAccountView: View {
                                     showingChangePassword = true
                                 }
                                 .macButton(.bordered, size: .small)
+                            }
+
+                            Divider()
+
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Sign out everywhere")
+                                        .font(MacType.bodyStrong)
+                                    Text("End this account's sessions on every app and device.")
+                                        .font(MacType.caption)
+                                        .foregroundStyle(MacColor.textTertiary)
+                                }
+                                Spacer()
+                                Button("Sign Out Everywhere...") { showingSignOutEverywhere = true }
+                                    .macButton(.bordered, size: .small)
                             }
 
                             Divider()
@@ -263,6 +282,44 @@ struct MacAccountView: View {
         .sheet(isPresented: $showingChangePassword) {
             MacChangePasswordView(isForced: false)
                 .macObserved(repo: repo, auth: auth)
+        }
+        .sheet(isPresented: $showingSignOutEverywhere) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Sign Out Everywhere").font(.title2.bold())
+                Text("Enter your current password. Every device using this account will need to sign in again.")
+                    .foregroundStyle(MacColor.textSecondary)
+                SecureField("Current password", text: $signOutEverywherePassword)
+                    .textFieldStyle(.roundedBorder)
+                if let signOutEverywhereError {
+                    Text(signOutEverywhereError).foregroundStyle(MacColor.error)
+                }
+                HStack {
+                    Spacer()
+                    Button("Cancel") {
+                        signOutEverywherePassword = ""
+                        signOutEverywhereError = nil
+                        showingSignOutEverywhere = false
+                    }
+                    .disabled(signOutEverywhereWorking)
+                    Button(signOutEverywhereWorking ? "Signing Out..." : "Sign Out All Devices") {
+                        signOutEverywhereWorking = true
+                        signOutEverywhereError = nil
+                        Task {
+                            do {
+                                try await auth.signOutEverywhere(password: signOutEverywherePassword)
+                                signOutEverywherePassword = ""
+                                showingSignOutEverywhere = false
+                            } catch {
+                                signOutEverywhereError = error.localizedDescription
+                            }
+                            signOutEverywhereWorking = false
+                        }
+                    }
+                    .disabled(signOutEverywherePassword.isEmpty || signOutEverywhereWorking)
+                }
+            }
+            .padding(24)
+            .frame(width: 440)
         }
         .confirmationDialog(
             "Are you sure you want to sign out?",

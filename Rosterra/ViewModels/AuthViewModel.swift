@@ -39,6 +39,7 @@ final class AuthViewModel {
     func bind(repository: RosterRepository) {
         guard self.repository == nil else { return }
         self.repository = repository
+        repository.onSessionRevoked = { [weak self] in self?.sessionWasRevoked() }
         NotificationService.shared.bind(repository: repository)
         guard FirebaseBootstrap.isConfigured else {
             isRestoring = false
@@ -130,6 +131,21 @@ final class AuthViewModel {
         Task { await endSession() }
     }
 
+    func signOutEverywhere(password: String) async throws {
+        try await WorkerAPIClient.shared.signOutEverywhere(password: password)
+        sessionWasRevoked()
+    }
+
+    private func sessionWasRevoked() {
+        guard uid != nil else { return }
+        forcedSignOutMessage = "Your session ended. Please sign in again."
+        BiometricCredentialStore.clear()
+        ShiftReminderScheduler.cancelAll()
+        DailyJobReminderScheduler.cancelAll()
+        try? AuthService.shared.signOut()
+        temporaryPassword = nil
+    }
+
     /// Force sign-out with a message (e.g. account became locked while signed in).
     func forceSignOut(message: String) {
         forcedSignOutMessage = message
@@ -219,7 +235,9 @@ final class AuthViewModel {
             Task {
                 await ServerClock.shared.sync()
                 await PendingEmailChange.reconcileIfNeeded()
-                await repository?.refreshFromServer()
+                // Firestore listeners reconnect and catch up on foreground.
+                // A forced server refresh here would reread every shift and
+                // timesheet on each screen wake, including cached documents.
             }
         case .inactive:
             break

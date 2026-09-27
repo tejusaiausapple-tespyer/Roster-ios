@@ -387,20 +387,21 @@ enum PayslipPDFService {
              font: .systemFont(ofSize: 7.5), color: secondary, align: .right)
     }
 
-    private static let registerColumns: [(String, CGFloat, NSTextAlignment)] = [
-        ("Employee", 0.00, .left),
-        ("Hours", 0.38, .right),
-        ("Gross", 0.50, .right),
-        ("PAYG", 0.62, .right),
-        ("Super", 0.74, .right),
-        ("Net", 0.86, .right),
+    private static let registerColumns: [(String, CGFloat, CGFloat, NSTextAlignment)] = [
+        ("Employee", 0.00, 0.31, .left),
+        ("W Hours", 0.31, 0.09, .right),
+        ("WE Hours", 0.40, 0.09, .right),
+        ("Gross", 0.49, 0.13, .right),
+        ("PAYG", 0.62, 0.12, .right),
+        ("Super", 0.74, 0.12, .right),
+        ("Net", 0.86, 0.14, .right),
     ]
 
     private static func payRunRegisterHeader(_ ctx: UIGraphicsPDFRendererContext, y: CGFloat) -> CGFloat {
         let width = pageWidth - margin * 2
-        for (title, offset, align) in registerColumns {
+        for (title, offset, columnWidth, align) in registerColumns {
             draw(title, at: CGPoint(x: margin + width * offset, y: y),
-                 width: width * 0.12, font: .systemFont(ofSize: 8, weight: .medium),
+                 width: width * columnWidth, font: .systemFont(ofSize: 8, weight: .medium),
                  color: secondary, align: align)
         }
         let bottom = y + 15
@@ -413,17 +414,18 @@ enum PayslipPDFService {
         let totals = slip.totals
         let values = [
             slip.staffName,
-            RosterFormat.decimalHours(totals.totalHours),
+            RosterFormat.decimalHours(slip.ordinaryHours),
+            RosterFormat.decimalHours(slip.weekendHours),
             RosterFormat.money(totals.gross),
             RosterFormat.money(totals.tax),
             RosterFormat.money(totals.superAmount),
             RosterFormat.money(totals.net),
         ]
-        for (index, (_, offset, align)) in registerColumns.enumerated() {
+        for (index, (_, offset, columnWidth, align)) in registerColumns.enumerated() {
             let isName = index == 0
             draw(values[index],
                  at: CGPoint(x: margin + width * offset, y: y),
-                 width: isName ? width * 0.36 : width * 0.12,
+                 width: width * columnWidth,
                  font: .systemFont(ofSize: 9, weight: isName ? .medium : .regular),
                  color: ink, align: align)
         }

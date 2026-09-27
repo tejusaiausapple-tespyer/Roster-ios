@@ -12,6 +12,7 @@ import UIKit
 @MainActor
 @Observable
 final class RosterRepository {
+    @ObservationIgnored var onSessionRevoked: (() -> Void)?
     // Live state
     var currentUser: AppUser? {
         didSet { syncShiftLiveActivity() }
@@ -117,6 +118,13 @@ final class RosterRepository {
     private var pendingFirstSnapshot: Set<String> = []
     private var currentRole: UserRole? = nil
     private var roleListenersInitialized = false
+#if targetEnvironment(macCatalyst)
+    private var managerRecentShifts: [Shift] = []
+    private var managerHistoricalShifts: [String: Shift] = [:]
+    private var checkedManagerHistoryWeeks: [String: Date] = [:]
+    private var loadingManagerHistoryWeeks: Set<String> = []
+    private var managerHistoryCutoff: String?
+#endif
 
     private var db: Firestore { Firestore.firestore() }
     private var storage: Storage { Storage.storage() }
@@ -149,7 +157,14 @@ final class RosterRepository {
         listeners.append(
             db.collection("users").document(uid).addSnapshotListener { [weak self] snap, error in
                 guard let self else { return }
-                if let error { self.handleError(error, label: "users"); return }
+                if let error {
+                    if (error as NSError).code == FirestoreErrorCode.permissionDenied.rawValue {
+                        self.onSessionRevoked?()
+                        return
+                    }
+                    self.handleError(error, label: "users")
+                    return
+                }
                 if let data = snap?.data(), let user = AppUser(id: uid, data: data) {
                     self.currentUser = user
                     // Dynamically start shifts/timesheets queries based on roles
@@ -264,13 +279,48 @@ final class RosterRepository {
         let range = BusinessRules.staffShiftDateRange()
         let timesheetCutoff = BusinessRules.staffTimesheetCutoff()
         let managerTimesheetCutoff = BusinessRules.managerTimesheetCutoff()
-        let messageCutoff = FS.isoFormatter.string(from: RosterCalendar.addDays(-30, to: Date()))
         
         if role == .manager {
             // MANAGER LISTENERS:
             
-            // 1. Complete shift history for managers, with only the future
-            // planning horizon capped. Staff retain the smaller ±window.
+            // 1. The Mac keeps recent shifts live and reads older history from
+            //    its device cache. Older weeks are verified when opened.
+#if targetEnvironment(macCatalyst)
+            let historyCutoff = RosterCalendar.dayFormatter.string(
+                from: RosterCalendar.addDays(-90, to: RosterCalendar.weekStart()))
+            managerHistoryCutoff = historyCutoff
+            let archiveQuery = db.collection("shifts")
+                .whereField("date", isLessThan: historyCutoff)
+            // Cache-only listeners make local edits and targeted server checks
+            // visible without opening a second network listener for history.
+            roleListeners.append(
+                archiveQuery.addSnapshotListener(
+                    options: SnapshotListenOptions().withSource(.cache)
+                ) { [weak self] snap, error in
+                    guard let self else { return }
+                    if let error { self.handleSecondaryError(error, label: "cached shifts"); return }
+                    self.managerHistoricalShifts = Dictionary(
+                        (snap?.documents ?? []).compactMap { doc in
+                            Shift(id: doc.documentID, data: doc.data()).map { ($0.id, $0) }
+                        }, uniquingKeysWith: { first, _ in first })
+                    self.combineManagerShifts()
+                }
+            )
+            Task { [weak self] in await self?.hydrateManagerShiftHistory(uid: uid, before: historyCutoff) }
+            roleListeners.append(
+                db.collection("shifts")
+                    .whereField("date", isGreaterThanOrEqualTo: historyCutoff)
+                    .whereField("date", isLessThanOrEqualTo: range.end)
+                    .addSnapshotListener { [weak self] snap, error in
+                        guard let self else { return }
+                        if let error { self.handleError(error, label: "shifts"); return }
+                        self.managerRecentShifts = (snap?.documents ?? [])
+                            .compactMap { Shift(id: $0.documentID, data: $0.data()) }
+                        self.combineManagerShifts()
+                        self.markArrived("shifts")
+                    }
+            )
+#else
             roleListeners.append(
                 db.collection("shifts")
                     .whereField("date", isLessThanOrEqualTo: range.end)
@@ -281,6 +331,7 @@ final class RosterRepository {
                         self.markArrived("shifts")
                     }
             )
+#endif
             
             // 2. Timesheets within a recent operational window (server-side
             //    filtered so the all-staff listener doesn't stream the entire
@@ -483,17 +534,8 @@ final class RosterRepository {
                     }
             )
 
-            // 4. Own messages (recipient, last 30 days)
-            roleListeners.append(
-                db.collection("messages")
-                    .whereField("recipientId", isEqualTo: uid)
-                    .whereField("sentAt", isGreaterThanOrEqualTo: messageCutoff)
-                    .addSnapshotListener { [weak self] snap, _ in
-                        guard let self else { return }
-                        let msgs = (snap?.documents ?? []).compactMap { Message(id: $0.documentID, data: $0.data()) }
-                        self.messages = msgs.sorted { $0.sentAt > $1.sentAt }
-                    }
-            )
+            // 4. Messages (defunct collection — deprecated)
+            self.messages = []
 
             // 5. Payslips are deliberately NOT streamed for staff. The Account
             //    → Payslips screen fetches one month at a time on demand via
@@ -502,11 +544,101 @@ final class RosterRepository {
         }
     }
 
+#if targetEnvironment(macCatalyst)
+    private func combineManagerShifts() {
+        var byId = managerHistoricalShifts
+        for shift in managerRecentShifts { byId[shift.id] = shift }
+        shifts = Array(byId.values)
+    }
+
+    /// Restore older shifts from this Mac's Firestore disk cache before any
+    /// network request. A new installation fetches the archive once so later
+    /// launches can use the local copy instead of opening a history listener.
+    private func hydrateManagerShiftHistory(uid: String, before cutoff: String, forceServer: Bool = false) async {
+        let query = db.collection("shifts").whereField("date", isLessThan: cutoff)
+        let archiveCountKey = "roster.managerShiftArchiveCount.\(uid)"
+        if !forceServer, let cached = try? await query.getDocuments(source: .cache),
+           activeUID == uid, currentRole == .manager {
+            managerHistoricalShifts = Dictionary(
+                cached.documents.compactMap { doc in
+                    Shift(id: doc.documentID, data: doc.data()).map { ($0.id, $0) }
+            }, uniquingKeysWith: { first, _ in first })
+            combineManagerShifts()
+            // A partial cache is not evidence that the whole archive was ever
+            // downloaded. Seed once, then reuse the persistent copy on launch.
+            if let seededCount = UserDefaults.standard.object(forKey: archiveCountKey) as? Int,
+               cached.documents.count >= seededCount { return }
+        }
+        // A fresh Mac has no local archive yet. Fetch it once; Firestore then
+        // persists those documents for subsequent launches.
+        do {
+            let snapshot = try await query.getDocuments(source: .server)
+            guard activeUID == uid, currentRole == .manager else { return }
+            managerHistoricalShifts = Dictionary(
+                snapshot.documents.compactMap { doc in
+                    Shift(id: doc.documentID, data: doc.data()).map { ($0.id, $0) }
+            }, uniquingKeysWith: { first, _ in first })
+            combineManagerShifts()
+            UserDefaults.standard.set(snapshot.documents.count, forKey: archiveCountKey)
+        } catch {
+            Self.log.debug("manager history unavailable offline: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Full historical reconciliation is an explicit manager action; routine
+    /// refreshes and app launches do not download the entire archive.
+    func refreshManagerShiftHistory() async {
+        guard let uid = activeUID, currentRole == .manager,
+              let cutoff = managerHistoryCutoff else { return }
+        await hydrateManagerShiftHistory(uid: uid, before: cutoff, forceServer: true)
+    }
+
+    /// Check an older roster week only when it is opened. Replace that week
+    /// with the authoritative result, including removals made on another app.
+    func loadManagerShiftWeekIfNeeded(_ monday: Date) async {
+        guard let uid = activeUID, currentRole == .manager,
+              let cutoff = managerHistoryCutoff else { return }
+        let weekKey = RosterCalendar.dateString(from: monday)
+        guard weekKey < cutoff else { return }
+        if let checkedAt = checkedManagerHistoryWeeks[weekKey],
+           Date().timeIntervalSince(checkedAt) < 10 * 60 { return }
+        guard loadingManagerHistoryWeeks.insert(weekKey).inserted else { return }
+        defer { loadingManagerHistoryWeeks.remove(weekKey) }
+        let endKey = RosterCalendar.dateString(from: RosterCalendar.addDays(6, to: monday))
+        let query = db.collection("shifts")
+            .whereField("date", isGreaterThanOrEqualTo: weekKey)
+            .whereField("date", isLessThanOrEqualTo: endKey)
+        do {
+            let snapshot = try await query.getDocuments(source: .server)
+            guard activeUID == uid, currentRole == .manager else { return }
+            managerHistoricalShifts = managerHistoricalShifts.filter {
+                $0.value.date < weekKey || $0.value.date > endKey
+            }
+            for doc in snapshot.documents {
+                if let shift = Shift(id: doc.documentID, data: doc.data()), shift.date < cutoff {
+                    managerHistoricalShifts[shift.id] = shift
+                }
+            }
+            checkedManagerHistoryWeeks[weekKey] = Date()
+            combineManagerShifts()
+        } catch {
+            Self.log.debug("older roster week unavailable offline: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+#endif
+
     func stop() {
         listeners.forEach { $0.remove() }
         listeners.removeAll()
         roleListeners.forEach { $0.remove() }
         roleListeners.removeAll()
+#if targetEnvironment(macCatalyst)
+        managerRecentShifts = []
+        managerHistoricalShifts = [:]
+        checkedManagerHistoryWeeks = [:]
+        loadingManagerHistoryWeeks = []
+        managerHistoryCutoff = nil
+#endif
         activeUID = nil
         currentUser = nil
         locations = []
@@ -725,9 +857,17 @@ final class RosterRepository {
         do {
             if currentRole == .manager {
                 async let _user = db.collection("users").document(uid).getDocument(source: .server)
+#if targetEnvironment(macCatalyst)
+                let historyCutoff = managerHistoryCutoff ?? range.start
+                async let _shifts = db.collection("shifts")
+                    .whereField("date", isGreaterThanOrEqualTo: historyCutoff)
+                    .whereField("date", isLessThanOrEqualTo: range.end)
+                    .getDocuments(source: .server)
+#else
                 async let _shifts = db.collection("shifts")
                     .whereField("date", isLessThanOrEqualTo: range.end)
                     .getDocuments(source: .server)
+#endif
                 async let _timesheets = db.collection("timesheets")
                     .whereField("submittedAt", isGreaterThanOrEqualTo: BusinessRules.managerTimesheetCutoff())
                     .getDocuments(source: .server)
@@ -742,6 +882,7 @@ final class RosterRepository {
                     .getDocuments(source: .server)
                 async let _timesheets = db.collection("timesheets")
                     .whereField("staffId", isEqualTo: uid)
+                    .whereField("submittedAt", isGreaterThanOrEqualTo: BusinessRules.staffTimesheetCutoff())
                     .getDocuments(source: .server)
                 _ = try await (_user, _shifts, _timesheets)
             }

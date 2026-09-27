@@ -2022,7 +2022,12 @@ struct MacManagerPayrollView: View {
     private var registerHeader: some View {
         HStack(spacing: MacSpace.md) {
             Text("EMPLOYEE").frame(maxWidth: .infinity, alignment: .leading)
-            Text("HOURS").frame(width: 62, alignment: .trailing)
+            Text("W HOURS")
+                .frame(width: 62, alignment: .trailing)
+                .help("Ordinary weekday hours (Monday–Friday)")
+            Text("WE HOURS")
+                .frame(width: 62, alignment: .trailing)
+                .help("Weekend hours (Saturday–Sunday)")
             Text("GROSS").frame(width: 90, alignment: .trailing)
             Text("PAYG").frame(width: 80, alignment: .trailing)
             Text("SUPER").frame(width: 80, alignment: .trailing)
@@ -2062,7 +2067,9 @@ struct MacManagerPayrollView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text(String(format: "%.1f", slip.totals.totalHours))
+                Text(String(format: "%.1f", slip.ordinaryHours))
+                    .frame(width: 62, alignment: .trailing)
+                Text(String(format: "%.1f", slip.weekendHours))
                     .frame(width: 62, alignment: .trailing)
                 Text(RosterFormat.money(slip.totals.gross))
                     .frame(width: 90, alignment: .trailing)
