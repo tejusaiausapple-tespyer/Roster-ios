@@ -161,10 +161,12 @@ struct ManagerPayslipDetailSheet: View {
             hoursRow("Weekend hours", hours: binding(\.weekendHours), rate: binding(\.weekendRate), editable: editable)
             hoursRow("Public holiday", hours: binding(\.publicHolidayHours), rate: binding(\.publicHolidayRate), editable: editable)
             hoursRow("Overtime", hours: binding(\.overtimeHours), rate: binding(\.overtimeRate), editable: editable)
+            Toggle("I checked the hour categories and rates for this employee’s award", isOn: binding(\.payClassificationReviewed))
+                .disabled(!editable)
         } header: {
             Text("Hours")
         } footer: {
-            Text("Hours come from approved timesheets (weekends split automatically). Penalty rates default from the base rate — adjust them to the award before approving.")
+            Text("Approved hours are initially split into weekdays and weekends. Move public-holiday and overtime hours into their categories and confirm the applicable rates before approving or publishing.")
         }
     }
 
@@ -233,11 +235,13 @@ struct ManagerPayslipDetailSheet: View {
             }
             .onDelete(perform: editable ? { offsets in
                 self.slip?.extraEarnings.remove(atOffsets: offsets)
+                self.slip?.payClassificationReviewed = false
                 markDirty()
             } : nil)
             if editable {
                 Button {
                     self.slip?.extraEarnings.append(PayslipEarning(name: "Allowance"))
+                    self.slip?.payClassificationReviewed = false
                     markDirty()
                 } label: {
                     Label("Add earnings row", systemImage: "plus.circle")
@@ -487,6 +491,10 @@ struct ManagerPayslipDetailSheet: View {
             set: { newValue in
                 guard slip?[keyPath: keyPath] != newValue else { return }
                 slip?[keyPath: keyPath] = newValue
+                if keyPath != \Payslip.payClassificationReviewed {
+                    slip?.payClassificationReviewed = false
+                }
+                markDirty()
             }
         )
     }
@@ -497,6 +505,7 @@ struct ManagerPayslipDetailSheet: View {
             set: { newValue in
                 guard var current = slip, current.extraEarnings.indices.contains(index) else { return }
                 current.extraEarnings[index][keyPath: keyPath] = newValue
+                current.payClassificationReviewed = false
                 // Keep amount in sync for rate-based rows.
                 if keyPath == \.quantity, current.extraEarnings[index].rate > 0 {
                     current.extraEarnings[index].amount = PayrollCalculator.round2(

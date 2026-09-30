@@ -322,6 +322,9 @@ struct MacManagerStaffView: View {
             title: "Staff Directory",
             subtitle: "\(activeCount) active · \(allStaff.count) total",
             actions: {
+                MacRefreshButton("Refresh staff directory") {
+                    await repo.refreshFromServer(scope: .staffDirectory)
+                }
                 Button {
                     showingAddStaff = true
                 } label: {
@@ -1603,6 +1606,10 @@ private struct MacStaffDetailWorkspace: View {
             managerPassword = ""
             showDeleteAccount = false
             toasts.show("Account locked and scheduled for deletion in 30 days.", style: .success)
+        } catch let error as PostSaveConfirmationError {
+            managerPassword = ""
+            showDeleteAccount = false
+            toasts.show(error.localizedDescription, style: .error)
         } catch {
             sensitiveActionError = error.localizedDescription
         }
@@ -1613,6 +1620,8 @@ private struct MacStaffDetailWorkspace: View {
             do {
                 try await repo.cancelStaffAccountDeletion(staffId: liveUser.id)
                 toasts.show("Deletion cancelled and account reinstated.", style: .success)
+            } catch let error as PostSaveConfirmationError {
+                toasts.show(error.localizedDescription, style: .error)
             } catch {
                 toasts.show("Couldn’t cancel deletion. \(error.localizedDescription)", style: .error)
             }
@@ -1804,6 +1813,9 @@ struct MacManagerPayrollView: View {
             title: "Payroll",
             subtitle: "Review, calculate and publish your weekly Australian pay run",
             actions: {
+                MacRefreshButton("Refresh selected payroll week") {
+                    await repo.refreshFromServer(scope: .payroll(weekKey))
+                }
                 Button {
                     generateDrafts()
                 } label: {
@@ -2197,6 +2209,10 @@ struct MacManagerPayrollView: View {
             inspectorPayRow("Weekend", hours: numberBinding(\.weekendHours), rate: numberBinding(\.weekendRate), editable: slip.status.isEditable)
             inspectorPayRow("Public holiday", hours: numberBinding(\.publicHolidayHours), rate: numberBinding(\.publicHolidayRate), editable: slip.status.isEditable)
             inspectorPayRow("Overtime", hours: numberBinding(\.overtimeHours), rate: numberBinding(\.overtimeRate), editable: slip.status.isEditable)
+            Text("Move holiday and overtime hours into their categories and verify the award rates before approval or publishing.")
+                .font(MacType.caption).foregroundStyle(MacColor.textSecondary)
+            Toggle("Hours and award rates reviewed", isOn: boolBinding(\.payClassificationReviewed))
+                .disabled(!slip.status.isEditable)
 
             if !slip.extraEarnings.isEmpty {
                 Divider().padding(.vertical, MacSpace.xs)
@@ -2381,7 +2397,10 @@ struct MacManagerPayrollView: View {
     private func numberBinding(_ keyPath: WritableKeyPath<Payslip, Double>) -> Binding<Double> {
         Binding(
             get: { workingPayslip?[keyPath: keyPath] ?? 0 },
-            set: { value in workingPayslip?[keyPath: keyPath] = max(0, value) }
+            set: { value in
+                workingPayslip?[keyPath: keyPath] = max(0, value)
+                workingPayslip?.payClassificationReviewed = false
+            }
         )
     }
 

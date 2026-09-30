@@ -56,3 +56,131 @@ struct DailyJobRepeatRule: Identifiable, Codable {
     let updatedAt: Date?
     let updatedBy: String?
 }
+
+/// Errors occurring during optimistic concurrency control (OCC) or count-race resolution.
+enum DailyJobOCCError: LocalizedError, Equatable {
+    case preconditionRequired(currentVersion: Int)
+    case versionMismatch(expected: Int, actual: Int)
+    case shiftNotFound
+
+    var errorDescription: String? {
+        switch self {
+        case .preconditionRequired(let currentVersion):
+            return "Legacy shift requires server count initialization (version: \(currentVersion))."
+        case .versionMismatch(let expected, let actual):
+            return "OCC version mismatch: expected \(expected), actual \(actual)."
+        case .shiftNotFound:
+            return "Shift not found."
+        }
+    }
+}
+
+/// Pure OCC logic and race resolution for Daily Jobs mutations across iOS, ensuring
+/// deterministic behavior that can be tested without mock network overhead.
+enum DailyJobOCCLogic {
+
+    /// Calculates newly added count and total final count for shift saving,
+    /// correctly excluding unavailable/deleted templates.
+    static func computeSaveCount(
+        requestedTemplateIds: [String],
+        availableTemplateIds: Set<String>,
+        existingAssignments: [DailyJobAssignment]
+    ) -> (newlyAddedCount: Int, finalCount: Int) {
+        var newlyAddedCount = 0
+        for templateId in requestedTemplateIds {
+            if !existingAssignments.contains(where: { $0.templateId == templateId }) &&
+                availableTemplateIds.contains(templateId) {
+                newlyAddedCount += 1
+            }
+        }
+        let retainedCount = existingAssignments.filter { requestedTemplateIds.contains($0.templateId) }.count
+        let finalCount = retainedCount + newlyAddedCount
+        return (newlyAddedCount, finalCount)
+    }
+
+    /// Resolves the shift's `dailyJobsCount` for an assignment completion write.
+    /// - Modern shifts (count already on shift doc): returns existing count immediately (0 query reads).
+    /// - Legacy shifts (count absent): throws .preconditionRequired if authoritativeServerCount is nil.
+    /// - Race protection: If expectedVersion does not match currentVersion, throws .versionMismatch so caller retries.
+    /// - Concurrent init protection: If shiftCount is now populated (another client initialized it concurrently), uses shiftCount.
+    static func resolveCountForCompletion(
+        shiftCount: Int?,
+        authoritativeServerCount: Int?,
+        expectedVersion: Int?,
+        currentVersion: Int
+    ) throws -> Int {
+        if let expectedVersion, currentVersion != expectedVersion {
+            throw DailyJobOCCError.versionMismatch(expected: expectedVersion, actual: currentVersion)
+        }
+        if let shiftCount {
+            return shiftCount
+        }
+        guard let authoritativeServerCount else {
+            throw DailyJobOCCError.preconditionRequired(currentVersion: currentVersion)
+        }
+        return max(1, authoritativeServerCount)
+    }
+
+    /// Resolves the shift's `dailyJobsCount` for a reorder write.
+    /// - Never falls back to `orderedAssignmentIds.count` when absent.
+    /// - Modern shifts: returns existing count (0 query reads).
+    /// - Legacy shifts: requires authoritative server count, protected against concurrent version mismatch.
+    static func resolveCountForReorder(
+        shiftCount: Int?,
+        authoritativeServerCount: Int?,
+        expectedVersion: Int?,
+        currentVersion: Int
+    ) throws -> Int {
+        if let expectedVersion, currentVersion != expectedVersion {
+            throw DailyJobOCCError.versionMismatch(expected: expectedVersion, actual: currentVersion)
+        }
+        if let shiftCount {
+            return shiftCount
+        }
+        guard let authoritativeServerCount else {
+            throw DailyJobOCCError.preconditionRequired(currentVersion: currentVersion)
+        }
+        return authoritativeServerCount
+    }
+
+    /// Verifies that the current version matches baseline version.
+    static func verifyVersion(baseline: Int, current: Int) throws {
+        guard baseline == current else {
+            throw DailyJobOCCError.versionMismatch(expected: baseline, actual: current)
+        }
+    }
+
+    /// Executes the full OCC retry loop for completing a daily job assignment on a shift.
+    /// Handles legacy count initialization (HTTP 428), captures fresh server token on version mismatch (HTTP 409)
+    /// BEFORE requerying count, never retries with expectedVersion == nil, and compares expectedVersion in the next transaction.
+    static func executeCompletionRetry(
+        maxAttempts: Int = 5,
+        runTransactionAttempt: (_ authoritativeCount: Int?, _ expectedVersion: Int?) async throws -> Void,
+        fetchFreshServerToken: () async throws -> Int,
+        fetchAuthoritativeServerCount: () async throws -> Int
+    ) async throws {
+        var authoritativeCount: Int?
+        var expectedVersion: Int?
+
+        for attempt in 1...maxAttempts {
+            do {
+                try await runTransactionAttempt(authoritativeCount, expectedVersion)
+                return
+            } catch let error as NSError where error.code == 428 && attempt < maxAttempts {
+                let currentVer = error.userInfo["version"] as? Int ?? 0
+                authoritativeCount = try await fetchAuthoritativeServerCount()
+                expectedVersion = currentVer
+                continue
+            } catch let error as NSError where error.code == 409 && attempt < maxAttempts {
+                // 1. Capture a fresh server token BEFORE requerying the count:
+                let freshVer = try await fetchFreshServerToken()
+                // 2. Requery the count:
+                authoritativeCount = try await fetchAuthoritativeServerCount()
+                // 3. Set expectedVersion to the fresh server token (NEVER nil!):
+                expectedVersion = freshVer
+                // 4. In the next transaction attempt, currentVer will be compared to this expectedVersion.
+                continue
+            }
+        }
+    }
+}

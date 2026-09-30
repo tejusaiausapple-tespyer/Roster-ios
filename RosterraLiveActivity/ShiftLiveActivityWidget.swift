@@ -127,6 +127,8 @@ struct ShiftLiveActivityWidget: Widget {
 
     private func shiftTime(_ attributes: ShiftLiveActivityAttributes) -> String {
         let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_AU")
+        formatter.timeZone = TimeZone(identifier: "Australia/Adelaide")
         formatter.dateFormat = "h:mm a"
         return "\(formatter.string(from: attributes.startDate)) – \(formatter.string(from: attributes.endDate))"
     }
@@ -205,6 +207,8 @@ private struct ShiftLiveActivityLockScreenView: View {
 
     private var shiftTime: String {
         let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_AU")
+        formatter.timeZone = TimeZone(identifier: "Australia/Adelaide")
         formatter.dateFormat = "h:mm a"
         return "\(formatter.string(from: context.attributes.startDate)) – \(formatter.string(from: context.attributes.endDate))"
     }

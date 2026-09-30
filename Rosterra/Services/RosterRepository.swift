@@ -6,6 +6,16 @@ import FirebaseAuth
 import FirebaseStorage
 import UIKit
 
+/// The mutation completed, but the follow-up profile read did not confirm the
+/// visible state. Callers should offer refresh, never repeat the mutation.
+struct PostSaveConfirmationError: LocalizedError {
+    let underlying: Error
+
+    var errorDescription: String? {
+        "Saved, but the latest profile could not be confirmed. Refresh this tab to check it. \(underlying.localizedDescription)"
+    }
+}
+
 /// The staff data layer. Mirrors the web app's Zustand `dataStore` + Firestore
 /// `onSnapshot` listeners: own user doc, published shifts within the ±window,
 /// own timesheets, `settings/app`, and recent messages — all live.
@@ -640,6 +650,10 @@ final class RosterRepository {
         managerHistoryCutoff = nil
 #endif
         activeUID = nil
+        lastRefreshTimes.removeAll()
+        refreshingScopes.removeAll()
+        refreshError = nil
+        refreshSessionGeneration += 1
         currentUser = nil
         locations = []
         lockedAvailabilityWeeks = []
@@ -764,7 +778,10 @@ final class RosterRepository {
     /// time authoritative regardless of the device clock; the device clock is
     /// stored alongside it so managers can spot manipulation.
     func startShift(_ shift: Shift, fix: ShiftAttendance.Fix?) async throws {
-        guard let uid = activeUID else { return }
+        guard let uid = activeUID else { throw AuthError.notAuthenticated }
+        guard shift.hasValidSchedule else {
+            throw AuthError.generic("This shift has an invalid date or time. Contact your manager.")
+        }
         startClockSession(shiftId: shift.id)
         var fields: [String: Any] = [
             "shiftId": shift.id,
@@ -788,6 +805,9 @@ final class RosterRepository {
     /// leavers) the staff member's reason.
     func endShift(_ shift: Shift, fix: ShiftAttendance.Fix?, note: String? = nil,
                   useRosteredEnd: Bool = false) async throws {
+        guard shift.hasValidSchedule else {
+            throw AuthError.generic("This shift has an invalid date or time. Contact your manager.")
+        }
         clockSession?.useRosteredEnd = useRosteredEnd
         endClockSession()
         var fields: [String: Any] = [
@@ -847,49 +867,172 @@ final class RosterRepository {
         markArrived(label)
     }
 
-    /// Force a server refresh (pull-to-refresh). Firestore listeners then
-    /// reconcile. Queries mirror the active role's listeners exactly — a
-    /// manager refresh previously used the staff-shaped queries and fetched
-    /// nothing relevant.
-    func refreshFromServer() async {
+    enum RefreshScope: Hashable {
+        case account
+        case availability
+        case managerAvailability
+        case staffDirectory
+        case roster(String, String)
+        case timesheets(String, String)
+        case dailyJobs(String)
+        case dashboard(String)
+        case history
+        case reports(String, String)
+        case tasks(String)
+        case wages
+        case payroll(String)
+        case locations
+        case company
+        case tenure
+        case home
+    }
+
+    private var lastRefreshTimes: [RefreshScope: Date] = [:]
+    private var refreshingScopes: Set<RefreshScope> = []
+    private var refreshSessionGeneration = 0
+    private let refreshCooldown: TimeInterval = 30
+    var refreshError: String?
+
+    /// Pull only the data used by this screen. The existing listeners reconcile
+    /// returned server documents into observable state; no parallel UI cache is
+    /// kept here. Each scope (including its selected week) has its own cooldown.
+    func refreshFromServer(scope: RefreshScope) async {
         guard let uid = activeUID else { return }
-        let range = BusinessRules.staffShiftDateRange()
+        guard !refreshingScopes.contains(scope) else { return }
+        if let last = lastRefreshTimes[scope], Date().timeIntervalSince(last) < refreshCooldown { return }
+        let generation = refreshSessionGeneration
+        refreshingScopes.insert(scope)
+        defer { if refreshSessionGeneration == generation { refreshingScopes.remove(scope) } }
+        refreshError = nil
         do {
-            if currentRole == .manager {
-                async let _user = db.collection("users").document(uid).getDocument(source: .server)
-#if targetEnvironment(macCatalyst)
-                let historyCutoff = managerHistoryCutoff ?? range.start
-                async let _shifts = db.collection("shifts")
-                    .whereField("date", isGreaterThanOrEqualTo: historyCutoff)
-                    .whereField("date", isLessThanOrEqualTo: range.end)
+            switch scope {
+            case .account:
+                _ = try await db.collection("users").document(uid).getDocument(source: .server)
+            case .availability:
+                _ = try await db.collection("users").document(uid).getDocument(source: .server)
+                _ = try await db.collection("settings").document("availabilityLocks").getDocument(source: .server)
+            case .managerAvailability:
+                guard currentRole == .manager else { return }
+                _ = try await db.collection("users").getDocuments(source: .server)
+                _ = try await db.collection("settings").document("availabilityLocks").getDocument(source: .server)
+            case .staffDirectory:
+                guard currentRole == .manager else { return }
+                _ = try await db.collection("users").getDocuments(source: .server)
+            case let .roster(start, end):
+                let ids = try await refreshShiftWindow(start: start, end: end, uid: uid)
+                try await refreshTimesheets(forShiftIDs: ids, uid: uid)
+                if currentRole == .manager {
+                    _ = try await db.collection("users").getDocuments(source: .server)
+                    _ = try await db.collection("shift_attendance")
+                        .whereField("date", isGreaterThanOrEqualTo: start)
+                        .whereField("date", isLessThanOrEqualTo: end).getDocuments(source: .server)
+                }
+            case let .timesheets(start, end):
+                let ids = try await refreshShiftWindow(start: start, end: end, uid: uid)
+                try await refreshTimesheets(forShiftIDs: ids, uid: uid)
+                if currentRole == .manager { _ = try await db.collection("users").getDocuments(source: .server) }
+            case let .dailyJobs(day):
+                try await refreshDailyJobs(day: day, uid: uid)
+            case let .dashboard(day):
+                guard currentRole == .manager else { return }
+                _ = try await refreshShiftWindow(start: day, end: day, uid: uid)
+                try await refreshDailyJobs(day: day, uid: uid)
+                _ = try await db.collection("timesheets").whereField("status", isEqualTo: "pending").getDocuments(source: .server)
+                _ = try await db.collection("users").getDocuments(source: .server)
+                _ = try await db.collection("shift_attendance").whereField("date", isEqualTo: day).getDocuments(source: .server)
+                _ = try await db.collection("task_completions").whereField("date", isEqualTo: day).getDocuments(source: .server)
+            case .history:
+                _ = try await db.collection("timesheets").whereField("staffId", isEqualTo: uid).getDocuments(source: .server)
+            case let .reports(start, end):
+                guard currentRole == .manager else { return }
+                let ids = try await refreshShiftWindow(start: start, end: end, uid: uid)
+                try await refreshTimesheets(forShiftIDs: ids, uid: uid)
+                _ = try await db.collection("users").getDocuments(source: .server)
+                _ = try await db.collection("wages").getDocuments(source: .server)
+            case let .tasks(day):
+                _ = try await db.collection("tasks").getDocuments(source: .server)
+                _ = try await db.collection("task_completions")
+                    .whereField("date", isEqualTo: day).getDocuments(source: .server)
+            case .wages:
+                guard currentRole == .manager else { return }
+                _ = try await db.collection("wages").getDocuments(source: .server)
+            case let .payroll(week):
+                guard currentRole == .manager else { return }
+                _ = try await db.collection("payslips").whereField("periodStart", isEqualTo: week)
                     .getDocuments(source: .server)
-#else
-                async let _shifts = db.collection("shifts")
-                    .whereField("date", isLessThanOrEqualTo: range.end)
-                    .getDocuments(source: .server)
-#endif
-                async let _timesheets = db.collection("timesheets")
+            case .locations:
+                guard currentRole == .manager else { return }
+                _ = try await db.collection("settings").document("locations").getDocument(source: .server)
+            case .company:
+                guard currentRole == .manager else { return }
+                _ = try await db.collection("settings").document("app").getDocument(source: .server)
+            case .tenure:
+                guard currentRole == .manager else { return }
+                _ = try await db.collection("users").getDocuments(source: .server)
+                _ = try await db.collection("timesheets")
                     .whereField("submittedAt", isGreaterThanOrEqualTo: BusinessRules.managerTimesheetCutoff())
                     .getDocuments(source: .server)
-                _ = try await (_user, _shifts, _timesheets)
-            } else {
-                async let _user = db.collection("users").document(uid).getDocument(source: .server)
-                async let _shifts = db.collection("shifts")
-                    .whereField("staffId", isEqualTo: uid)
-                    .whereField("status", isEqualTo: "published")
-                    .whereField("date", isGreaterThanOrEqualTo: range.start)
-                    .whereField("date", isLessThanOrEqualTo: range.end)
-                    .getDocuments(source: .server)
-                async let _timesheets = db.collection("timesheets")
-                    .whereField("staffId", isEqualTo: uid)
-                    .whereField("submittedAt", isGreaterThanOrEqualTo: BusinessRules.staffTimesheetCutoff())
-                    .getDocuments(source: .server)
-                _ = try await (_user, _shifts, _timesheets)
+            case .home:
+                let range = BusinessRules.staffShiftDateRange()
+                _ = try await db.collection("users").document(uid).getDocument(source: .server)
+                let ids = try await refreshShiftWindow(start: range.start, end: range.end, uid: uid)
+                try await refreshTimesheets(forShiftIDs: ids, uid: uid)
+                try await refreshDailyJobs(day: RosterCalendar.todayKey(), uid: uid)
+            }
+            if activeUID == uid && refreshSessionGeneration == generation {
+                lastRefreshTimes[scope] = Date()
             }
         } catch {
-            // Listeners keep serving cached data, so a manual refresh failure is
-            // non-critical — but log it so a systematic issue isn't invisible.
-            Self.log.debug("manual refreshFromServer failed: \(error.localizedDescription, privacy: .public)")
+            Self.log.error("scoped refresh failed: \(error.localizedDescription, privacy: .public)")
+            if activeUID == uid && refreshSessionGeneration == generation {
+                refreshError = "Couldn’t refresh this tab. Check your connection and try again."
+            }
+        }
+    }
+
+    private func refreshShiftWindow(start: String, end: String, uid: String) async throws -> [String] {
+        let base = db.collection("shifts")
+            .whereField("date", isGreaterThanOrEqualTo: start)
+            .whereField("date", isLessThanOrEqualTo: end)
+        let query = currentRole == .manager ? base : base
+            .whereField("staffId", isEqualTo: uid)
+            .whereField("status", isEqualTo: "published")
+        let pageQuery = query.order(by: "date").limit(to: 200)
+        var cursor: DocumentSnapshot?
+        var ids: [String] = []
+        while true {
+            let page = try await (cursor.map { pageQuery.start(afterDocument: $0) } ?? pageQuery).getDocuments(source: .server)
+            ids.append(contentsOf: page.documents.map(\.documentID))
+            guard page.documents.count == 200, let last = page.documents.last else { break }
+            cursor = last
+        }
+        return ids
+    }
+
+    private func refreshTimesheets(forShiftIDs ids: [String], uid: String) async throws {
+        guard !ids.isEmpty else { return }
+        if currentRole != .manager {
+            // Timesheet document IDs equal shift IDs. Exact server gets avoid
+            // an all-history staff query and require no new composite index.
+            for id in ids {
+                _ = try await db.collection("timesheets").document(id).getDocument(source: .server)
+            }
+            return
+        }
+        // Firestore permits at most 30 disjunctions in an `in` query.
+        for offset in stride(from: 0, to: ids.count, by: 30) {
+            let idsForQuery = Array(ids[offset..<min(offset + 30, ids.count)])
+            _ = try await db.collection("timesheets").whereField("shiftId", in: idsForQuery)
+                .getDocuments(source: .server)
+        }
+    }
+
+    private func refreshDailyJobs(day: String, uid: String) async throws {
+        let base = db.collection("daily_job_assignments").whereField("date", isEqualTo: day)
+        let query = currentRole == .manager ? base : base.whereField("staffId", isEqualTo: uid)
+        _ = try await query.getDocuments(source: .server)
+        if currentRole == .manager {
+            _ = try await db.collection("daily_job_templates").whereField("active", isEqualTo: true).getDocuments(source: .server)
         }
     }
 
@@ -967,7 +1110,6 @@ final class RosterRepository {
 
     // MARK: - Writes (mirror dataStore mutations exactly)
 
-    private func nowISO() -> String { FS.isoFormatter.string(from: Date()) }
 
     /// New timesheet submission — setDoc timesheets/{shiftId}.
     func submitTimesheet(shiftId: String, staffId: String, actualStart: String, actualEnd: String,
@@ -983,7 +1125,7 @@ final class RosterRepository {
             "staffNotes": notes,
             "status": TimesheetStatus.pending.rawValue,
             "submittedAt": FieldValue.serverTimestamp(),
-            "updatedAt": nowISO(),
+            "updatedAt": FieldValue.serverTimestamp(),
         ]
         try await db.collection("timesheets").document(shiftId).setData(data)
         ShiftReminderScheduler.cancelSubmitHours(shiftId: shiftId)
@@ -1003,7 +1145,7 @@ final class RosterRepository {
             "status": TimesheetStatus.pending.rawValue,
             "rejectedReason": NSNull(),
             "submittedAt": FieldValue.serverTimestamp(),
-            "updatedAt": nowISO(),
+            "updatedAt": FieldValue.serverTimestamp(),
         ]
         try await db.collection("timesheets").document(id).updateData(data)
         ShiftReminderScheduler.cancelSubmitHours(shiftId: id)
@@ -1022,7 +1164,7 @@ final class RosterRepository {
             "staffNotes": reason,
             "status": TimesheetStatus.absentReported.rawValue,
             "submittedAt": FieldValue.serverTimestamp(),
-            "updatedAt": nowISO(),
+            "updatedAt": FieldValue.serverTimestamp(),
         ]
         if let existing, existing.status == .rejected {
             absenceFields["rejectedReason"] = NSNull()
@@ -1067,7 +1209,7 @@ final class RosterRepository {
             "profileUpdateRequired": false,
             "emergencyDetailsRequired": false,
             "roleReviewRequired": false,
-            "updatedAt": nowISO(),
+            "updatedAt": FieldValue.serverTimestamp(),
         ])
     }
 
@@ -1082,7 +1224,7 @@ final class RosterRepository {
                      employmentType: EmploymentType,
                      phone: String?, startDate: Date?, defaultDepartment: String? = nil) async throws -> String {
         let localId = try await WorkerAPIClient.shared.createAuthUser(email: email, password: password)
-        let t = nowISO()
+        let t = FieldValue.serverTimestamp()
         var data: [String: Any] = [
             "id": localId,
             "fullName": fullName,
@@ -1127,7 +1269,7 @@ final class RosterRepository {
                     "action": "CREATE_USER",
                     "entityType": "user",
                     "entityId": localId,
-                    "createdAt": nowISO(),
+                    "createdAt": FieldValue.serverTimestamp(),
                 ])
             }
         }
@@ -1143,7 +1285,7 @@ final class RosterRepository {
     func updateStaffFields(staffId: String, _ fields: [String: Any]) async throws {
         guard !fields.isEmpty else { return }
         var data = fields
-        data["updatedAt"] = nowISO()
+        data["updatedAt"] = FieldValue.serverTimestamp()
         try await db.collection("users").document(staffId).updateData(data)
     }
 
@@ -1151,22 +1293,46 @@ final class RosterRepository {
     /// timesheets, shifts, payslips, and identity fields.
     func approveStaffAccountDeletion(staffId: String) async throws {
         try await WorkerAPIClient.shared.approveAccountDeletion(staffUserId: staffId)
-        await refreshFromServer()
+        try await refreshUserAfterMutation(staffId)
     }
 
     func declineStaffAccountDeletion(staffId: String) async throws {
         try await WorkerAPIClient.shared.declineAccountDeletion(staffUserId: staffId)
-        await refreshFromServer()
+        try await refreshUserAfterMutation(staffId)
     }
 
     func cancelStaffAccountDeletion(staffId: String) async throws {
         try await WorkerAPIClient.shared.cancelAccountDeletion(staffUserId: staffId)
-        await refreshFromServer()
+        try await refreshUserAfterMutation(staffId)
     }
 
     func requestOwnAccountDeletion() async throws {
+        guard let uid = activeUID else { throw AuthError.notAuthenticated }
         try await WorkerAPIClient.shared.requestAccountDeletion(via: "ios")
-        await refreshFromServer()
+        try await refreshUserAfterMutation(uid)
+    }
+
+    /// Worker account actions affect one profile. Read only that document and
+    /// merge the server result so the completed action is reflected immediately.
+    /// A failed confirmation must remain distinct from a failed Worker write:
+    /// retrying the entire action could repeat a mutation that already committed.
+    private func refreshUserAfterMutation(_ userId: String) async throws {
+        let sessionUID = activeUID
+        do {
+            guard sessionUID != nil else { throw CancellationError() }
+            let snapshot = try await db.collection("users").document(userId).getDocument(source: .server)
+            guard let data = snapshot.data(), let refreshed = AppUser(id: userId, data: data) else {
+                throw AuthError.generic("The updated profile could not be loaded.")
+            }
+            guard activeUID == sessionUID else { throw CancellationError() }
+            if currentUser?.id == userId { currentUser = refreshed }
+            if let index = allUsers.firstIndex(where: { $0.id == userId }) {
+                allUsers[index] = refreshed
+            }
+        } catch {
+            Self.log.debug("account profile refresh failed after mutation: \(error.localizedDescription, privacy: .public)")
+            throw PostSaveConfirmationError(underlying: error)
+        }
     }
 
     /// Prompt a staff member to change their own sign-in email. Sets a flag on
@@ -1176,7 +1342,7 @@ final class RosterRepository {
     func requestStaffEmailChange(staffId: String) async throws {
         try await db.collection("users").document(staffId).updateData([
             "emailChangeRequired": true,
-            "updatedAt": nowISO(),
+            "updatedAt": FieldValue.serverTimestamp(),
         ])
     }
 
@@ -1184,7 +1350,7 @@ final class RosterRepository {
     func cancelStaffEmailChange(staffId: String) async throws {
         try await db.collection("users").document(staffId).updateData([
             "emailChangeRequired": false,
-            "updatedAt": nowISO(),
+            "updatedAt": FieldValue.serverTimestamp(),
         ])
     }
 
@@ -1193,7 +1359,7 @@ final class RosterRepository {
     func requestStaffEmergencyDetails(staffId: String, required: Bool = true) async throws {
         try await db.collection("users").document(staffId).updateData([
             "emergencyDetailsRequired": required,
-            "updatedAt": nowISO(),
+            "updatedAt": FieldValue.serverTimestamp(),
         ])
     }
 
@@ -1204,18 +1370,20 @@ final class RosterRepository {
         try await db.collection("users").document(staffId).updateData([
             "address": "",
             "profileUpdateRequired": true,
-            "updatedAt": nowISO(),
+            "updatedAt": FieldValue.serverTimestamp(),
         ])
     }
 
-    /// Save the full weekly availability map via the Worker (trusted week lock),
-    /// then optimistically update the local profile. Mirrors saveWeeklyAvailability.
+    /// Save via the Worker (trusted week lock), then confirm the authoritative
+    /// own profile with one server read. Keep the optimistic map if that read
+    /// fails, but report that the save committed and confirmation did not.
     func saveWeeklyAvailability(_ weekly: [String: UserAvailability]) async throws {
         guard let user = currentUser else { throw AuthError.notAuthenticated }
         try await WorkerAPIClient.shared.saveAvailability(userId: user.id, weeklyAvailability: weekly)
         var updated = user
         updated.weeklyAvailability = weekly
-        currentUser = updated
+        if currentUser?.id == user.id { currentUser = updated }
+        try await refreshUserAfterMutation(user.id)
     }
 
     // MARK: - Best-effort background writes
@@ -1387,39 +1555,101 @@ final class RosterRepository {
     @discardableResult
     private func applyDailyJobs(
         shiftId: String, staffId: String, date: String,
-        templateIds: [String], existing: [DailyJobAssignment]
+        templateIds: [String], existing: [DailyJobAssignment] = [],
+        onlyIfUnassigned: Bool = false, maxAttempts: Int = 3
     ) async throws -> Bool {
         guard let uid = activeUID else { throw AuthError.notAuthenticated }
-        let batch = db.batch()
+        let shiftRef = db.collection("shifts").document(shiftId)
 
-        for assignment in existing where !templateIds.contains(assignment.templateId) {
-            batch.deleteDocument(db.collection("daily_job_assignments").document(assignment.id))
+        for attempt in 1...maxAttempts {
+            // 1. Authoritative server token read BEFORE assignment discovery
+            let shiftDoc = try await shiftRef.getDocument(source: .server)
+            guard shiftDoc.exists else {
+                throw NSError(domain: "Rosterra", code: 404, userInfo: [NSLocalizedDescriptionKey: "Shift not found"])
+            }
+            let baselineVersion = (shiftDoc.data()?["dailyJobsVersion"] as? Int) ?? 0
+
+            // 2. Authoritative server query for existing assignments (discovery)
+            // Do NOT use local assignments when the server query successfully returns empty!
+            let existingSnap = try await db.collection("daily_job_assignments")
+                .whereField("shiftId", isEqualTo: shiftId)
+                .getDocuments(source: .server)
+            let authoritativeExisting = existingSnap.documents.compactMap { try? $0.data(as: DailyJobAssignment.self) }
+
+            // Repeat path check: If onlyIfUnassigned is true (repeat path) and shift already has assignments, abort!
+            if onlyIfUnassigned && !authoritativeExisting.isEmpty {
+                return false
+            }
+
+            // 3. Compare baseline inside the transaction:
+            do {
+                let addedAny = try await db.runTransaction({ (transaction, errorPointer) -> Any? in
+                    let curSnap: DocumentSnapshot
+                    do {
+                        curSnap = try transaction.getDocument(shiftRef)
+                    } catch let fetchError as NSError {
+                        errorPointer?.pointee = fetchError
+                        return nil
+                    }
+                    guard curSnap.exists else {
+                        errorPointer?.pointee = NSError(domain: "Rosterra", code: 404, userInfo: [NSLocalizedDescriptionKey: "Shift not found"])
+                        return nil
+                    }
+                    let currentVersion = (curSnap.data()?["dailyJobsVersion"] as? Int) ?? 0
+                    if currentVersion != baselineVersion {
+                        errorPointer?.pointee = NSError(
+                            domain: "Rosterra",
+                            code: 409,
+                            userInfo: [NSLocalizedDescriptionKey: "OCC version mismatch: baseline \(baselineVersion), current \(currentVersion)"]
+                        )
+                        return nil
+                    }
+
+                    for assignment in authoritativeExisting where !templateIds.contains(assignment.templateId) {
+                        transaction.deleteDocument(self.db.collection("daily_job_assignments").document(assignment.id))
+                    }
+                    var newlyAddedCount = 0
+                    var nextOrder = (authoritativeExisting.compactMap(\.order).max() ?? -1) + 1
+                    for templateId in templateIds {
+                        guard !authoritativeExisting.contains(where: { $0.templateId == templateId }),
+                              let template = self.dailyJobTemplates.first(where: { $0.id == templateId }) else { continue }
+                        let docId = DailyJobAssignment.docId(shiftId: shiftId, templateId: templateId)
+                        transaction.setData([
+                            "id": docId,
+                            "shiftId": shiftId,
+                            "staffId": staffId,
+                            "templateId": templateId,
+                            "title": template.title,
+                            "date": date,
+                            "order": nextOrder,
+                            "assignedAt": FieldValue.serverTimestamp(),
+                            "assignedBy": uid,
+                            "completed": false
+                        ], forDocument: self.db.collection("daily_job_assignments").document(docId))
+                        nextOrder += 1
+                        newlyAddedCount += 1
+                    }
+
+                    let retainedCount = authoritativeExisting.filter { templateIds.contains($0.templateId) }.count
+                    let finalCount = retainedCount + newlyAddedCount
+
+                    transaction.setData([
+                        "dailyJobsVersion": currentVersion + 1,
+                        "dailyJobsCount": finalCount,
+                        "dailyJobsUpdatedAt": FieldValue.serverTimestamp()
+                    ], forDocument: shiftRef, merge: true)
+
+                    return newlyAddedCount > 0
+                })
+
+                return (addedAny as? Bool) ?? false
+            } catch let error as NSError where error.code == 409 && attempt < maxAttempts {
+                // OCC mismatch: restart with fresh server token read and fresh discovery
+                continue
+            }
         }
-        var addedAny = false
-        // New assignments are appended after whatever's already ordered —
-        // arranging them relative to each other is what drag-reorder is for.
-        var nextOrder = (existing.compactMap(\.order).max() ?? -1) + 1
-        for templateId in templateIds {
-            guard !existing.contains(where: { $0.templateId == templateId }),
-                  let template = dailyJobTemplates.first(where: { $0.id == templateId }) else { continue }
-            let docId = DailyJobAssignment.docId(shiftId: shiftId, templateId: templateId)
-            batch.setData([
-                "id": docId,
-                "shiftId": shiftId,
-                "staffId": staffId,
-                "templateId": templateId,
-                "title": template.title,
-                "date": date,
-                "order": nextOrder,
-                "assignedAt": FieldValue.serverTimestamp(),
-                "assignedBy": uid,
-                "completed": false
-            ], forDocument: db.collection("daily_job_assignments").document(docId))
-            nextOrder += 1
-            addedAny = true
-        }
-        try await batch.commit()
-        return addedAny
+
+        return false
     }
 
     /// Persist a manager's drag-to-reorder of one shift's job assignments —
@@ -1429,11 +1659,106 @@ final class RosterRepository {
     /// (the common case: assign, then reorder) would never be reflected in
     /// tomorrow's auto-repeated jobs, which is exactly the bug this fixes.
     func reorderDailyJobs(orderedAssignmentIds: [String], staffId: String) async throws {
-        let batch = db.batch()
-        for (index, id) in orderedAssignmentIds.enumerated() {
-            batch.updateData(["order": index], forDocument: db.collection("daily_job_assignments").document(id))
+        guard let firstId = orderedAssignmentIds.first else { return }
+        guard Set(orderedAssignmentIds).count == orderedAssignmentIds.count else {
+            throw NSError(domain: "Rosterra", code: 400, userInfo: [NSLocalizedDescriptionKey: "A job appears more than once in this order."])
         }
-        try await batch.commit()
+        let firstSnapshot = try await db.collection("daily_job_assignments").document(firstId).getDocument(source: .server)
+        guard let firstData = firstSnapshot.data(),
+              firstData["staffId"] as? String == staffId,
+              let shiftId = firstData["shiftId"] as? String, !shiftId.isEmpty else {
+            throw NSError(domain: "Rosterra", code: 409, userInfo: [NSLocalizedDescriptionKey: "These jobs changed or were removed. Refresh and try again."])
+        }
+        let shiftRef = db.collection("shifts").document(shiftId)
+
+        var authoritativeCount: Int?
+        var expectedVersion: Int?
+        let maxAttempts = 5
+
+        for attempt in 1...maxAttempts {
+            do {
+                _ = try await db.runTransaction({ (transaction, errorPointer) -> Any? in
+                    let shiftDoc: DocumentSnapshot
+                    do {
+                        shiftDoc = try transaction.getDocument(shiftRef)
+                    } catch let fetchError as NSError {
+                        errorPointer?.pointee = fetchError
+                        return nil
+                    }
+                    guard shiftDoc.exists else {
+                        errorPointer?.pointee = NSError(domain: "Rosterra", code: 404, userInfo: [NSLocalizedDescriptionKey: "Shift not found"])
+                        return nil
+                    }
+                    let serverVer = (shiftDoc.data()?["dailyJobsVersion"] as? Int) ?? 0
+                    let existingCount = shiftDoc.data()?["dailyJobsCount"] as? Int
+
+                    let finalCount: Int
+                    do {
+                        finalCount = try DailyJobOCCLogic.resolveCountForReorder(
+                            shiftCount: existingCount,
+                            authoritativeServerCount: authoritativeCount,
+                            expectedVersion: expectedVersion,
+                            currentVersion: serverVer
+                        )
+                    } catch DailyJobOCCError.preconditionRequired(let ver) {
+                        errorPointer?.pointee = NSError(domain: "Rosterra", code: 428, userInfo: ["version": ver])
+                        return nil
+                    } catch DailyJobOCCError.versionMismatch(let exp, let act) {
+                        errorPointer?.pointee = NSError(domain: "Rosterra", code: 409, userInfo: [NSLocalizedDescriptionKey: "OCC version mismatch during reorder count initialization: expected \(exp), got \(act)"])
+                        return nil
+                    } catch {
+                        errorPointer?.pointee = error as NSError
+                        return nil
+                    }
+
+                    // Read every assignment before writing so a stale drag
+                    // cannot reorder jobs from another staff member/shift.
+                    for id in orderedAssignmentIds {
+                        do {
+                            let assignment = try transaction.getDocument(self.db.collection("daily_job_assignments").document(id))
+                            guard assignment.data()?["shiftId"] as? String == shiftId,
+                                  assignment.data()?["staffId"] as? String == staffId else {
+                                errorPointer?.pointee = NSError(domain: "Rosterra", code: 409, userInfo: [NSLocalizedDescriptionKey: "These jobs changed. Refresh and try again."])
+                                return nil
+                            }
+                        } catch let error as NSError {
+                            errorPointer?.pointee = error
+                            return nil
+                        }
+                    }
+                    for (index, id) in orderedAssignmentIds.enumerated() {
+                        transaction.updateData(["order": index], forDocument: self.db.collection("daily_job_assignments").document(id))
+                    }
+                    transaction.setData([
+                        "dailyJobsVersion": serverVer + 1,
+                        "dailyJobsCount": finalCount,
+                        "dailyJobsUpdatedAt": FieldValue.serverTimestamp()
+                    ], forDocument: shiftRef, merge: true)
+                    return nil
+                })
+                break
+            } catch let error as NSError where error.code == 428 && attempt < maxAttempts {
+                let currentVer = error.userInfo["version"] as? Int ?? 0
+                let countSnap = try await db.collection("daily_job_assignments")
+                    .whereField("shiftId", isEqualTo: shiftId)
+                    .getDocuments(source: .server)
+                authoritativeCount = countSnap.documents.count
+                expectedVersion = currentVer
+                continue
+            } catch let error as NSError where error.code == 409 && attempt < maxAttempts {
+                // 1. Capture a fresh server token BEFORE requerying the count:
+                let freshDoc = try await shiftRef.getDocument(source: .server)
+                let freshVer = (freshDoc.data()?["dailyJobsVersion"] as? Int) ?? 0
+                // 2. Requery the count:
+                let countSnap = try await db.collection("daily_job_assignments")
+                    .whereField("shiftId", isEqualTo: shiftId)
+                    .getDocuments(source: .server)
+                authoritativeCount = countSnap.documents.count
+                // 3. Set expectedVersion to the fresh token (NEVER nil!):
+                expectedVersion = freshVer
+                continue
+            }
+        }
 
         if let rule = dailyJobRepeatRules[staffId], rule.enabled {
             let orderedTemplateIds = orderedAssignmentIds.compactMap { id in
@@ -1495,7 +1820,8 @@ final class RosterRepository {
                     do {
                         try await self.applyDailyJobs(
                             shiftId: shift.id, staffId: staffId, date: shift.date,
-                            templateIds: templateIds, existing: []
+                            templateIds: templateIds, existing: [],
+                            onlyIfUnassigned: true
                         )
                     } catch {
                         await Self.log.error("backfillDailyJobRepeat failed for shift \(shift.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
@@ -1509,11 +1835,77 @@ final class RosterRepository {
     /// the manager dashboard immediately.
     func setDailyJobCompleted(_ assignment: DailyJobAssignment, completed: Bool) async throws {
         guard let uid = activeUID else { throw AuthError.notAuthenticated }
-        try await db.collection("daily_job_assignments").document(assignment.id).updateData([
-            "completed": completed,
-            "completedAt": completed ? FieldValue.serverTimestamp() : NSNull(),
-            "completedBy": completed ? uid : NSNull()
-        ])
+        let shiftRef = db.collection("shifts").document(assignment.shiftId)
+        let assignmentRef = db.collection("daily_job_assignments").document(assignment.id)
+
+        try await DailyJobOCCLogic.executeCompletionRetry(
+            maxAttempts: 5,
+            runTransactionAttempt: { authoritativeCount, expectedVersion in
+                _ = try await self.db.runTransaction({ (transaction, errorPointer) -> Any? in
+                    let shiftDoc: DocumentSnapshot
+                    do {
+                        shiftDoc = try transaction.getDocument(shiftRef)
+                    } catch let fetchError as NSError {
+                        errorPointer?.pointee = fetchError
+                        return nil
+                    }
+                    guard shiftDoc.exists else {
+                        errorPointer?.pointee = NSError(domain: "Rosterra", code: 404, userInfo: [NSLocalizedDescriptionKey: "Shift not found: Cannot complete daily job for non-existent shift."])
+                        return nil
+                    }
+                    let currentVer = (shiftDoc.data()?["dailyJobsVersion"] as? Int) ?? 0
+                    let existingCount = shiftDoc.data()?["dailyJobsCount"] as? Int
+
+                    let finalCount: Int
+                    do {
+                        finalCount = try DailyJobOCCLogic.resolveCountForCompletion(
+                            shiftCount: existingCount,
+                            authoritativeServerCount: authoritativeCount,
+                            expectedVersion: expectedVersion,
+                            currentVersion: currentVer
+                        )
+                    } catch DailyJobOCCError.preconditionRequired(let ver) {
+                        errorPointer?.pointee = NSError(domain: "Rosterra", code: 428, userInfo: ["version": ver])
+                        return nil
+                    } catch DailyJobOCCError.versionMismatch(let exp, let act) {
+                        errorPointer?.pointee = NSError(domain: "Rosterra", code: 409, userInfo: [NSLocalizedDescriptionKey: "OCC version mismatch during legacy count initialization: expected \(exp), got \(act)"])
+                        return nil
+                    } catch {
+                        errorPointer?.pointee = error as NSError
+                        return nil
+                    }
+
+                    let shiftUpdates: [String: Any] = [
+                        "dailyJobsVersion": currentVer + 1,
+                        "dailyJobsUpdatedAt": FieldValue.serverTimestamp(),
+                        "dailyJobsAssignmentId": assignment.id,
+                        "dailyJobsCount": finalCount
+                    ]
+
+                    transaction.updateData([
+                        "completed": completed,
+                        "completedAt": completed ? FieldValue.serverTimestamp() : NSNull(),
+                        "completedBy": completed ? uid : NSNull()
+                    ], forDocument: assignmentRef)
+
+                    transaction.setData(shiftUpdates, forDocument: shiftRef, merge: true)
+                    return nil
+                })
+            },
+            fetchFreshServerToken: {
+                let freshShiftDoc = try await shiftRef.getDocument(source: .server)
+                guard freshShiftDoc.exists else {
+                    throw NSError(domain: "Rosterra", code: 404, userInfo: [NSLocalizedDescriptionKey: "Shift not found"])
+                }
+                return (freshShiftDoc.data()?["dailyJobsVersion"] as? Int) ?? 0
+            },
+            fetchAuthoritativeServerCount: {
+                let countSnap = try await self.db.collection("daily_job_assignments")
+                    .whereField("shiftId", isEqualTo: assignment.shiftId)
+                    .getDocuments(source: .server)
+                return countSnap.documents.count
+            }
+        )
 
         // "All assigned jobs completed": checked here rather than via a
         // server-side aggregate, since the client already holds the sibling
@@ -2075,9 +2467,8 @@ final class RosterRepository {
             // Weekend & PH: explicit classification rate wins; otherwise defaults.
             weekendRate: {
                 let explicit = profile?.resolvedWeekendRate(award: award, earningsLines: earningsLines)
-                return (explicit ?? 0) > 0
-                    ? explicit!
-                    : PayrollCalculator.round2(baseRate * 1.5)
+                if let explicit, explicit > 0 { return explicit }
+                return PayrollCalculator.round2(baseRate * 1.5)
             }(),
             // There is no dedicated public-holiday-rate field on
             // AwardClassification/EarningsLine yet (only weekendHourlyRate),
@@ -2118,30 +2509,61 @@ final class RosterRepository {
     /// (see `PayrollCalculator.auditDiff`) instead of one generic "edited"
     /// blob. No entry is appended if nothing actually changed.
     func savePayslip(_ slip: Payslip, original: Payslip, editedBy editor: AppUser) async throws {
-        var updated = slip
-        updated.updatedAt = Date()
-        updated.audit.append(contentsOf: PayrollCalculator.auditDiff(from: original, to: slip, editor: editor))
-        try await db.collection("payslips").document(slip.id).setData(updated.asDictionary)
+        let ref = db.collection("payslips").document(slip.id)
+        _ = try await db.runTransaction { transaction, errorPointer -> Any? in
+            do {
+                let snapshot = try transaction.getDocument(ref)
+                guard let data = snapshot.data(), let current = Payslip(id: slip.id, data: data), current.status.isEditable,
+                      current.matchesEditBaseline(original) else {
+                    errorPointer?.pointee = NSError(domain: "Rosterra", code: 409, userInfo: [NSLocalizedDescriptionKey: "This payslip changed or was published. Refresh before editing it."])
+                    return nil
+                }
+                var updated = slip
+                updated.audit = current.audit + PayrollCalculator.auditDiff(from: original, to: slip, editor: editor)
+                if slip.payClassificationReviewed != current.payClassificationReviewed {
+                    updated.audit.append(PayslipAuditEntry(action: slip.payClassificationReviewed ? "pay-classification-reviewed" : "pay-review-reset", userId: editor.id, userName: editor.fullName))
+                }
+                var payload = updated.asDictionary
+                payload["updatedAt"] = FieldValue.serverTimestamp()
+                transaction.setData(payload, forDocument: ref)
+                return nil
+            } catch let error as NSError {
+                errorPointer?.pointee = error
+                return nil
+            }
+        }
     }
 
     /// Move a payslip through the manual workflow. Submitting stamps
     /// `submittedBy/At` — the moment staff visibility flips on.
     func setPayslipStatus(_ slip: Payslip, to status: PayslipStatus, by actor: AppUser) async throws {
-        var updated = slip
-        updated.status = status
-        updated.updatedAt = Date()
-        switch status {
-        case .approved:
-            updated.approvedBy = actor.id
-            updated.approvedAt = Date()
-        case .submitted:
-            updated.submittedBy = actor.id
-            updated.submittedAt = Date()
-        default: break
+        if (status == .approved || status == .submitted) && !slip.payClassificationReviewed {
+            throw AuthError.generic("Review the hour categories and award rates in this payslip, confirm the review and save before approving or publishing.")
         }
-        updated.audit.append(PayslipAuditEntry(action: status.rawValue, userId: actor.id,
-                                               userName: actor.fullName))
-        try await db.collection("payslips").document(slip.id).setData(updated.asDictionary)
+        let ref = db.collection("payslips").document(slip.id)
+        let entry = PayslipAuditEntry(action: status.rawValue, userId: actor.id, userName: actor.fullName)
+        _ = try await db.runTransaction { transaction, errorPointer -> Any? in
+            do {
+                let snapshot = try transaction.getDocument(ref)
+                guard let data = snapshot.data(), let current = Payslip(id: slip.id, data: data),
+                      current.status.isEditable || (status == .archived && current.status == .submitted) else {
+                    errorPointer?.pointee = NSError(domain: "Rosterra", code: 409, userInfo: [NSLocalizedDescriptionKey: "This payslip changed or is locked. Refresh and try again."])
+                    return nil
+                }
+                if (status == .approved || status == .submitted) && !current.payClassificationReviewed {
+                    errorPointer?.pointee = NSError(domain: "Rosterra", code: 409, userInfo: [NSLocalizedDescriptionKey: "The current payslip needs hours and award-rate review before approval or publishing."])
+                    return nil
+                }
+                var patch: [String: Any] = ["status": status.rawValue, "updatedAt": FieldValue.serverTimestamp(), "audit": FieldValue.arrayUnion([entry.asDictionary])]
+                if status == .approved { patch["approvedBy"] = actor.id; patch["approvedAt"] = FieldValue.serverTimestamp() }
+                if status == .submitted { patch["submittedBy"] = actor.id; patch["submittedAt"] = FieldValue.serverTimestamp() }
+                transaction.updateData(patch, forDocument: ref)
+                return nil
+            } catch let error as NSError {
+                errorPointer?.pointee = error
+                return nil
+            }
+        }
         await writePayrollAuditLog(action: "payslip-\(status.rawValue)",
                                    detail: "\(slip.staffName) · week \(slip.periodStart)")
         if status == .submitted {
@@ -2176,44 +2598,57 @@ final class RosterRepository {
                                    detail: "\(deletable.count) draft payslip(s) · week \(deletable.first?.periodStart ?? "")")
     }
 
-    /// Publish (submit) one or more payslips in a single batch — the fast
-    /// path individual/bulk "Publish" uses, jumping straight from whatever
+    /// Publish reviewed payslips in a transaction, re-reading review and status.
+    /// Individual/bulk "Publish" can jump straight from whatever
     /// pre-submit status a payslip is in (draft/underReview/approved) to
     /// submitted. Deliberately bypasses the granular Start Review → Approve
     /// → Submit workflow in `ManagerPayslipDetailSheet`, which stays
     /// available separately for managers who still want that control.
     @discardableResult
     func publishPayslips(_ slips: [Payslip], by actor: AppUser) async throws -> Int {
-        // Re-filter against live state right before building the batch — a
-        // selection captured when the bulk sheet opened could be stale by
-        // the time "Publish Selected" is tapped (e.g. deleted elsewhere).
-        // `updateData` throws on a missing doc and the batch is atomic, so
-        // one stale id would otherwise fail every other selected payslip too.
         let ids = Set(slips.map(\.id))
-        let eligible = payslips.filter { ids.contains($0.id) && $0.status != .submitted && $0.status != .archived }
-        guard !eligible.isEmpty else { return 0 }
-
-        let batch = db.batch()
-        let now = Date()
-        for slip in eligible {
-            let entry = PayslipAuditEntry(action: "submitted", userId: actor.id,
-                                          userName: actor.fullName, detail: "Published")
-            batch.updateData([
-                "status": PayslipStatus.submitted.rawValue,
-                "submittedBy": actor.id,
-                "submittedAt": now,
-                "updatedAt": now,
-                "audit": FieldValue.arrayUnion([entry.asDictionary]),
-            ], forDocument: db.collection("payslips").document(slip.id))
+        guard !ids.isEmpty else { return 0 }
+        guard ids.count < 500 else {
+            throw AuthError.generic("Publish fewer than 500 payslips at a time.")
         }
-        try await batch.commit()
-        await writePayrollAuditLog(action: "payslips-published",
-                                   detail: "\(eligible.count) payslip(s) published")
-        // The moment staff visibility flips on for each of these — mirrors
-        // the single-payslip notification in setPayslipStatus, batched.
-        await WorkerAPIClient.shared.sendNotification(event: "payslip-generated",
-                                                       recipientIds: eligible.map(\.staffId))
-        return eligible.count
+        let result = try await db.runTransaction { transaction, errorPointer -> Any? in
+            do {
+                var eligible: [(DocumentReference, Payslip)] = []
+                for id in ids {
+                    let ref = self.db.collection("payslips").document(id)
+                    let snapshot = try transaction.getDocument(ref)
+                    guard let data = snapshot.data(), let current = Payslip(id: id, data: data) else {
+                        errorPointer?.pointee = NSError(domain: "Rosterra", code: 409, userInfo: [NSLocalizedDescriptionKey: "A selected payslip was removed. Refresh and try again."])
+                        return nil
+                    }
+                    if current.status == .submitted || current.status == .archived { continue }
+                    guard current.payClassificationReviewed else {
+                        errorPointer?.pointee = NSError(domain: "Rosterra", code: 409, userInfo: [NSLocalizedDescriptionKey: "Review the hours and award rates in every selected payslip, confirm the review and save before publishing."])
+                        return nil
+                    }
+                    eligible.append((ref, current))
+                }
+                for (ref, _) in eligible {
+                    let entry = PayslipAuditEntry(action: "submitted", userId: actor.id, userName: actor.fullName, detail: "Published after hour/rate review")
+                    transaction.updateData([
+                        "status": PayslipStatus.submitted.rawValue,
+                        "submittedBy": actor.id,
+                        "submittedAt": FieldValue.serverTimestamp(),
+                        "updatedAt": FieldValue.serverTimestamp(),
+                        "audit": FieldValue.arrayUnion([entry.asDictionary]),
+                    ], forDocument: ref)
+                }
+                return eligible.map { $0.1.staffId }
+            } catch let error as NSError {
+                errorPointer?.pointee = error
+                return nil
+            }
+        }
+        let recipients = result as? [String] ?? []
+        guard !recipients.isEmpty else { return 0 }
+        await writePayrollAuditLog(action: "payslips-published", detail: "\(recipients.count) payslip(s) published")
+        await WorkerAPIClient.shared.sendNotification(event: "payslip-generated", recipientIds: Array(Set(recipients)))
+        return recipients.count
     }
 
     /// Regenerate a draft/under-review payslip from current timesheet + wage
@@ -2276,6 +2711,7 @@ final class RosterRepository {
     /// payslips land there), or `forceRefresh` (pull-to-refresh).
     func staffPayslips(monthKey: String, forceRefresh: Bool = false) async throws -> [Payslip] {
         guard let uid = activeUID else { return [] }
+        let session = refreshSessionGeneration
         let isCurrentMonth = monthKey == RosterCalendar.monthKey()
         let needsServer = forceRefresh
             || (isCurrentMonth && !staffPayslipMonthsRefreshed.contains(monthKey))
@@ -2291,6 +2727,7 @@ final class RosterRepository {
             // trustworthy if this device has downloaded the month before —
             // otherwise the cache just doesn't have it yet.
             if let snap = try? await query.getDocuments(source: .cache) {
+                guard activeUID == uid && refreshSessionGeneration == session else { throw CancellationError() }
                 let slips = parseStaffPayslips(snap)
                 if !slips.isEmpty || payslipMonthsDownloaded(uid: uid).contains(monthKey) {
                     staffPayslipMonthCache[monthKey] = slips
@@ -2299,28 +2736,12 @@ final class RosterRepository {
             }
         }
 
-        let slips: [Payslip]
-        do {
-            let snap = try await query.getDocuments(source: .server)
-            slips = parseStaffPayslips(snap)
-        } catch {
-            // Defensive: the documentID range should need no composite index
-            // (equalities + __name__ bounds), but if the backend ever rejects
-            // it, fall back to the equality-only query — the exact shape the
-            // old listener used — and bucket the whole history client-side.
-            let snap = try await db.collection("payslips")
-                .whereField("staffId", isEqualTo: uid)
-                .whereField("status", in: [PayslipStatus.submitted.rawValue, PayslipStatus.archived.rawValue])
-                .getDocuments(source: .server)
-            let all = parseStaffPayslips(snap)
-            let byMonth = Dictionary(grouping: all) { String($0.periodStart.prefix(7)) }
-            for (month, monthSlips) in byMonth {
-                staffPayslipMonthCache[month] = monthSlips
-                staffPayslipMonthsRefreshed.insert(month)
-                markPayslipMonthDownloaded(month, uid: uid)
-            }
-            slips = byMonth[monthKey] ?? []
-        }
+        // If this indexed month query fails, surface the error to the tab.
+        // Falling back to an all-history query would turn a single-month
+        // refresh into an unexpectedly expensive read.
+        let snap = try await query.getDocuments(source: .server)
+        guard activeUID == uid && refreshSessionGeneration == session else { throw CancellationError() }
+        let slips = parseStaffPayslips(snap)
 
         staffPayslipMonthCache[monthKey] = slips
         staffPayslipMonthsRefreshed.insert(monthKey)
@@ -2441,7 +2862,7 @@ final class RosterRepository {
                 "detail": detail,
                 "userId": actor.id,
                 "userName": actor.fullName,
-                "at": Date(),
+                "at": FieldValue.serverTimestamp(),
                 "area": "payroll",
             ])
         }
@@ -2460,8 +2881,8 @@ final class RosterRepository {
         notes: String?,
         status: ShiftStatus
     ) async throws {
-        let isUpdate = id != nil && !(id?.isEmpty ?? true)
-        let existing = isUpdate ? shiftsById[id!] : nil
+        let isUpdate = id.map { !$0.isEmpty } ?? false
+        let existing = id.flatMap { shiftsById[$0] }
         let docRef: DocumentReference
         if let id = id, !id.isEmpty {
             docRef = db.collection("shifts").document(id)
@@ -2469,8 +2890,10 @@ final class RosterRepository {
             docRef = db.collection("shifts").document()
         }
 
-        let startDateTime = BusinessRules.shiftStartDateTime(date: date, time: start)
-        let endDateTime = BusinessRules.shiftEndDateTime(date: date, start: start, end: end)
+        guard let startDateTime = BusinessRules.validatedShiftStartDateTime(date: date, time: start),
+              let endDateTime = BusinessRules.validatedShiftEndDateTime(date: date, start: start, end: end) else {
+            throw NSError(domain: "Rosterra", code: 400, userInfo: [NSLocalizedDescriptionKey: "Enter a valid shift date, start time and end time."])
+        }
         let diffSecs = endDateTime.timeIntervalSince(startDateTime)
         let diffHours = diffSecs / 3600.0
         let scheduledHours = max(0.0, diffHours - (Double(breakMinutes) / 60.0))
@@ -2478,10 +2901,8 @@ final class RosterRepository {
         // date or start time actually differs from what's currently saved.
         // Resets the shift-start reminder flags (matching the PWA) and is
         // the same condition that gates the shift-changed notification below.
-        let startChanged = existing != nil && (existing!.date != date || existing!.rosteredStart != start)
-        let handoverChanged = existing != nil && (
-            existing!.date != date || existing!.rosteredEnd != end || existing!.location != (location ?? "")
-        )
+        let startChanged = existing.map { $0.date != date || $0.rosteredStart != start } ?? false
+        let handoverChanged = existing.map { $0.date != date || $0.rosteredEnd != end || $0.location != (location ?? "") } ?? false
 
         var data: [String: Any] = [
             "staffId": staffId,
@@ -2510,6 +2931,10 @@ final class RosterRepository {
         }
         if !isUpdate || handoverChanged {
             data["handoverReminder30mSent"] = false
+        }
+        if !isUpdate {
+            data["dailyJobsVersion"] = 0
+            data["dailyJobsCount"] = 0
         }
 
         try await docRef.setData(data, merge: true)
@@ -2547,22 +2972,47 @@ final class RosterRepository {
     /// Dashboard pending count while being invisible in week views.
     /// (Manager timesheet deletes are permitted by the deployed rules.)
     func deleteShift(id: String) async throws {
-        // Captured before the delete — staffId can no longer be looked up
-        // server-side once the doc is gone, and only notify if the shift was
-        // published (staff never saw a draft).
-        let existing = shiftsById[id]
+        guard !id.isEmpty else { throw AuthError.generic("Select a shift to delete.") }
+        // Discovery must be authoritative: offline/cache results cannot tell
+        // us which attached timesheets need deletion.
         let attached = try await db.collection("timesheets")
             .whereField("shiftId", isEqualTo: id)
-            .getDocuments()
-        let batch = db.batch()
-        batch.deleteDocument(db.collection("shifts").document(id))
-        for doc in attached.documents {
-            batch.deleteDocument(doc.reference)
+            .getDocuments(source: .server)
+        let shiftRef = db.collection("shifts").document(id)
+        // Include the canonical 1:1 timesheet even when discovery was empty,
+        // so a concurrent staff submission conflicts with this transaction.
+        let timesheetIDs = Set(attached.documents.map { $0.documentID } + [id])
+        guard timesheetIDs.count < 500 else {
+            throw AuthError.generic("This shift has too many attached timesheets. Contact support before deleting it.")
         }
-        try await batch.commit()
-
-        if let existing, existing.status == .published {
-            let staffId = existing.staffId
+        let cancelledStaffId = try await db.runTransaction { transaction, errorPointer -> Any? in
+            do {
+                let shift = try transaction.getDocument(shiftRef)
+                guard shift.exists else {
+                    errorPointer?.pointee = NSError(domain: "Rosterra", code: 404, userInfo: [NSLocalizedDescriptionKey: "This shift no longer exists. Refresh the roster."])
+                    return nil
+                }
+                var existingRefs: [DocumentReference] = []
+                for timesheetID in timesheetIDs {
+                    let ref = self.db.collection("timesheets").document(timesheetID)
+                    let snapshot = try transaction.getDocument(ref)
+                    if snapshot.exists {
+                        guard snapshot.data()?["shiftId"] as? String == id else {
+                            errorPointer?.pointee = NSError(domain: "Rosterra", code: 409, userInfo: [NSLocalizedDescriptionKey: "An attached timesheet changed. Refresh before deleting this shift."])
+                            return nil
+                        }
+                        existingRefs.append(ref)
+                    }
+                }
+                for ref in existingRefs { transaction.deleteDocument(ref) }
+                transaction.deleteDocument(shiftRef)
+                return shift.data()?["status"] as? String == "published" ? (shift.data()?["staffId"] as? String ?? "") : ""
+            } catch let error as NSError {
+                errorPointer?.pointee = error
+                return nil
+            }
+        } as? String
+        if let staffId = cancelledStaffId, !staffId.isEmpty {
             Task { await WorkerAPIClient.shared.sendNotification(event: "shift-cancelled", recipientIds: [staffId]) }
         }
     }
@@ -2615,13 +3065,17 @@ final class RosterRepository {
     /// `publishShifts` (dataStore.ts): status + publishedAt + updatedAt, and
     /// backfills `shiftStartAt`/`submittableAfter` so drafts created before
     /// those fields existed become submittable once published.
-    private func publishFields(date: String, start: String, end: String) -> [String: Any] {
-        [
+    private func publishFields(date: String, start: String, end: String) throws -> [String: Any] {
+        guard let startDate = BusinessRules.validatedShiftStartDateTime(date: date, time: start),
+              let endDate = BusinessRules.validatedShiftEndDateTime(date: date, start: start, end: end) else {
+            throw AuthError.generic("This shift has an invalid date or time. Correct it before publishing.")
+        }
+        return [
             "status": ShiftStatus.published.rawValue,
-            "publishedAt": nowISO(),
+            "publishedAt": FieldValue.serverTimestamp(),
             "updatedAt": FieldValue.serverTimestamp(),
-            "shiftStartAt": Timestamp(date: BusinessRules.shiftStartDateTime(date: date, time: start)),
-            "submittableAfter": Timestamp(date: BusinessRules.shiftEndDateTime(date: date, start: start, end: end)),
+            "shiftStartAt": Timestamp(date: startDate),
+            "submittableAfter": Timestamp(date: endDate),
             "handoverReminder30mSent": false
         ]
     }
@@ -2629,7 +3083,7 @@ final class RosterRepository {
     /// Publish a single shift (context-menu / swipe action).
     func publishShift(_ shift: Shift) async throws {
         try await db.collection("shifts").document(shift.id).updateData(
-            publishFields(date: shift.date, start: shift.rosteredStart, end: shift.rosteredEnd)
+            try publishFields(date: shift.date, start: shift.rosteredStart, end: shift.rosteredEnd)
         )
         // Same event as the bulk path (publishAllDrafts) — the assigned staff
         // member otherwise never learns their shift went live until they
@@ -2663,7 +3117,7 @@ final class RosterRepository {
             for doc in drafts[chunkStart..<min(chunkStart + 500, drafts.count)] {
                 let data = doc.data()
                 batch.updateData(
-                    publishFields(date: FS.stringValue(data, "date"),
+                    try publishFields(date: FS.stringValue(data, "date"),
                                   start: FS.stringValue(data, "rosteredStart"),
                                   end: FS.stringValue(data, "rosteredEnd")),
                     forDocument: doc.reference
@@ -2711,8 +3165,8 @@ final class RosterRepository {
             "actualEnd": actualEnd,
             "actualBreakMinutes": breakMinutes,
             "workedHours": worked,
-            "adjustedByManagerAt": nowISO(),
-            "updatedAt": nowISO(),
+            "adjustedByManagerAt": FieldValue.serverTimestamp(),
+            "updatedAt": FieldValue.serverTimestamp(),
         ])
     }
 
@@ -2757,9 +3211,8 @@ final class RosterRepository {
         notifyTimesheetsApproved([id])
     }
 
-    /// Approve many pending timesheets in one Firestore batch instead of
-    /// waiting on a transaction + worker notification per row. Notifications
-    /// go out after the write, without blocking the manager.
+    /// Approve pending timesheets with bounded concurrent transactions.
+    /// Every status is checked atomically; notify only committed approvals.
     func approveTimesheets(ids: [String], managerNotes: String? = nil) async -> (approvedIds: [String], failedIds: [String]) {
         let uniqueIds = Array(Set(ids))
         guard let currentUserId = currentUser?.id, !uniqueIds.isEmpty else {
@@ -2767,33 +3220,32 @@ final class RosterRepository {
         }
         let data = timesheetApprovalData(managerNotes: managerNotes, approvedBy: currentUserId)
 
-        do {
-            try await commitTimesheetApprovals(ids: uniqueIds, data: data)
-            notifyTimesheetsApproved(uniqueIds)
-            return (uniqueIds, [])
-        } catch {
-            var approvedIds: [String] = []
-            var failedIds: [String] = []
+        var approvedIds: [String] = []
+        var failedIds: [String] = []
+        // Bound concurrency and check each decision inside its transaction.
+        // Only successful ids are returned and notified; retries cannot
+        // overwrite another manager's approval or rejection.
+        for offset in stride(from: 0, to: uniqueIds.count, by: 16) {
+            let chunk = Array(uniqueIds[offset..<min(offset + 16, uniqueIds.count)])
             await withTaskGroup(of: (String, Bool).self) { group in
-                for id in uniqueIds {
+                for id in chunk {
                     group.addTask {
                         do {
                             try await self.updateTimesheetIfActionable(
                                 id: id, actionableStatuses: [.pending], data: data
                             )
                             return (id, true)
-                        } catch {
-                            return (id, false)
-                        }
+                        } catch { return (id, false) }
                     }
                 }
                 for await (id, succeeded) in group {
-                    if succeeded { approvedIds.append(id) } else { failedIds.append(id) }
+                    if succeeded { approvedIds.append(id) }
+                    else { failedIds.append(id) }
                 }
             }
-            notifyTimesheetsApproved(approvedIds)
-            return (approvedIds, failedIds)
         }
+        notifyTimesheetsApproved(approvedIds)
+        return (approvedIds, failedIds)
     }
 
     private func timesheetApprovalData(managerNotes: String?, approvedBy: String) -> [String: Any] {
@@ -2801,23 +3253,9 @@ final class RosterRepository {
             "status": TimesheetStatus.approved.rawValue,
             "managerNotes": managerNotes ?? "",
             "approvedBy": approvedBy,
-            "approvedAt": nowISO(),
-            "updatedAt": nowISO()
+            "approvedAt": FieldValue.serverTimestamp(),
+            "updatedAt": FieldValue.serverTimestamp()
         ]
-    }
-
-    private func commitTimesheetApprovals(ids: [String], data: [String: Any]) async throws {
-        let chunkSize = 500
-        var index = 0
-        while index < ids.count {
-            let end = min(index + chunkSize, ids.count)
-            let batch = db.batch()
-            for id in ids[index..<end] {
-                batch.updateData(data, forDocument: db.collection("timesheets").document(id))
-            }
-            try await batch.commit()
-            index = end
-        }
     }
 
     private func notifyTimesheetsApproved(_ ids: [String]) {
@@ -2846,8 +3284,8 @@ final class RosterRepository {
             "status": TimesheetStatus.absent.rawValue,
             "managerNotes": managerNotes ?? "",
             "approvedBy": currentUserId,
-            "approvedAt": nowISO(),
-            "updatedAt": nowISO()
+            "approvedAt": FieldValue.serverTimestamp(),
+            "updatedAt": FieldValue.serverTimestamp()
         ]
 
         try await updateTimesheetIfActionable(id: id, actionableStatuses: [.absentReported], data: data)
@@ -2862,7 +3300,7 @@ final class RosterRepository {
             "status": TimesheetStatus.rejected.rawValue,
             "rejectedReason": reason,
             "managerNotes": managerNotes ?? "",
-            "updatedAt": nowISO(),
+            "updatedAt": FieldValue.serverTimestamp(),
             "rejectedAt": FieldValue.serverTimestamp(),
             "rejectionReminderCount": 0
         ]

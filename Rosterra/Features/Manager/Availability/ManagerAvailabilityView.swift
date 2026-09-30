@@ -79,6 +79,7 @@ struct ManagerAvailabilityView: View {
         .navigationTitle("Availability")
         .navigationBarTitleDisplayMode(.inline)
         .screenTitlePill("Availability", icon: "calendar.badge.clock", fraction: 0)
+        .macRefreshable { await repo.refreshFromServer(scope: .managerAvailability) }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 lockButton

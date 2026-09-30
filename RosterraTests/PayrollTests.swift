@@ -6,6 +6,61 @@ import XCTest
 /// payslips are official records.
 final class PayrollTests: XCTestCase {
 
+    func testPayClassificationReviewDefaultsToUnreviewedForLegacyDocuments() throws {
+        let fresh = makeSlip(ordinaryHours: 8, baseRate: 30)
+        XCTAssertFalse(fresh.payClassificationReviewed)
+        var legacyDocument = fresh.asDictionary
+        legacyDocument.removeValue(forKey: "payClassificationReviewed")
+        let decoded = try XCTUnwrap(Payslip(id: fresh.id, data: legacyDocument))
+        XCTAssertFalse(decoded.payClassificationReviewed)
+    }
+
+    func testPayClassificationReviewPersistsAndCanBeReset() throws {
+        var reviewed = makeSlip(ordinaryHours: 8, baseRate: 30)
+        reviewed.payClassificationReviewed = true
+        let decoded = try XCTUnwrap(Payslip(id: reviewed.id, data: reviewed.asDictionary))
+        XCTAssertTrue(decoded.payClassificationReviewed)
+        var reset = decoded
+        reset.payClassificationReviewed = false
+        let resetDecoded = try XCTUnwrap(Payslip(id: reset.id, data: reset.asDictionary))
+        XCTAssertFalse(resetDecoded.payClassificationReviewed)
+        XCTAssertEqual(resetDecoded.ordinaryHours, 8)
+        XCTAssertEqual(resetDecoded.baseHourlyRate, 30)
+    }
+
+    func testEditBaselineDetectsSmallUnroundedHoursChanges() {
+        let original = makeSlip(ordinaryHours: 8, baseRate: 30)
+        var changed = original
+        changed.ordinaryHours += 0.001
+        XCTAssertFalse(changed.matchesEditBaseline(original))
+    }
+
+    func testEditBaselineDetectsSameAmountEarningsChanges() {
+        let original = makeSlip(extras: [PayslipEarning(id: "extra", name: "Allowance", quantity: 2, rate: 10, amount: 20)])
+        var changedQuantity = original
+        changedQuantity.extraEarnings[0].quantity = 4
+        XCTAssertFalse(changedQuantity.matchesEditBaseline(original))
+        var changedName = original
+        changedName.extraEarnings[0].name = "Different allowance"
+        XCTAssertFalse(changedName.matchesEditBaseline(original))
+        var changedExemption = original
+        changedExemption.extraEarnings[0].exemptFromSuper = true
+        XCTAssertFalse(changedExemption.matchesEditBaseline(original))
+        var changedTax = original
+        changedTax.extraEarnings[0].exemptFromTax = true
+        XCTAssertFalse(changedTax.matchesEditBaseline(original))
+    }
+
+    func testEditBaselineAllowsConcurrentAuditAndUpdateStampOnly() {
+        let original = makeSlip(ordinaryHours: 8, baseRate: 30)
+        var current = original
+        current.updatedAt = Date(timeIntervalSince1970: 60)
+        current.audit.append(PayslipAuditEntry(action: "downloaded", userId: "manager", userName: "Manager"))
+        XCTAssertTrue(current.matchesEditBaseline(original))
+        current.periodEnd = "2026-07-13"
+        XCTAssertFalse(current.matchesEditBaseline(original))
+    }
+
     // MARK: - PayrollCalculator totals
 
     private func makeSlip(

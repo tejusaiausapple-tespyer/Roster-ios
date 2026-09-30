@@ -171,7 +171,7 @@ struct ManagerStaffView: View {
                 }
             }
         }
-        .macRefreshable { await repo.refreshFromServer() }
+        .macRefreshable { await repo.refreshFromServer(scope: .staffDirectory) }
     }
 
     /// Role once the manager's set one; falls back to employment type for a

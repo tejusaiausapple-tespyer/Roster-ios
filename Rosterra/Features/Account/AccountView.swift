@@ -7,7 +7,6 @@ struct AccountView: View {
     @Environment(RosterRepository.self) private var repo
     @Environment(AuthViewModel.self) private var auth
     @Environment(\.openURL) private var openURL
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("preferredColorScheme") private var preferredColorSchemeSetting: String = "system"
 
     @State private var activeSheet: AccountSheet?
@@ -20,7 +19,6 @@ struct AccountView: View {
     @State private var pushEnabled = false
     @State private var toastMessage: ToastMessage?
     @State private var profileImage: UIImage? = nil
-    @State private var profilePromptFloating = false
     @State private var showDeleteRequestConfirm = false
     @State private var showNotificationExplainer = false
 
@@ -71,6 +69,7 @@ struct AccountView: View {
             .navigationTitle("Account")
             .navigationBarTitleDisplayMode(.inline)
             .screenTitlePill("Account", icon: "person.crop.circle.fill")
+            .macRefreshable { await repo.refreshFromServer(scope: .account) }
             .sheet(item: $activeSheet) { sheet in
                 switch sheet {
                 case .changePassword:
@@ -184,100 +183,84 @@ struct AccountView: View {
 
     private var photoSection: some View {
         Section {
-            VStack(spacing: 12) {
-                Button {
-                    activeSheet = .imagePicker
-                } label: {
-                    ZStack {
-                        ZStack(alignment: .bottomTrailing) {
-                            if let profileImage {
-                                Image(uiImage: profileImage)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: 120, height: 120)
-                                    .clipShape(Circle())
-                                    .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
+            VStack(spacing: 18) {
+                profileAvatar
+                    .overlay(alignment: .bottomTrailing) {
+                        Button(role: profileImage == nil ? nil : .destructive) {
+                            if profileImage == nil {
+                                activeSheet = .imagePicker
                             } else {
-                                ZStack {
-                                    Circle().fill(Theme.brand.opacity(0.12)).frame(width: 120, height: 120)
-                                    Text(user?.initials ?? "?")
-                                        .font(.system(size: 40, weight: .bold, design: .rounded))
-                                        .foregroundStyle(Theme.brand)
-                                }
+                                removeProfileImage()
                             }
-
-                            ZStack {
-                                Circle().fill(Theme.brand).frame(width: 30, height: 30)
-                                Image(systemName: "pencil")
-                                    .font(.system(size: 14, weight: .bold))
-                                    .foregroundStyle(.white)
-                            }
-                            .offset(x: 2, y: 2)
-                        }
-
-                        if profileImage == nil {
-                            Text("Add profile pic")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(Theme.brand)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 7)
-                                .background(Theme.brand.opacity(0.11), in: Capsule())
-                                .shadow(color: Theme.brand.opacity(0.12), radius: 6, y: 3)
-                                .fixedSize()
-                                .scaleEffect(profilePromptFloating ? 1.04 : 0.98)
-                                .offset(
-                                    x: 92,
-                                    y: profilePromptFloating ? -34 : -27
-                                )
-                                .animation(
-                                    reduceMotion
-                                        ? nil
-                                        : .easeInOut(duration: 1.35).repeatForever(autoreverses: true),
-                                    value: profilePromptFloating
-                                )
-                                .onAppear {
-                                    profilePromptFloating = true
-                                }
-                                .onDisappear {
-                                    profilePromptFloating = false
-                                }
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .frame(maxWidth: .infinity)
-                .buttonStyle(.plain)
-                .pointerHover()
-                .accessibilityLabel(profileImage == nil ? "Add profile picture" : "Change profile picture")
-                .contextMenu {
-                    if profileImage != nil {
-                        Button(role: .destructive) {
-                            removeProfileImage()
                         } label: {
-                            Label("Remove photo", systemImage: "trash")
+                            Image(systemName: profileImage == nil ? "camera.fill" : "trash.fill")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(profileImage == nil ? Color.white : Theme.error)
+                                .frame(width: 44, height: 44)
+                                .background(profileImage == nil ? Theme.brandStrong : Theme.card, in: Circle())
+                                .overlay(Circle().strokeBorder(Theme.background, lineWidth: 3))
+                                .contentShape(Circle())
                         }
+                        .buttonStyle(.plain)
+                        .pointerHover()
+                        .accessibilityLabel(profileImage == nil ? "Add profile photo" : "Delete profile photo")
+                        .accessibilityHint(profileImage == nil
+                            ? "Opens your photo library"
+                            : "Removes your photo and restores the profile placeholder")
+                        .offset(x: 4, y: 4)
                     }
-                }
-                
-                Text(user?.fullName ?? "—")
-                    .font(.system(size: 24, weight: .bold))
-                    .foregroundStyle(Theme.textPrimary)
 
-                if let user {
-                    HStack(spacing: 8) {
-                        tag(user.role == .staff ? "Staff" : "Manager", tint: Theme.brand)
-                        tag(user.status.rawValue.capitalized,
-                            tint: user.status == .active ? Theme.accent : Theme.error)
-                        if let type = user.employmentType {
-                            tag(type.label, tint: Theme.textSecondary)
+                VStack(spacing: 10) {
+                    Text(user?.fullName ?? "—")
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if let user {
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 8) { profileBadges(for: user) }
+                            VStack(spacing: 8) { profileBadges(for: user) }
                         }
                     }
                 }
             }
             .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
             .listRowBackground(Color.clear)
             .listRowInsets(EdgeInsets())
-            .padding(.vertical, 8)
+            .listRowSeparator(.hidden)
+        }
+    }
+
+    private var profileAvatar: some View {
+        ZStack {
+            Circle().fill(Theme.textSecondary.opacity(0.08))
+            if let profileImage {
+                Image(uiImage: profileImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 120, height: 120)
+                    .clipShape(Circle())
+            } else {
+                Image(systemName: "person.fill")
+                    .font(.system(size: 48, weight: .regular))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .frame(width: 120, height: 120)
+        .overlay(Circle().strokeBorder(Theme.separator, lineWidth: 1))
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private func profileBadges(for user: AppUser) -> some View {
+        tag(user.role == .staff ? "Staff" : "Manager", tint: Theme.brand)
+        tag(user.status.rawValue.capitalized,
+            tint: user.status == .active ? Theme.accent : Theme.error,
+            showsStatusDot: true)
+        if let type = user.employmentType {
+            tag(type.label, tint: Theme.textSecondary)
         }
     }
 
@@ -341,12 +324,20 @@ struct AccountView: View {
         }
     }
 
-    private func tag(_ text: String, tint: Color) -> some View {
-        Text(text)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(tint)
-            .padding(.horizontal, 9).padding(.vertical, 4)
-            .background(Capsule().fill(tint.opacity(0.14)))
+    private func tag(_ text: String, tint: Color, showsStatusDot: Bool = false) -> some View {
+        HStack(spacing: 5) {
+            if showsStatusDot {
+                Circle().fill(tint).frame(width: 5, height: 5)
+            }
+            Text(text)
+                .font(.caption.weight(.medium))
+                .fixedSize()
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(tint.opacity(0.08), in: Capsule())
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Stats
@@ -712,8 +703,15 @@ struct AccountView: View {
     private func removeProfileImage() {
         let fileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("profile_photo.jpg")
-        try? FileManager.default.removeItem(at: fileURL)
-        self.profileImage = nil
+        do {
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                try FileManager.default.removeItem(at: fileURL)
+            }
+            profileImage = nil
+            Haptics.success()
+        } catch {
+            toastMessage = ToastMessage(kind: .error, text: "Could not remove your photo. Please try again.")
+        }
     }
 }
 

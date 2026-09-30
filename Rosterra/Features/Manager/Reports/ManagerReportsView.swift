@@ -183,7 +183,9 @@ struct ManagerReportsView: View {
             .padding(16)
             .tracksTitlePillCollapse()
         }
-        .macRefreshable { await repo.refreshFromServer() }
+        .macRefreshable { if let first = weekKeys.first, let last = weekKeys.last {
+                await repo.refreshFromServer(scope: .reports(first, last))
+            } }
     }
 
     private var metricsGrid: some View {

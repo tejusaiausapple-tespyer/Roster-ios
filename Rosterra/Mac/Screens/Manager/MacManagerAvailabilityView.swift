@@ -87,7 +87,12 @@ struct MacManagerAvailabilityView: View {
     var body: some View {
         MacScreen(
             title: "Team Availability",
-            subtitle: dateRangeString
+            subtitle: dateRangeString,
+            actions: {
+                MacRefreshButton("Refresh team availability") {
+                    await repo.refreshFromServer(scope: .managerAvailability)
+                }
+            }
         ) {
             GeometryReader { proxy in
                 VStack(alignment: .leading, spacing: MacSpace.md) {

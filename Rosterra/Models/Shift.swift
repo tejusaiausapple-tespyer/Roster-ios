@@ -15,6 +15,8 @@ struct Shift: Identifiable, Equatable {
     var status: ShiftStatus
     var submittableAfter: Date?
     var shiftStartAt: Date?
+    var dailyJobsVersion: Int
+    var dailyJobsCount: Int
 
     init?(id: String, data: [String: Any]) {
         self.id = id
@@ -30,11 +32,20 @@ struct Shift: Identifiable, Equatable {
         self.status = ShiftStatus(rawValue: FS.stringValue(data, "status", default: "draft")) ?? .draft
         self.submittableAfter = FS.date(data, "submittableAfter")
         self.shiftStartAt = FS.date(data, "shiftStartAt")
+        self.dailyJobsVersion = FS.int(data, "dailyJobsVersion", default: 0)
+        self.dailyJobsCount = FS.int(data, "dailyJobsCount", default: 0)
+    }
+
+    /// Corrupt schedules stay visible for correction but cannot unlock staff actions.
+    var hasValidSchedule: Bool {
+        BusinessRules.validatedShiftStartDateTime(date: date, time: rosteredStart) != nil
+            && BusinessRules.validatedShiftEndDateTime(date: date, start: rosteredStart, end: rosteredEnd) != nil
     }
 
     /// Absolute start instant in the business timezone (mirrors getShiftStartDateTime).
     var startDateTime: Date {
-        shiftStartAt ?? BusinessRules.shiftStartDateTime(date: date, time: rosteredStart)
+        guard hasValidSchedule else { return .distantFuture }
+        return shiftStartAt ?? BusinessRules.shiftStartDateTime(date: date, time: rosteredStart)
     }
 
     /// Absolute end instant, accounting for shifts crossing midnight.
@@ -44,11 +55,12 @@ struct Shift: Identifiable, Equatable {
 
     /// Instant after which the shift can be submitted/absence-reported.
     var submittableAfterDate: Date {
-        submittableAfter ?? endDateTime
+        guard hasValidSchedule else { return .distantFuture }
+        return submittableAfter ?? endDateTime
     }
 
     /// Mirrors `isShiftSubmittable`.
     func isSubmittable(at now: Date = Date()) -> Bool {
-        now >= submittableAfterDate
+        hasValidSchedule && now >= submittableAfterDate
     }
 }

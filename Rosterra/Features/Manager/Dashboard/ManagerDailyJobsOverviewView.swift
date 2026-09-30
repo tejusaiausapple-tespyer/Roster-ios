@@ -51,7 +51,7 @@ struct ManagerDailyJobsOverviewView: View {
         .navigationBarTitleDisplayMode(.inline)
         .screenTitlePill("Daily Jobs", icon: "checklist", fraction: 0)
         .macRefreshable {
-            await repo.refreshFromServer()
+            await repo.refreshFromServer(scope: .dailyJobs(RosterCalendar.todayKey()))
         }
         .sheet(item: $selectedShift) { shift in
             DailyJobAssignSheet(shift: shift)

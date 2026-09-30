@@ -13,6 +13,7 @@ enum CalendarService {
     }
 
     static func addShift(_ shift: Shift, companyName: String) async -> Result {
+        guard shift.hasValidSchedule else { return .failed("This shift has an invalid date or time. Contact your manager.") }
         let store = EKEventStore()
         let granted: Bool
         do {

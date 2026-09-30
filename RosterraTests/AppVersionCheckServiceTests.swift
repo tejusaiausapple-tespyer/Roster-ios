@@ -3,6 +3,12 @@ import XCTest
 
 final class AppVersionCheckServiceTests: XCTestCase {
 
+    func testMinimumPolicyRequiresActivatedRemoteValue() {
+        XCTAssertFalse(AppVersionCheck.hasUsableMinimumPolicy("0.0.0", isActivatedRemote: false))
+        XCTAssertFalse(AppVersionCheck.hasUsableMinimumPolicy("bad", isActivatedRemote: true))
+        XCTAssertTrue(AppVersionCheck.hasUsableMinimumPolicy("1.2.0", isActivatedRemote: true))
+    }
+
     // MARK: - SemanticVersion parsing
 
     func testParsesFullVersion() {
@@ -282,6 +288,17 @@ private struct StubAppStoreLookup: AppStoreVersionLooking {
 final class AppVersionCheckViewModelTests: XCTestCase {
 
     @MainActor
+    func testUnavailablePolicyBlocksAccessUntilRetrySucceeds() async {
+        let stub = StubAppVersionChecker(results: [.unavailable, .upToDate])
+        let vm = AppVersionCheckViewModel(service: stub)
+        await vm.check()
+        XCTAssertTrue(vm.isPolicyUnavailable)
+        XCTAssertTrue(vm.isAccessBlocked)
+        await vm.check()
+        XCTAssertFalse(vm.isAccessBlocked)
+    }
+
+    @MainActor
     func testRequiredStatusSetsIsUpdateRequired() async {
         let stub = StubAppVersionChecker(results: [.required(minimumVersion: "1.2.0")])
         let vm = AppVersionCheckViewModel(service: stub)
@@ -319,6 +336,23 @@ final class AppVersionCheckViewModelTests: XCTestCase {
         XCTAssertEqual(stub.callCount, 2)
         XCTAssertEqual(vm.status, .required(minimumVersion: "1.2.2"))
         XCTAssertTrue(vm.isUpdateRequired)
+    }
+
+    @MainActor
+    func testOverlappingCallerWaitsForFinalGateDecision() async {
+        let stub = StubAppVersionChecker(
+            results: [.optional(latestVersion: "1.2.1"), .required(minimumVersion: "1.2.2")],
+            delayNanoseconds: 30_000_000
+        )
+        let vm = AppVersionCheckViewModel(service: stub)
+
+        let initialCheck = Task { await vm.check() }
+        try? await Task.sleep(nanoseconds: 5_000_000)
+        await vm.check()
+
+        XCTAssertTrue(vm.isUpdateRequired)
+        XCTAssertEqual(stub.callCount, 2)
+        await initialCheck.value
     }
 
     @MainActor

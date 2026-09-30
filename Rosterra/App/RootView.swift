@@ -6,27 +6,49 @@ import SwiftUI
 struct RootView: View {
     @Environment(RosterRepository.self) private var repo
     @Environment(AuthViewModel.self) private var auth
+    @Environment(AppRouter.self) private var router
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var versionCheck = AppVersionCheckViewModel()
+    @State private var hasCheckedInitialVersion = false
+    @State private var isCheckingForegroundVersion = false
 
     var body: some View {
         content
+            // Keep the mounted form (and its in-flight sign-in) alive when
+            // returning from password AutoFill, Face ID, or another app.
+            // Replacing it with the splash screen discards its @State fields.
+            .allowsHitTesting(!isCheckingForegroundVersion)
+            .overlay {
+                if isCheckingForegroundVersion {
+                    SplashView()
+                }
+            }
             .background(Theme.background.ignoresSafeArea())
             .animation(.easeInOut(duration: 0.28), value: route)
-            .onAppear { auth.bind(repository: repo) }
             // `onChange(scenePhase)` is not guaranteed to fire for the initial
             // active value, so cold launch needs an explicit first check.
             .task {
                 await versionCheck.check()
+                hasCheckedInitialVersion = true
+                if !versionCheck.isAccessBlocked {
+                    NotificationService.shared.setVersionAccessAllowed(true)
+                    auth.bind(repository: repo)
+                }
                 versionCheck.startListeningForUpdates()
             }
             .onChange(of: scenePhase) { _, newPhase in
                 switch newPhase {
                 case .active:
-                    auth.handleScenePhase(.active)
-                    repo.refreshShiftLiveActivity()
-                    Task { await versionCheck.check() }
+                    isCheckingForegroundVersion = true
+                    Task {
+                        await versionCheck.check()
+                        isCheckingForegroundVersion = false
+                        guard !versionCheck.isAccessBlocked else { return }
+                        NotificationService.shared.setVersionAccessAllowed(true)
+                        auth.handleScenePhase(.active)
+                        repo.refreshShiftLiveActivity()
+                    }
                 case .inactive: auth.handleScenePhase(.inactive)
                 case .background: auth.handleScenePhase(.background)
                 @unknown default: break
@@ -37,6 +59,16 @@ struct RootView: View {
             .onChange(of: auth.uid) { _, newUID in
                 guard newUID != nil else { return }
                 Task { await versionCheck.check() }
+            }
+            .onChange(of: versionCheck.isAccessBlocked) { _, blocked in
+                if blocked {
+                    NotificationService.shared.setVersionAccessAllowed(false)
+                    repo.stop()
+                } else if hasCheckedInitialVersion {
+                    NotificationService.shared.setVersionAccessAllowed(true)
+                    if let uid = auth.uid { repo.start(uid: uid) }
+                    else { auth.bind(repository: repo) }
+                }
             }
             .fullScreenCover(isPresented: Binding(
                 get: { versionCheck.isUpdateRequired },
@@ -57,6 +89,22 @@ struct RootView: View {
                         versionCheck.dismissOptionalUpdate()
                     }
                 }
+            }
+            .sheet(isPresented: Binding(
+                get: { router.pendingPasswordResetCode != nil },
+                set: { if !$0 { router.pendingPasswordResetCode = nil } }
+            )) {
+                if let code = router.pendingPasswordResetCode {
+                    PasswordResetSheet(code: code)
+                }
+            }
+            .alert("Refresh failed", isPresented: Binding(
+                get: { repo.refreshError != nil },
+                set: { if !$0 { repo.refreshError = nil } }
+            )) {
+                Button("OK", role: .cancel) { repo.refreshError = nil }
+            } message: {
+                Text(repo.refreshError ?? "")
             }
             .onChange(of: repo.currentUser?.status) { _, status in
                 // If the account is locked/deactivated mid-session, sign out.
@@ -84,27 +132,37 @@ struct RootView: View {
 
     @ViewBuilder
     private var content: some View {
-        switch route {
-        case .setup:
-            SetupRequiredView()
-        case .restoring, .profileLoading:
+        if !hasCheckedInitialVersion || versionCheck.isUpdateRequired {
             SplashView()
-        case .login:
-            LoginView()
-        case .forcedPasswordChange:
-            ChangePasswordView(isForced: true)
-        case .profileCompletion:
-            if let user = repo.currentUser {
-                ProfileCompletionView(user: user)
-            } else {
-                SplashView()
+        } else if versionCheck.isPolicyUnavailable {
+            VersionPolicyUnavailableView {
+                isCheckingForegroundVersion = true
+                await versionCheck.check()
+                isCheckingForegroundVersion = false
             }
-        case .deviceAuthGate:
-            DeviceAuthGateView()
-        case .managerMain:
-            ManagerMainView()
-        case .staffMain:
-            MainTabView()
+        } else {
+            switch route {
+            case .setup:
+                SetupRequiredView()
+            case .restoring, .profileLoading:
+                SplashView()
+            case .login:
+                LoginView()
+            case .forcedPasswordChange:
+                ChangePasswordView(isForced: true)
+            case .profileCompletion:
+                if let user = repo.currentUser {
+                    ProfileCompletionView(user: user)
+                } else {
+                    SplashView()
+                }
+            case .deviceAuthGate:
+                DeviceAuthGateView()
+            case .managerMain:
+                ManagerMainView()
+            case .staffMain:
+                MainTabView()
+            }
         }
     }
 }

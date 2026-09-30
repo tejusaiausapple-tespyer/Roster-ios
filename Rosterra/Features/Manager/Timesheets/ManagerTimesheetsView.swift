@@ -474,7 +474,9 @@ struct ManagerTimesheetsView: View {
                 }
             }
         }
-        .macRefreshable { await repo.refreshFromServer() }
+        .macRefreshable { if let first = weekKeys.first, let last = weekKeys.last {
+                await repo.refreshFromServer(scope: .timesheets(first, last))
+            } }
     }
 
     // Content layer — solid card (no glass). Highlights when selected in bulk mode.

@@ -54,12 +54,11 @@
 	</array>
 
 	<!--
-	  Push Notifications — production, matching a TestFlight/App Store
-	  distribution build. Also enable the Push Notifications capability for
+	  Push Notifications — development for locally signed Debug builds. Also enable the Push Notifications capability for
 	  this App ID in the Apple Developer portal if not already on by default
 	  for a paid-team app.
 	-->
 	<key>aps-environment</key>
-	<string>production</string>
+	<string>development</string>
 </dict>
 </plist>

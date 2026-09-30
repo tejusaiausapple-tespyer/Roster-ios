@@ -174,7 +174,9 @@ struct MacManagerReportsView: View {
             subtitle: "Weekly hours, labour costs and timesheet progress",
             actions: {
                 MacRefreshButton("Refresh reports") {
-                    await repo.refreshFromServer()
+                    if let first = weekKeys.first, let last = weekKeys.last {
+                await repo.refreshFromServer(scope: .reports(first, last))
+            }
                 }
             }
         ) {

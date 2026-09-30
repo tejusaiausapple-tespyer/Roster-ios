@@ -166,7 +166,7 @@ struct MacManagerWageView: View {
     @ViewBuilder
     private var toolbarActions: some View {
         MacRefreshButton("Refresh wage data") {
-            await repo.refreshFromServer()
+            await repo.refreshFromServer(scope: .wages)
         }
 
         Button {
@@ -1140,7 +1140,7 @@ struct MacManagerJobsView: View {
             }
 
             MacAsyncButton(variant: .bordered) {
-                await repo.refreshFromServer()
+                await repo.refreshFromServer(scope: .dailyJobs(RosterCalendar.todayKey()))
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
@@ -1770,6 +1770,9 @@ struct MacManagerLocationsView: View {
             title: "Work Locations",
             subtitle: "Manage workplaces and attendance boundaries",
             actions: {
+            MacRefreshButton("Refresh work locations") {
+                await repo.refreshFromServer(scope: .locations)
+            }
             Button {
                 editor = .add
             } label: {
@@ -2199,6 +2202,9 @@ struct MacManagerCompanyView: View {
             title: "Company Details",
             subtitle: "Business identity, contact details, and payslip information",
             actions: {
+                MacRefreshButton("Refresh company details") {
+                    await repo.refreshFromServer(scope: .company)
+                }
                 if isDirty && !isSaving {
                     Button("Revert") {
                         restoreLoadedValues()

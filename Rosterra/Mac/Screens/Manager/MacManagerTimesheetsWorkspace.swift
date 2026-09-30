@@ -106,7 +106,14 @@ struct MacManagerTimesheetsWorkspace: View {
     var body: some View {
         MacScreen(
             title: "Timesheets",
-            subtitle: "\(filteredTimesheets.count) in view"
+            subtitle: "\(filteredTimesheets.count) in view",
+            actions: {
+                MacRefreshButton("Refresh selected timesheet week") {
+                    if let first = weekKeys.first, let last = weekKeys.last {
+                        await repo.refreshFromServer(scope: .timesheets(first, last))
+                    }
+                }
+            }
         ) {
             VStack(spacing: 0) {
                 controls

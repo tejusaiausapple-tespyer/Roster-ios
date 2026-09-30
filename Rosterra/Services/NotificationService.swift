@@ -33,6 +33,31 @@ final class NotificationService: NSObject {
     /// Cached until a user is signed in (token can arrive before login).
     private var pendingToken: String?
 
+    /// Remote notification work is disabled until the app version has passed
+    /// its initial policy check, and again if a required update is detected.
+    private let versionAccessLock = NSLock()
+    private var _versionAccessAllowed = false
+
+    func setVersionAccessAllowed(_ allowed: Bool) {
+        versionAccessLock.lock()
+        let resumedAccess = allowed && !_versionAccessAllowed
+        _versionAccessAllowed = allowed
+        versionAccessLock.unlock()
+        // Token callbacks can arrive while version access is blocked. A
+        // restored session does not necessarily emit another auth/token
+        // callback on unblock, so explicitly retry registration here. This
+        // must not claim the active device as a fresh credential login does.
+        if resumedAccess {
+            Task { @MainActor [weak self] in self?.syncTokenAfterLogin() }
+        }
+    }
+
+    private var versionAccessAllowed: Bool {
+        versionAccessLock.lock()
+        defer { versionAccessLock.unlock() }
+        return _versionAccessAllowed
+    }
+
     /// Weak handle for silent-push refresh (owned by SwiftUI `@State`).
     @MainActor
     private weak var repository: RosterRepository?
@@ -97,7 +122,9 @@ final class NotificationService: NSObject {
 
     /// Persist the push token on the signed-in user's document.
     func updateFCMToken(_ token: String?) {
+        versionAccessLock.lock()
         pendingToken = token
+        versionAccessLock.unlock()
         syncTokenAfterLogin()
     }
 
@@ -113,9 +140,16 @@ final class NotificationService: NSObject {
     /// isValidNotificationTokenData in firestore.rules exactly (extra keys
     /// are rejected); 'ios-native' is already whitelisted there as a valid
     /// platform value.
+    private var cachedToken: String? {
+        versionAccessLock.lock()
+        defer { versionAccessLock.unlock() }
+        return pendingToken ?? UserDefaults.standard.string(forKey: Self.lastTokenDefaultsKey)
+    }
+
     func syncTokenAfterLogin() {
-        guard AppConfig.pushEnabled,
-              let token = pendingToken,
+        guard versionAccessAllowed,
+              AppConfig.pushEnabled,
+              let token = cachedToken,
               let uid = Auth.auth().currentUser?.uid else { return }
         let previousToken = UserDefaults.standard.string(forKey: Self.lastTokenDefaultsKey)
         UserDefaults.standard.set(token, forKey: Self.lastTokenDefaultsKey)
@@ -169,8 +203,9 @@ final class NotificationService: NSObject {
     /// device as the account's single active notification device. No-ops if
     /// no token is registered yet on this device — nothing to claim with.
     func claimActiveDeviceOnLogin() {
-        guard AppConfig.pushEnabled,
-              let token = pendingToken ?? UserDefaults.standard.string(forKey: Self.lastTokenDefaultsKey) else { return }
+        guard versionAccessAllowed,
+              AppConfig.pushEnabled,
+              let token = cachedToken else { return }
         Task {
             await WorkerAPIClient.shared.activateDevice(token: token, previousToken: nil, reason: "login")
         }
@@ -266,6 +301,7 @@ final class NotificationService: NSObject {
     /// push bursts from triggering uncached server read storms across devices.
     @MainActor
     func handleBackgroundPush(_ userInfo: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
+        guard versionAccessAllowed else { return .noData }
         guard Auth.auth().currentUser != nil else { return .noData }
         guard repository != nil else { return .noData }
         await ServerClock.shared.sync()

@@ -171,7 +171,7 @@ struct ManagerDashboardView: View {
                     }
                     .platformScrollIndicators()
                     .macRefreshable {
-                        await repo.refreshFromServer()
+                        await repo.refreshFromServer(scope: .dashboard(RosterCalendar.todayKey()))
                     }
                 }
             }

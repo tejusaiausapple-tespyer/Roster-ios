@@ -156,6 +156,7 @@ struct ManagerWageView: View {
         .contentLane()
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("Wage")
+        .macRefreshable { await repo.refreshFromServer(scope: .wages) }
         .navigationBarTitleDisplayMode(.inline)
         .screenTitlePill("Wage Setup", icon: "dollarsign.circle.fill", fraction: 0)
         .toolbar {

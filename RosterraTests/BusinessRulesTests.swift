@@ -7,6 +7,43 @@ final class BusinessRulesTests: XCTestCase {
 
     // MARK: - Shift instants
 
+    func testMalformedShiftDatesAndTimesAreRejected() {
+        for (date, time) in [
+            ("bad", "09:00"), ("2026-02-30", "09:00"), ("2026-13-01", "09:00"),
+            ("2026-01-01", "24:00"), ("2026-01-01", "09:60"),
+            ("2026-01-01", "9:00"), ("2026-01-01", "09:00:01"),
+        ] {
+            XCTAssertNil(BusinessRules.validatedShiftStartDateTime(date: date, time: time))
+            XCTAssertEqual(BusinessRules.shiftStartDateTime(date: date, time: time), .distantFuture)
+        }
+    }
+
+    func testNonexistentAdelaideDSTTimeIsRejected() {
+        XCTAssertNil(BusinessRules.validatedShiftStartDateTime(date: "2026-10-04", time: "02:30"))
+        XCTAssertNil(BusinessRules.validatedShiftEndDateTime(date: "2026-10-03", start: "22:00", end: "02:30"))
+    }
+
+    func testOvernightDSTEndPreservesWallClockTime() throws {
+        let start = try XCTUnwrap(BusinessRules.validatedShiftStartDateTime(date: "2026-10-03", time: "22:00"))
+        let end = try XCTUnwrap(BusinessRules.validatedShiftEndDateTime(date: "2026-10-03", start: "22:00", end: "06:00"))
+        let comps = RosterCalendar.calendar.dateComponents([.day, .hour, .minute], from: end)
+        XCTAssertEqual(comps.day, 4)
+        XCTAssertEqual(comps.hour, 6)
+        XCTAssertEqual(comps.minute, 0)
+        XCTAssertEqual(end.timeIntervalSince(start), 7 * 3600)
+    }
+
+    func testInvalidShiftCannotSubmitOrReportAbsenceEvenWithOverride() {
+        var shift = TestSupport.shift(date: "2026-02-30")
+        shift.submittableAfter = .distantPast
+        shift.shiftStartAt = .distantPast
+        XCTAssertFalse(shift.hasValidSchedule)
+        XCTAssertEqual(shift.startDateTime, .distantFuture)
+        XCTAssertFalse(shift.isSubmittable())
+        XCTAssertFalse(BusinessRules.canSubmitHours(shift: shift, timesheet: nil))
+        XCTAssertFalse(BusinessRules.canReportAbsence(shift: shift, timesheet: nil))
+    }
+
     func testShiftStartDateTimeComponents() {
         let date = BusinessRules.shiftStartDateTime(date: "2026-03-10", time: "09:30")
         let comps = RosterCalendar.calendar.dateComponents(

@@ -44,3 +44,32 @@ struct UpdateRequiredView: View {
 #Preview {
     UpdateRequiredView(minimumVersion: "1.2.0")
 }
+
+/// Shown when no previously activated minimum-version policy exists and the
+/// first network check cannot establish one. No repository is started behind
+/// this view; users can retry after reconnecting.
+struct VersionPolicyUnavailableView: View {
+    let retry: () async -> Void
+
+    var body: some View {
+        ZStack {
+            Theme.background.ignoresSafeArea()
+            VStack(spacing: 20) {
+                AppLogoMark(size: 80)
+                Text("Version Check Unavailable")
+                    .font(.title2.weight(.bold))
+                Text("Connect to the internet and retry. If this continues, contact your manager.")
+                    .font(.subheadline)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(Theme.textSecondary)
+                Button {
+                    Task { await retry() }
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(PrimaryButtonStyle())
+            }
+            .padding(28)
+        }
+    }
+}

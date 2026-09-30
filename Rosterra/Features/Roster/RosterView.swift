@@ -77,7 +77,9 @@ struct RosterView: View {
             .navigationTitle("Roster")
             .navigationBarTitleDisplayMode(.inline)
             .screenTitlePill("Roster", icon: "calendar", fraction: 0)
-            .macRefreshable { await repo.refreshFromServer() }
+            .macRefreshable { if let first = weekKeys.first, let last = weekKeys.last {
+                await repo.refreshFromServer(scope: .roster(first, last))
+            } }
             .sheet(item: $shareURL) { url in ShareSheet(items: [url]) }
             .confirmationDialog("Undo absence report?",
                                 isPresented: Binding(get: { undoTarget != nil }, set: { if !$0 { undoTarget = nil } }),

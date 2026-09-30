@@ -94,7 +94,7 @@ enum ShiftReminderScheduler {
             let stale = pending.map(\.identifier).filter { $0.hasPrefix(idPrefix) }
             center.removePendingNotificationRequests(withIdentifiers: stale)
 
-            let published = shifts.filter { $0.status == .published }
+            let published = shifts.filter { $0.hasValidSchedule && $0.status == .published }
 
             // Upcoming / in-progress: start reminders (max 8).
             let upcoming = published

@@ -98,7 +98,12 @@ struct MacManagerDashboardView: View {
     var body: some View {
         MacScreen(
             title: "Dashboard",
-            subtitle: RosterCalendar.todayFormattedLong()
+            subtitle: RosterCalendar.todayFormattedLong(),
+            actions: {
+                MacRefreshButton("Refresh dashboard") {
+                    await repo.refreshFromServer(scope: .dashboard(todayKey))
+                }
+            }
         ) {
             ScrollView {
                 VStack(alignment: .leading, spacing: MacSpace.lg) {

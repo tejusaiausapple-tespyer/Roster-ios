@@ -218,6 +218,9 @@ struct Payslip: Identifiable, Equatable {
     var publicHolidayRate: Double
     var overtimeHours: Double
     var overtimeRate: Double
+    /// Explicit manager confirmation; automatic generation does not know
+    /// the applicable public-holiday calendar or overtime agreement.
+    var payClassificationReviewed: Bool
 
     /// Allowances / bonuses / other pay items (from assigned earnings lines
     /// at generation, manager-editable afterwards).
@@ -250,6 +253,18 @@ struct Payslip: Identifiable, Equatable {
 
     var audit: [PayslipAuditEntry]
 
+    /// Exact edit baseline comparison. Audit-only additions and update stamps
+    /// do not conflict; pay, identity, period and workflow changes do.
+    func matchesEditBaseline(_ original: Payslip) -> Bool {
+        var current = self
+        var baseline = original
+        current.updatedAt = nil
+        baseline.updatedAt = nil
+        current.audit = []
+        baseline.audit = []
+        return current == baseline
+    }
+
     static func docId(periodStart: String, staffId: String) -> String {
         "\(periodStart)_\(staffId)"
     }
@@ -263,6 +278,7 @@ struct Payslip: Identifiable, Equatable {
          ordinaryHours: Double = 0, weekendHours: Double = 0, weekendRate: Double = 0,
          publicHolidayHours: Double = 0, publicHolidayRate: Double = 0,
          overtimeHours: Double = 0, overtimeRate: Double = 0,
+         payClassificationReviewed: Bool = false,
          extraEarnings: [PayslipEarning] = [],
          claimsTaxFreeThreshold: Bool = true,
          payg: Double = 0, otherDeductions: Double = 0, salarySacrifice: Double = 0,
@@ -293,6 +309,7 @@ struct Payslip: Identifiable, Equatable {
         self.publicHolidayRate = publicHolidayRate
         self.overtimeHours = overtimeHours
         self.overtimeRate = overtimeRate
+        self.payClassificationReviewed = payClassificationReviewed
         self.extraEarnings = extraEarnings
         self.claimsTaxFreeThreshold = claimsTaxFreeThreshold
         self.payg = payg
@@ -334,6 +351,7 @@ struct Payslip: Identifiable, Equatable {
         self.publicHolidayRate = FS.double(data, "publicHolidayRate")
         self.overtimeHours = FS.double(data, "overtimeHours")
         self.overtimeRate = FS.double(data, "overtimeRate")
+        self.payClassificationReviewed = FS.bool(data, "payClassificationReviewed")
         self.extraEarnings = (data["extraEarnings"] as? [[String: Any]] ?? []).map { PayslipEarning(dict: $0) }
         self.claimsTaxFreeThreshold = FS.bool(data, "claimsTaxFreeThreshold", default: true)
         self.payg = FS.double(data, "payg")
@@ -374,6 +392,7 @@ struct Payslip: Identifiable, Equatable {
             "publicHolidayRate": publicHolidayRate,
             "overtimeHours": overtimeHours,
             "overtimeRate": overtimeRate,
+            "payClassificationReviewed": payClassificationReviewed,
             "extraEarnings": extraEarnings.map { $0.asDictionary },
             "claimsTaxFreeThreshold": claimsTaxFreeThreshold,
             "payg": payg,

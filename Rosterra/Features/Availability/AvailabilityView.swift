@@ -54,6 +54,7 @@ struct AvailabilityView: View {
             .navigationTitle("Availability")
             .navigationBarTitleDisplayMode(.inline)
             .screenTitlePill("Availability", icon: "calendar.badge.clock", fraction: 0)
+            .macRefreshable { await repo.refreshFromServer(scope: .availability) }
             .toolbar {
                 if !isLocked {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -325,10 +326,16 @@ struct AvailabilityView: View {
         }
         do {
             try await repo.saveWeeklyAvailability(weekly)
-            original = form
+            loadForm()
             Haptics.success()
             toastMessage = ToastMessage(kind: .success, text: saveAsDefault ? "Saved for upcoming weeks" : "Availability saved")
             saveAsDefault = false
+        } catch let error as PostSaveConfirmationError {
+            // The Worker accepted the change. Keep the submitted form as the
+            // local baseline so a second Save cannot repeat the full-map write.
+            original = form
+            saveAsDefault = false
+            toastMessage = ToastMessage(kind: .error, text: error.localizedDescription)
         } catch {
             toastMessage = ToastMessage(kind: .error, text: error.localizedDescription)
             Haptics.error()
@@ -361,6 +368,9 @@ struct AvailabilityView: View {
             loadForm()
             Haptics.success()
             toastMessage = ToastMessage(kind: .success, text: message)
+        } catch let error as PostSaveConfirmationError {
+            loadForm()
+            toastMessage = ToastMessage(kind: .error, text: error.localizedDescription)
         } catch {
             toastMessage = ToastMessage(kind: .error, text: error.localizedDescription)
             Haptics.error()

@@ -269,7 +269,7 @@ struct MacManagerTasksView: View {
 
     private var refreshToolbarButton: some View {
         MacRefreshButton("Refresh tasks") {
-            await repo.refreshFromServer()
+            await repo.refreshFromServer(scope: .tasks(selectedDayKey))
         }
     }
 

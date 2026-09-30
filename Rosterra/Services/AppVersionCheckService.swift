@@ -34,7 +34,10 @@ struct SemanticVersion: Comparable, Equatable {
 
 /// The result of comparing the installed build against App Store + Remote Config.
 enum AppUpdateStatus: Equatable {
-    /// Installed build is current, or version inputs were missing/unparseable.
+    /// No activated Remote Config minimum floor is available yet. Retry before
+    /// starting repository listeners or accepting writes.
+    case unavailable
+    /// Installed build is current under an activated minimum-version policy.
     case upToDate
     /// A newer public build exists; the user may continue and update later.
     case optional(latestVersion: String)
@@ -116,6 +119,12 @@ struct AppStoreVersionLookup: AppStoreVersionLooking {
 /// Decides `AppUpdateStatus` from raw version strings. Kept free of Firebase /
 /// networking so the rules are unit-testable without stubs.
 enum AppVersionCheck {
+    /// A successful fetch is not enough if the published template omits the
+    /// platform floor. A previously activated remote value remains usable
+    /// offline; an SDK default does not establish rollout policy.
+    static func hasUsableMinimumPolicy(_ value: String, isActivatedRemote: Bool) -> Bool {
+        isActivatedRemote && SemanticVersion(value) != nil
+    }
     /// Hybrid policy:
     /// 1. Below a *reachable* Firebase floor → required.
     /// 2. Force flag + behind a public App Store version → required to that Store version.
@@ -210,8 +219,8 @@ extension AppVersionChecking {
 /// `ios_minimum_supported_version` and `ios_force_update`.
 ///
 /// **Mac Catalyst:** keeps Remote Config–only keys (`mac_*`) so Mac is not
-/// gated by the iOS App Store listing. Unset `mac_*` keys fall through to
-/// defaults (no gate) until deliberately configured.
+/// gated by the iOS App Store listing. Both platforms require an activated
+/// minimum-version key before starting repository listeners.
 ///
 /// Must not be constructed before `FirebaseBootstrap.configure()` has run —
 /// `RemoteConfig.remoteConfig()` requires the default `FirebaseApp` to already
@@ -260,8 +269,9 @@ final class AppVersionCheckService: AppVersionChecking {
         ])
     }
 
-    /// Fetches and evaluates. Remote Config / Apple failures never throw —
-    /// cached RC defaults and nil Apple results are handled by the pure policy.
+    /// Fetches and evaluates. A cached activated Remote Config floor remains
+    /// authoritative offline. Without one, a failed or incomplete fetch
+    /// blocks startup until the user retries.
     func checkForUpdate() async -> AppUpdateStatus {
         do {
             _ = try await remoteConfig.fetchAndActivate()
@@ -269,7 +279,14 @@ final class AppVersionCheckService: AppVersionChecking {
             print("AppVersionCheckService: fetchAndActivate failed, using cached values: \(error.localizedDescription)")
         }
 
-        let minimum = remoteConfig[Key.minimumSupportedVersion].stringValue
+        let minimumValue = remoteConfig[Key.minimumSupportedVersion]
+        let minimum = minimumValue.stringValue
+        guard AppVersionCheck.hasUsableMinimumPolicy(
+            minimum,
+            isActivatedRemote: minimumValue.source == .remote
+        ) else {
+            return .unavailable
+        }
         let forceUpdate = remoteConfig[Key.forceUpdate].boolValue
 
         #if targetEnvironment(macCatalyst)

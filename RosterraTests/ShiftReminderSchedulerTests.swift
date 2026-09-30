@@ -3,6 +3,34 @@ import XCTest
 
 final class ShiftReminderSchedulerTests: XCTestCase {
     @MainActor
+    func testEmptySubmitAndAbsenceLinksDoNotQueueFetches() throws {
+        let router = AppRouter()
+        for query in ["submit=", "absent=", "submit=%20%20", "absent=%20%20", "submit=a%2Fb"] {
+            let url = try XCTUnwrap(URL(string: "surafoster://staff/roster?" + query))
+            router.handle(url: url)
+            XCTAssertNil(router.pendingSubmitShiftId)
+            XCTAssertNil(router.pendingAbsentShiftId)
+            XCTAssertEqual(router.selectedTab, AppRouter.Tab.roster.rawValue)
+        }
+    }
+
+    @MainActor
+    func testValidSubmitAndAbsenceLinksKeepTheirActions() throws {
+        let router = AppRouter()
+        router.handle(url: try XCTUnwrap(URL(string: "surafoster://staff/roster?submit=shift-1")))
+        XCTAssertEqual(router.pendingSubmitShiftId, "shift-1")
+        router.handle(url: try XCTUnwrap(URL(string: "surafoster://staff/roster?absent=shift-2")))
+        XCTAssertEqual(router.pendingAbsentShiftId, "shift-2")
+    }
+
+    @MainActor
+    func testDirectEmptySubmitDoesNotQueueFetch() {
+        let router = AppRouter()
+        router.openSubmit(shiftId: "")
+        XCTAssertNil(router.pendingSubmitShiftId)
+    }
+
+    @MainActor
     func testHoursFiledStatuses() {
         XCTAssertTrue(ShiftReminderScheduler.isHoursFiled(.pending))
         XCTAssertTrue(ShiftReminderScheduler.isHoursFiled(.approved))

@@ -579,3 +579,87 @@ struct ForgotPasswordSheet: View {
         }
     }
 }
+
+/// Presented when a Firebase Hosting password-reset link opens the app.
+struct PasswordResetSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let code: String
+
+    @State private var accountEmail: String?
+    @State private var password = ""
+    @State private var confirmation = ""
+    @State private var isChecking = true
+    @State private var isSaving = false
+    @State private var isComplete = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if isChecking {
+                    ProgressView("Checking reset link…")
+                } else if isComplete {
+                    Section {
+                        Label("Your password has been changed. Sign in with your new password.", systemImage: "checkmark.circle.fill")
+                    }
+                } else if let accountEmail {
+                    Section {
+                        Text("Set a new password for \(accountEmail).")
+                        SecureField("New password", text: $password)
+                            .textContentType(.newPassword)
+                        SecureField("Confirm new password", text: $confirmation)
+                            .textContentType(.newPassword)
+                    }
+                    Section {
+                        Button {
+                            Task { await save() }
+                        } label: {
+                            if isSaving { ProgressView() } else { Text("Save new password") }
+                        }
+                        .disabled(isSaving || password.isEmpty || confirmation.isEmpty)
+                    }
+                }
+                if let errorMessage {
+                    Section { Text(errorMessage).foregroundStyle(.red) }
+                }
+            }
+            .navigationTitle("Reset password")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(isComplete ? "Done" : "Close") { dismiss() }
+                }
+            }
+        }
+        .task(id: code) {
+            isChecking = true
+            do {
+                accountEmail = try await AuthService.shared.verifyPasswordResetCode(code)
+            } catch {
+                errorMessage = "This reset link is invalid or expired. Request a new link from the sign-in screen."
+            }
+            isChecking = false
+        }
+    }
+
+    private func save() async {
+        guard password == confirmation else {
+            errorMessage = "Passwords do not match."
+            return
+        }
+        guard password.count >= 8 else {
+            errorMessage = "Use at least 8 characters."
+            return
+        }
+        isSaving = true
+        errorMessage = nil
+        defer { isSaving = false }
+        do {
+            try await AuthService.shared.confirmPasswordReset(code: code, newPassword: password)
+            password = ""
+            confirmation = ""
+            isComplete = true
+        } catch {
+            errorMessage = "Could not reset your password. The link may have expired; request a new one."
+        }
+    }
+}

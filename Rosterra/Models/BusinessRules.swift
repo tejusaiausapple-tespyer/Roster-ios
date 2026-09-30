@@ -40,26 +40,48 @@ enum BusinessRules {
 
     // MARK: - Shift instants (timezone-aware, mirrors getShiftStartDateTime)
 
-    static func shiftStartDateTime(date: String, time: String) -> Date {
+    /// Strict wall-clock parser. Foundation normally normalizes invalid dates,
+    /// including nonexistent DST times; compare components to reject that input.
+    static func validatedShiftStartDateTime(date: String, time: String) -> Date? {
+        guard date.range(of: #"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"#, options: .regularExpression) != nil,
+              time.range(of: #"^[0-9]{2}:[0-9]{2}$"#, options: .regularExpression) != nil else { return nil }
         let dateParts = date.split(separator: "-").compactMap { Int($0) }
         let timeParts = time.split(separator: ":").compactMap { Int($0) }
-        guard dateParts.count == 3, timeParts.count >= 2 else { return Date() }
-        var comps = DateComponents()
-        comps.year = dateParts[0]
-        comps.month = dateParts[1]
-        comps.day = dateParts[2]
-        comps.hour = timeParts[0]
-        comps.minute = timeParts[1]
-        return RosterCalendar.calendar.date(from: comps) ?? Date()
+        guard dateParts.count == 3, timeParts.count == 2,
+              (1...9999).contains(dateParts[0]), (1...12).contains(dateParts[1]),
+              (1...31).contains(dateParts[2]), (0...23).contains(timeParts[0]),
+              (0...59).contains(timeParts[1]) else { return nil }
+        let comps = DateComponents(year: dateParts[0], month: dateParts[1], day: dateParts[2],
+                                   hour: timeParts[0], minute: timeParts[1], second: 0)
+        guard let result = RosterCalendar.calendar.date(from: comps) else { return nil }
+        let actual = RosterCalendar.calendar.dateComponents([.year, .month, .day, .hour, .minute], from: result)
+        guard actual.year == comps.year, actual.month == comps.month, actual.day == comps.day,
+              actual.hour == comps.hour, actual.minute == comps.minute else { return nil }
+        return result
     }
 
-    /// Mirrors getShiftEndDateTime (adds a day when the shift crosses midnight).
-    static func shiftEndDateTime(date: String, start: String, end: String) -> Date {
-        var endDate = shiftStartDateTime(date: date, time: end)
+    /// Compatibility for display callers. Invalid input never becomes "now".
+    /// Mutation callers must use the optional validated parser and report an error.
+    static func shiftStartDateTime(date: String, time: String) -> Date {
+        validatedShiftStartDateTime(date: date, time: time) ?? .distantFuture
+    }
+
+    /// Parse the end on its actual calendar day, preserving the wall-clock time
+    /// across DST changes instead of adding 24 hours to an instant.
+    static func validatedShiftEndDateTime(date: String, start: String, end: String) -> Date? {
+        guard let startDate = validatedShiftStartDateTime(date: date, time: start) else { return nil }
+        let endKey: String
         if end <= start {
-            endDate = RosterCalendar.addDays(1, to: endDate)
+            guard let nextDay = RosterCalendar.calendar.date(byAdding: .day, value: 1, to: startDate) else { return nil }
+            endKey = RosterCalendar.dayFormatter.string(from: nextDay)
+        } else {
+            endKey = date
         }
-        return endDate
+        return validatedShiftStartDateTime(date: endKey, time: end)
+    }
+
+    static func shiftEndDateTime(date: String, start: String, end: String) -> Date {
+        validatedShiftEndDateTime(date: date, start: start, end: end) ?? .distantFuture
     }
 
     // MARK: - Worked hours (mirrors calcScheduledHours)

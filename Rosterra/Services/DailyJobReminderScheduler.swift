@@ -46,7 +46,7 @@ enum DailyJobReminderScheduler {
             let byShift = Dictionary(grouping: assignments.filter { $0.date == todayKey }, by: \.shiftId)
 
             let relevantShifts = shifts
-                .filter { $0.status == .published && $0.date == todayKey }
+                .filter { $0.hasValidSchedule && $0.status == .published && $0.date == todayKey }
                 .filter { (byShift[$0.id] ?? []).contains { !$0.completed } }
                 .filter { $0.endDateTime > now }
                 .sorted { $0.startDateTime < $1.startDateTime }

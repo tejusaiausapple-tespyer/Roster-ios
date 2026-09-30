@@ -92,7 +92,7 @@ struct HomeView: View {
                 }
             }
             .phoneHomeToolbarBehavior()
-            .macRefreshable { await repo.refreshFromServer() }
+            .macRefreshable { await repo.refreshFromServer(scope: .home) }
             .sheet(item: $activeSheet) { sheet in
                 switch sheet {
                 case .messages: NotificationsSheet()

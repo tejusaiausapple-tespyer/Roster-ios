@@ -9,6 +9,8 @@ struct MacRootView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var versionCheck = AppVersionCheckViewModel()
+    @State private var hasCheckedInitialVersion = false
+    @State private var isCheckingForegroundVersion = false
 
     init() {}
 
@@ -19,6 +21,14 @@ struct MacRootView: View {
             content
                 .macObserved(repo: repo, auth: auth, nav: macNav, toasts: toasts)
                 .animation(MacMotion.normal, value: route)
+                // Foreground policy checks must preserve the mounted login
+                // form and any editor state while temporarily blocking input.
+                .allowsHitTesting(!isCheckingForegroundVersion)
+                .overlay {
+                    if isCheckingForegroundVersion {
+                        MacSplashView()
+                    }
+                }
         }
         .background {
             MacWindowConfigurator()
@@ -28,19 +38,29 @@ struct MacRootView: View {
         }
         .scrollIndicators(.hidden)
         .onAppear {
-            auth.bind(repository: repo)
             MacWindow.configureAllScenes()
         }
         .task {
             await versionCheck.check()
+            hasCheckedInitialVersion = true
+            if !versionCheck.isAccessBlocked {
+                NotificationService.shared.setVersionAccessAllowed(true)
+                auth.bind(repository: repo)
+            }
             versionCheck.startListeningForUpdates()
         }
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .active:
                 MacWindow.configureAllScenes()
-                auth.handleScenePhase(.active)
-                Task { await versionCheck.check() }
+                isCheckingForegroundVersion = true
+                Task {
+                    await versionCheck.check()
+                    isCheckingForegroundVersion = false
+                    guard !versionCheck.isAccessBlocked else { return }
+                    NotificationService.shared.setVersionAccessAllowed(true)
+                    auth.handleScenePhase(.active)
+                }
             case .inactive:
                 auth.handleScenePhase(.inactive)
             case .background:
@@ -52,6 +72,16 @@ struct MacRootView: View {
         .onChange(of: auth.uid) { _, newUID in
             guard newUID != nil else { return }
             Task { await versionCheck.check() }
+        }
+        .onChange(of: versionCheck.isAccessBlocked) { _, blocked in
+            if blocked {
+                NotificationService.shared.setVersionAccessAllowed(false)
+                repo.stop()
+            } else if hasCheckedInitialVersion {
+                NotificationService.shared.setVersionAccessAllowed(true)
+                if let uid = auth.uid { repo.start(uid: uid) }
+                else { auth.bind(repository: repo) }
+            }
         }
         .fullScreenCover(isPresented: Binding(
             get: { versionCheck.isUpdateRequired },
@@ -72,6 +102,14 @@ struct MacRootView: View {
                     versionCheck.dismissOptionalUpdate()
                 }
             }
+        }
+        .alert("Refresh failed", isPresented: Binding(
+            get: { repo.refreshError != nil },
+            set: { if !$0 { repo.refreshError = nil } }
+        )) {
+            Button("OK", role: .cancel) { repo.refreshError = nil }
+        } message: {
+            Text(repo.refreshError ?? "")
         }
         .onChange(of: repo.currentUser?.status) { _, status in
             guard let status, auth.uid != nil else { return }
@@ -96,7 +134,15 @@ struct MacRootView: View {
 
     @ViewBuilder
     private var content: some View {
-        if auth.uid != nil, repo.currentUser?.role == .staff {
+        if !hasCheckedInitialVersion || versionCheck.isUpdateRequired {
+            MacSplashView()
+        } else if versionCheck.isPolicyUnavailable {
+            VersionPolicyUnavailableView {
+                isCheckingForegroundVersion = true
+                await versionCheck.check()
+                isCheckingForegroundVersion = false
+            }
+        } else if auth.uid != nil, repo.currentUser?.role == .staff {
             // Staff profile and role-review requirements are completed in the
             // iPhone app. Mac is a manager-only workspace and must not expose
             // those staff gates before the role check.

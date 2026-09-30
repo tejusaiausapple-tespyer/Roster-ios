@@ -56,7 +56,7 @@ struct DailyJobsView: View {
             }
         }
         .macRefreshable {
-            await repo.refreshFromServer()
+            await repo.refreshFromServer(scope: .dailyJobs(RosterCalendar.todayKey()))
         }
         .toast($toastMessage)
     }

@@ -97,7 +97,7 @@ struct MacManagerTenureView: View {
             subtitle: "Approved service history for \(rows.count) staff",
             actions: {
                 MacRefreshButton("Refresh tenure data") {
-                    await repo.refreshFromServer()
+                    await repo.refreshFromServer(scope: .tenure)
                     await repo.refreshManagerShiftHistory()
                 }
             }

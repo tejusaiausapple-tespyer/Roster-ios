@@ -40,7 +40,12 @@ struct MacAccountView: View {
     private var accountSettingsPage: some View {
         MacScreen(
             title: "Account Settings",
-            subtitle: "Manage your profile, security, and application preferences"
+            subtitle: "Manage your profile, security, and application preferences",
+            actions: {
+                MacRefreshButton("Refresh account") {
+                    await repo.refreshFromServer(scope: .account)
+                }
+            }
         ) {
             ScrollView {
                 VStack(spacing: MacSpace.xl) {

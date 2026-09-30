@@ -24,6 +24,8 @@ struct PayslipsView: View {
     @State private var slips: [Payslip] = []
     @State private var isLoading = true
     @State private var loadFailed = false
+    @State private var displayedMonthKey: String?
+    @State private var loadGeneration = 0
     @State private var activeSheet: ActiveSheet?
     @State private var isExpanded = false
 
@@ -47,7 +49,11 @@ struct PayslipsView: View {
                     }
                     .listSectionSpacing(0)
 
-                    if loadFailed {
+                    if isLoading || displayedMonthKey != monthKey {
+                        Section {
+                            ForEach(0..<2, id: \.self) { _ in SkeletonRow() }
+                        }
+                    } else if loadFailed {
                         Banner(kind: .error,
                                title: "Couldn't load payslips",
                                message: "Check your connection and try again.",
@@ -56,10 +62,6 @@ struct PayslipsView: View {
                             .listRowBackground(Color.clear)
                             .listRowInsets(EdgeInsets())
                             .listRowSeparator(.hidden)
-                    } else if isLoading {
-                        Section {
-                            ForEach(0..<2, id: \.self) { _ in SkeletonRow() }
-                        }
                     } else if slips.isEmpty {
                         EmptyStateView(
                             icon: "banknote",
@@ -114,7 +116,15 @@ struct PayslipsView: View {
             .navigationTitle("Payslips")
             .navigationBarTitleDisplayMode(.inline)
             .screenTitlePill("Payslips", icon: "banknote", fraction: 0)
-            .task(id: monthKey) { await load() }
+            .task { await load() }
+            .onChange(of: monthKey) { _, _ in
+                loadGeneration += 1
+                slips = []
+                displayedMonthKey = nil
+                loadFailed = false
+                isLoading = true
+                Task { await load() }
+            }
             .sheet(item: $activeSheet) { sheet in
                 switch sheet {
                 case .pdf(let slip):
@@ -169,6 +179,9 @@ struct PayslipsView: View {
     // MARK: - Data
 
     private func load(forceRefresh: Bool = false) async {
+        let requestedMonth = monthKey
+        loadGeneration += 1
+        let generation = loadGeneration
         // Month switches clear the list (stale rows under a new month label
         // mislead); pull-to-refresh keeps rows visible under its spinner.
         if !forceRefresh {
@@ -177,10 +190,15 @@ struct PayslipsView: View {
         }
         loadFailed = false
         do {
-            slips = try await repo.staffPayslips(monthKey: monthKey, forceRefresh: forceRefresh)
+            let fetched = try await repo.staffPayslips(monthKey: requestedMonth, forceRefresh: forceRefresh)
+            guard requestedMonth == monthKey && generation == loadGeneration else { return }
+            slips = fetched
+            displayedMonthKey = requestedMonth
         } catch {
+            guard requestedMonth == monthKey && generation == loadGeneration else { return }
             slips = []
             loadFailed = true
+            displayedMonthKey = requestedMonth
         }
         isLoading = false
     }

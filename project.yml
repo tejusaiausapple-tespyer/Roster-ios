@@ -96,6 +96,11 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2" # Support both iPhone (1) and iPad (2)
         SUPPORTS_MACCATALYST: YES     # Enable Mac Catalyst (runs natively on macOS)
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+      configs:
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: Rosterra/Resources/Rosterra.Debug.entitlements
+        Release:
+          CODE_SIGN_ENTITLEMENTS: Rosterra/Resources/Rosterra.entitlements
     postBuildScripts:
       - name: Crashlytics Upload Symbols
         script: |

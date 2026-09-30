@@ -126,7 +126,7 @@ struct HistoryView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) { filterMenu }
         }
-        .macRefreshable { await repo.refreshFromServer() }
+        .macRefreshable { await repo.refreshFromServer(scope: .history) }
     }
 
     // MARK: Filter menu

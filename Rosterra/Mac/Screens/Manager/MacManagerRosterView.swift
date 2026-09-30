@@ -146,7 +146,14 @@ struct MacManagerRosterView: View {
     var body: some View {
         MacScreen(
             title: "Roster",
-            subtitle: "Adelaide time"
+            subtitle: "Adelaide time",
+            actions: {
+                MacRefreshButton("Refresh selected roster week") {
+                    if let first = weekKeys.first, let last = weekKeys.last {
+                        await repo.refreshFromServer(scope: .roster(first, last))
+                    }
+                }
+            }
         ) {
             GeometryReader { geometry in
                 VStack(alignment: .leading, spacing: 0) {
@@ -604,6 +611,7 @@ struct MacManagerRosterView: View {
                 staff: activeStaff,
                 destination: dateRange,
                 monday: monday,
+                shifts: repo.shifts,
                 onCancel: { activeSheet = nil },
                 onCopy: { ids in await copyLastWeek(staffIDs: ids) }
             )
@@ -801,34 +809,30 @@ struct MacManagerRosterView: View {
         let lastWeekKeys = RosterCalendar.weekDays(for: lastMonday).map { RosterCalendar.dateString(from: $0) }
         guard let firstKey = lastWeekKeys.first, let lastKey = lastWeekKeys.last else { return }
 
-        do {
-            let db = Firestore.firestore()
-            let lastSnap = try await db.collection("shifts")
-                .whereField("date", isGreaterThanOrEqualTo: firstKey)
-                .whereField("date", isLessThanOrEqualTo: lastKey)
-                .getDocuments()
-            let lastWeekShifts = lastSnap.documents.compactMap { Shift(id: $0.documentID, data: $0.data()) }
-                .filter { $0.status != .cancelled && (staffIDs?.contains($0.staffId) ?? true) }
+        let lastWeekShifts = repo.shifts.filter {
+            $0.date >= firstKey && $0.date <= lastKey &&
+            $0.status != .cancelled &&
+            (staffIDs?.contains($0.staffId) ?? true)
+        }
 
-            guard !lastWeekShifts.isEmpty else {
-                toasts.show("No shifts found in the previous week", style: .warning)
-                return
-            }
+        guard !lastWeekShifts.isEmpty else {
+            toasts.show("No shifts found in the previous week", style: .warning)
+            return
+        }
 
-            let existingSnap = try await db.collection("shifts")
-                .whereField("date", isGreaterThanOrEqualTo: RosterCalendar.dateString(from: RosterCalendar.addDays(-1, to: monday)))
-                .whereField("date", isLessThanOrEqualTo: RosterCalendar.dateString(from: RosterCalendar.addDays(7, to: monday)))
-                .getDocuments()
-            let existing = existingSnap.documents.compactMap { Shift(id: $0.documentID, data: $0.data()) }
-                .filter { $0.status != .cancelled }
-            let plan = MacRosterCopyPlan(source: lastWeekShifts, existing: existing, staffIDs: staffIDs)
+        let existingStart = RosterCalendar.dateString(from: RosterCalendar.addDays(-1, to: monday))
+        let existingEnd = RosterCalendar.dateString(from: RosterCalendar.addDays(7, to: monday))
+        let existing = repo.shifts.filter {
+            $0.date >= existingStart && $0.date <= existingEnd && $0.status != .cancelled
+        }
+        let plan = MacRosterCopyPlan(source: lastWeekShifts, existing: existing, staffIDs: staffIDs)
 
-            var created = 0
-            let skipped = plan.skipped
-            var failed = 0
-            for old in plan.drafts {
-                do {
-                    try await repo.saveShift(
+        var created = 0
+        let skipped = plan.skipped
+        var failed = 0
+        for old in plan.drafts {
+            do {
+                try await repo.saveShift(
                     id: nil,
                     staffId: old.staffId,
                     date: old.date,
@@ -840,17 +844,14 @@ struct MacManagerRosterView: View {
                     notes: old.notes,
                     status: .draft
                 )
-                    created += 1
-                } catch {
-                    failed += 1
-                }
+                created += 1
+            } catch {
+                failed += 1
             }
-
-            if failed == 0 { activeSheet = nil }
-            toasts.show("Copied \(created) drafts · \(skipped) duplicates or conflicts skipped · \(failed) failed\(failed > 0 ? ". Retry to copy remaining shifts." : "")", style: failed > 0 ? .warning : .success)
-        } catch {
-            toasts.show(error.localizedDescription, style: .error)
         }
+
+        if failed == 0 { activeSheet = nil }
+        toasts.show("Copied \(created) drafts · \(skipped) duplicates or conflicts skipped · \(failed) failed\(failed > 0 ? ". Retry to copy remaining shifts." : "")", style: failed > 0 ? .warning : .success)
     }
 }
 
@@ -1817,16 +1818,26 @@ private struct MacRosterCopyWeekSheet: View {
     let staff: [AppUser]
     let destination: String
     let monday: Date
+    let shifts: [Shift]
     let onCancel: () -> Void
     let onCopy: (Set<String>?) async -> Void
     @State private var allStaff = true
     @State private var selected: Set<String> = []
     @State private var search = ""
     @State private var isCopying = false
-    @State private var source: [Shift] = []
-    @State private var existing: [Shift] = []
-    @State private var loading = true
-    @State private var loadError: String?
+
+    private var source: [Shift] {
+        let previousStart = RosterCalendar.dateString(from: RosterCalendar.addDays(-7, to: monday))
+        let currentStart = RosterCalendar.dateString(from: monday)
+        return shifts.filter { $0.date >= previousStart && $0.date < currentStart && $0.status != .cancelled }
+    }
+
+    private var existing: [Shift] {
+        // Include adjacent dates so overnight overlaps are visible.
+        let prevAdjacent = RosterCalendar.dateString(from: RosterCalendar.addDays(-1, to: monday))
+        let end = RosterCalendar.dateString(from: RosterCalendar.addDays(7, to: monday))
+        return shifts.filter { $0.date >= prevAdjacent && $0.date <= end && $0.status != .cancelled }
+    }
 
     private var plan: MacRosterCopyPlan {
         MacRosterCopyPlan(source: source, existing: existing, staffIDs: allStaff ? nil : selected)
@@ -1890,16 +1901,11 @@ private struct MacRosterCopyWeekSheet: View {
                 .font(MacType.caption)
                 .foregroundStyle(MacColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if loading {
-                ProgressView("Checking last week's roster…")
-            } else if let loadError {
-                Text(loadError).foregroundStyle(MacColor.error)
-                Button("Try again") { Task { await loadPreview() } }
-            } else {
-                Text("\(plan.drafts.count) drafts to create · \(plan.skipped) duplicates or conflicts to skip")
-                    .font(MacType.bodyStrong)
-                    .foregroundStyle(MacColor.textPrimary)
-            }
+
+            Text("\(plan.drafts.count) drafts to create · \(plan.skipped) duplicates or conflicts to skip")
+                .font(MacType.bodyStrong)
+                .foregroundStyle(MacColor.textPrimary)
+
             HStack {
                 Button("Cancel", action: onCancel)
                     .macButton(.bordered)
@@ -1909,7 +1915,6 @@ private struct MacRosterCopyWeekSheet: View {
                     isCopying = true
                     Task {
                         await onCopy(allStaff ? nil : selected)
-                        await loadPreview()
                         isCopying = false
                     }
                 } label: {
@@ -1920,37 +1925,13 @@ private struct MacRosterCopyWeekSheet: View {
                 }
                 .macButton(.prominent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(loading || loadError != nil || plan.drafts.isEmpty || (!allStaff && selected.isEmpty))
+                .disabled(isCopying || plan.drafts.isEmpty || (!allStaff && selected.isEmpty))
             }
         }
         .padding(MacSpace.xl)
         .frame(width: 480)
         .disabled(isCopying)
         .interactiveDismissDisabled(isCopying)
-        .task { await loadPreview() }
-    }
-
-    @MainActor
-    private func loadPreview() async {
-        loading = true
-        loadError = nil
-        defer { loading = false }
-        do {
-            let start = RosterCalendar.dateString(from: RosterCalendar.addDays(-8, to: monday))
-            let end = RosterCalendar.dateString(from: RosterCalendar.addDays(7, to: monday))
-            let snapshot = try await Firestore.firestore().collection("shifts")
-                .whereField("date", isGreaterThanOrEqualTo: start)
-                .whereField("date", isLessThanOrEqualTo: end)
-                .getDocuments()
-            let shifts = snapshot.documents.compactMap { Shift(id: $0.documentID, data: $0.data()) }
-            let previousStart = RosterCalendar.dateString(from: RosterCalendar.addDays(-7, to: monday))
-            let currentStart = RosterCalendar.dateString(from: monday)
-            source = shifts.filter { $0.date >= previousStart && $0.date < currentStart }
-            // Include adjacent dates so overnight overlaps are visible.
-            existing = shifts.filter { $0.date >= RosterCalendar.dateString(from: RosterCalendar.addDays(-1, to: monday)) }
-        } catch {
-            loadError = "Unable to load the copy preview. \(error.localizedDescription)"
-        }
     }
 }
 

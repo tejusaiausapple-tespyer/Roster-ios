@@ -14,7 +14,7 @@ final class AppVersionCheckViewModel {
     /// Serializes overlapping `check()` calls so a stale fail-open cannot clear
     /// a required gate, while a trailing re-check still runs after the in-flight
     /// one finishes (login + foreground racing).
-    private var isChecking = false
+    private var inFlightCheck: Task<Void, Never>?
     private var needsRecheck = false
 
     /// When `true`, `service` was injected (tests) — skip the Firebase plist gate.
@@ -35,6 +35,10 @@ final class AppVersionCheckViewModel {
         return false
     }
 
+    var isPolicyUnavailable: Bool { status == .unavailable }
+
+    var isAccessBlocked: Bool { isUpdateRequired || isPolicyUnavailable }
+
     var isUpdateAvailable: Bool {
         if case .optional(let latestVersion) = status {
             return latestVersion != dismissedOptionalVersion
@@ -48,21 +52,24 @@ final class AppVersionCheckViewModel {
             guard FirebaseBootstrap.hasConfigFile else { return }
         }
 
-        if isChecking {
+        if let inFlightCheck {
             needsRecheck = true
+            await inFlightCheck.value
             return
         }
-
-        isChecking = true
-        defer { isChecking = false }
 
         let service = self.service ?? AppVersionCheckService()
         self.service = service
 
-        repeat {
-            needsRecheck = false
-            status = await service.checkForUpdate()
-        } while needsRecheck
+        let task = Task { @MainActor in
+            repeat {
+                needsRecheck = false
+                status = await service.checkForUpdate()
+            } while needsRecheck
+        }
+        inFlightCheck = task
+        await task.value
+        inFlightCheck = nil
     }
 
     /// Begins a single foreground Remote Config listener for this app session.

@@ -107,6 +107,7 @@ struct ManagerPayrollView: View {
         .contentLane()
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("Payroll")
+        .macRefreshable { await repo.refreshFromServer(scope: .payroll(weekKey)) }
         .navigationBarTitleDisplayMode(.inline)
         .screenTitlePill("Payroll", icon: "banknote.fill", fraction: 0)
         .toolbar {

@@ -75,6 +75,7 @@ final class AppRouter {
     var pendingSubmitShiftId: String?
     /// A shift the user should be taken to in order to report an absence.
     var pendingAbsentShiftId: String?
+    var pendingPasswordResetCode: String?
 
     func select(_ tab: Tab) {
         selectedTab = tab.rawValue
@@ -95,22 +96,35 @@ final class AppRouter {
 
     /// Parse deep links like `surafoster://staff/roster?submit=<id>` or `?absent=<id>`.
     func handle(url: URL) {
+        if let code = Self.passwordResetCode(from: url) {
+            pendingPasswordResetCode = code
+            return
+        }
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
         let items = components.queryItems ?? []
         if let rawAction = items.first(where: { $0.name == "shiftAction" })?.value,
            let kind = PendingClockAction.Kind(rawValue: rawAction),
-           let shiftId = items.first(where: { $0.name == "shiftId" })?.value,
-           !shiftId.isEmpty {
+           let shiftId = Self.validShiftId(items.first(where: { $0.name == "shiftId" })?.value) {
             pendingClockAction = PendingClockAction(shiftId: shiftId, kind: kind)
             selectedTab = Tab.home.rawValue
         } else if let submit = items.first(where: { $0.name == "submit" })?.value {
             openSubmit(shiftId: submit)
         } else if let absent = items.first(where: { $0.name == "absent" })?.value {
-            pendingAbsentShiftId = absent
-            selectedTab = Tab.roster.rawValue
+            openAbsent(shiftId: absent)
         } else {
             routeStaffPath(components.path)
         }
+    }
+
+    /// Firebase app links use the custom action URL on the project's own domain.
+    static func passwordResetCode(from url: URL) -> String? {
+        guard url.scheme == "https", url.host == "sura-roster.com",
+              url.path == "/auth/action" else { return nil }
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        guard items.first(where: { $0.name == "mode" })?.value == "resetPassword",
+              let code = items.first(where: { $0.name == "oobCode" })?.value,
+              !code.isEmpty else { return nil }
+        return code
     }
 
     /// Route a local or remote notification tap using `userInfo` keys
@@ -180,8 +194,22 @@ final class AppRouter {
         }
     }
 
+    private static func validShiftId(_ raw: String?) -> String? {
+        guard let id = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !id.isEmpty, !id.contains("/"), id != ".", id != ".." else { return nil }
+        return id
+    }
+
+    func openAbsent(shiftId: String) {
+        selectedTab = Tab.roster.rawValue
+        guard let id = Self.validShiftId(shiftId) else { return }
+        pendingAbsentShiftId = id
+    }
+
     func openSubmit(shiftId: String) {
-        pendingSubmitShiftId = shiftId
+        selectedTab = Tab.roster.rawValue
+        guard let id = Self.validShiftId(shiftId) else { return }
+        pendingSubmitShiftId = id
         selectedTab = Tab.roster.rawValue
     }
 

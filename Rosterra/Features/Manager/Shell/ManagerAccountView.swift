@@ -61,6 +61,7 @@ struct ManagerAccountView: View {
             .navigationTitle("Account")
             .navigationBarTitleDisplayMode(.inline)
             .screenTitlePill("Account", icon: "person.crop.circle.fill")
+            .macRefreshable { await repo.refreshFromServer(scope: .account) }
             .sheet(item: $activeSheet) { sheet in
                 switch sheet {
                 case .changePassword:

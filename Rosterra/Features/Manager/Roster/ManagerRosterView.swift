@@ -669,7 +669,9 @@ struct ManagerRosterView: View {
                     }
                 }
             }
-            .macRefreshable { await repo.refreshFromServer() }
+            .macRefreshable { if let first = weekKeys.first, let last = weekKeys.last {
+                await repo.refreshFromServer(scope: .roster(first, last))
+            } }
         }
         .background(Theme.card)
         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerLarge, style: .continuous))
@@ -1052,7 +1054,9 @@ struct ManagerRosterView: View {
                 .tracksTitlePillCollapse()
             }
             .macRefreshable {
-                await repo.refreshFromServer()
+                if let first = weekKeys.first, let last = weekKeys.last {
+                await repo.refreshFromServer(scope: .roster(first, last))
+            }
             }
             .phoneHeaderBar { headerSection }
 
@@ -1342,30 +1346,32 @@ struct ManagerRosterView: View {
                 let lastWeekKeys = lastWeekDays.map { RosterCalendar.dayFormatter.string(from: $0) }
                 guard let firstKey = lastWeekKeys.first, let lastKey = lastWeekKeys.last else { return }
 
+                // A copy is a write decision. Confirm both weeks from the
+                // server so another manager's recent edits cannot be missed.
                 let db = Firestore.firestore()
-                let snap = try await db.collection("shifts")
+                let lastWeekSnapshot = try await db.collection("shifts")
                     .whereField("date", isGreaterThanOrEqualTo: firstKey)
                     .whereField("date", isLessThanOrEqualTo: lastKey)
-                    .getDocuments()
-
-                let lastWeekShifts = snap.documents.compactMap { Shift(id: $0.documentID, data: $0.data()) }
+                    .getDocuments(source: .server)
+                let lastWeekShifts = lastWeekSnapshot.documents
+                    .compactMap { Shift(id: $0.documentID, data: $0.data()) }
+                    .filter { $0.status != .cancelled }
                 guard !lastWeekShifts.isEmpty else {
                     toast = ToastMessage(kind: .info, text: "No shifts last week to copy")
                     return
                 }
 
-                // Idempotency guard: look up shifts already present in the
-                // target week (this week) so a retried/duplicate tap of
-                // "Copy Last Week" — e.g. after the app was backgrounded
-                // mid-copy — doesn't create duplicate shifts for days that
-                // already succeeded.
+                // The target-week check must also be server-confirmed before
+                // creating drafts, including when retrying a partial copy.
                 let thisWeekKeys = RosterCalendar.weekDays(for: monday).map { RosterCalendar.dayFormatter.string(from: $0) }
                 guard let thisWeekFirstKey = thisWeekKeys.first, let thisWeekLastKey = thisWeekKeys.last else { return }
-                let existingSnap = try await db.collection("shifts")
+                let existingSnapshot = try await db.collection("shifts")
                     .whereField("date", isGreaterThanOrEqualTo: thisWeekFirstKey)
                     .whereField("date", isLessThanOrEqualTo: thisWeekLastKey)
-                    .getDocuments()
-                let existingShifts = existingSnap.documents.compactMap { Shift(id: $0.documentID, data: $0.data()) }
+                    .getDocuments(source: .server)
+                let existingShifts = existingSnapshot.documents
+                    .compactMap { Shift(id: $0.documentID, data: $0.data()) }
+                    .filter { $0.status != .cancelled }
                 var existingKeys = Set(existingShifts.map {
                     copyDedupKey(staffId: $0.staffId, date: $0.date, start: $0.rosteredStart)
                 })

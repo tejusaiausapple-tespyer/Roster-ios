@@ -77,7 +77,7 @@ extension Notification.Name {
 }
 
 extension View {
-    /// Pull-to-refresh, plus a pointer-reachable path on Mac.
+    /// Pull-to-refresh on iOS, plus a pointer-reachable path on Mac.
     ///
     /// `.refreshable` needs an overscroll gesture, which a mouse cannot
     /// produce — on Catalyst that left every data screen with no way to force
@@ -88,12 +88,23 @@ extension View {
     @ViewBuilder
     func macRefreshable(_ action: @escaping @Sendable () async -> Void) -> some View {
         #if targetEnvironment(macCatalyst)
-        refreshable { await action() }
+        self.refreshable { await action() }
             .onReceive(NotificationCenter.default.publisher(for: .rosterraRefreshRequested)) { _ in
                 Task { await action() }
             }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task { await action() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .accessibilityLabel("Refresh this tab")
+                    .help("Refresh this tab")
+                }
+            }
         #else
-        refreshable { await action() }
+        self.refreshable { await action() }
         #endif
     }
 }

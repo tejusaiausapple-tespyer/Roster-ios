@@ -155,7 +155,7 @@ struct ManagerTenureView: View {
             .padding(16)
             .tracksTitlePillCollapse()
         }
-        .macRefreshable { await repo.refreshFromServer() }
+        .macRefreshable { await repo.refreshFromServer(scope: .tenure) }
     }
 
     private func card(_ row: TenureMetrics.StaffTenure) -> some View {

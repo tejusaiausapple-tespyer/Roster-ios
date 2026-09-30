@@ -96,6 +96,7 @@ struct ManagerTasksView: View {
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
             .screenTitlePill("Tasks", icon: "list.bullet.clipboard", fraction: 0)
+            .macRefreshable { await repository.refreshFromServer(scope: .tasks(selectedDayKey)) }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {

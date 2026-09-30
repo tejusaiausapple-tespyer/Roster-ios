@@ -46,14 +46,24 @@ final class AuthService {
         try Auth.auth().signOut()
     }
 
-    /// Send a Firebase password-reset email to the given address. Firebase
-    /// delivers the email and hosts the reset page; no backend change needed.
+    /// Firebase's configured custom action URL opens in the app, with a web fallback.
     func sendPasswordReset(email: String) async throws {
         do {
             try await Auth.auth().sendPasswordReset(withEmail: email)
         } catch let error as NSError {
             throw mapAuthError(error)
         }
+    }
+
+    func verifyPasswordResetCode(_ code: String) async throws -> String {
+        try await Auth.auth().verifyPasswordResetCode(code)
+    }
+
+    func confirmPasswordReset(code: String, newPassword: String) async throws {
+        // Firebase's reset action is for signed-out users. Keep the same flow
+        // when an already signed-in user opens an email link on this device.
+        if Auth.auth().currentUser != nil { try Auth.auth().signOut() }
+        try await Auth.auth().confirmPasswordReset(withCode: code, newPassword: newPassword)
     }
 
     /// Observe Firebase auth state; the closure receives the current uid (or nil).

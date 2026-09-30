@@ -62,6 +62,7 @@ enum ShiftLiveActivityManager {
         let eligible = shifts
             .filter {
                 $0.staffId == staffID
+                    && $0.hasValidSchedule
                     && $0.status == .published
                     && $0.date == RosterCalendar.todayKey(now)
                     && $0.endDateTime > now
