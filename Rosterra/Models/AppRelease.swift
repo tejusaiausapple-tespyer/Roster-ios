@@ -51,6 +51,26 @@ enum ReleaseHistory {
 
     static let all: [AppRelease] = [
         AppRelease(
+            version: "2.2.3",
+            build: "42",
+            releaseDate: releaseDate(2026, 10, 1),
+            updateType: .patch,
+            summary: "Comprehensive payroll calculation fixes, multi-page payslip PDF generation, and draft review gating.",
+            features: [
+                "Payslip PDFs now automatically paginate onto multiple pages with continuation headers and pinned footers",
+                "Fixed-rate allowances and bonuses render accurately in PDF earnings summaries",
+                "Enforced mandatory hours and award-rate review before approving or publishing payslips",
+            ],
+            bugFixes: [
+                "Draft deletion and status changes are transaction-guarded against concurrent publishing",
+                "Corrected payslips generate non-colliding IDs and archive superseded originals atomically",
+                "Refreshing older payroll drafts no longer drops historical approved timesheets",
+                "Archived original payslips are excluded from manager payroll totals",
+                "Month-switching in staff payslips prevents race conditions and stale month display",
+            ],
+            commitHash: "pending"
+        ),
+        AppRelease(
             version: "2.2.1",
             build: "40",
             releaseDate: releaseDate(2026, 9, 21),

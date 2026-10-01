@@ -1,7 +1,7 @@
 {
   "parameters": {
     "ios_latest_version": {
-      "defaultValue": { "value": "2.2" },
+      "defaultValue": { "value": "2.2.3" },
       "description": "Latest Rosterra version publicly available in the Australian App Store.",
       "valueType": "STRING"
     },
@@ -16,7 +16,7 @@
       "valueType": "BOOLEAN"
     },
     "mac_latest_version": {
-      "defaultValue": { "value": "2.2" },
+      "defaultValue": { "value": "2.2.3" },
       "description": "Latest Rosterra version publicly available for Mac.",
       "valueType": "STRING"
     },
