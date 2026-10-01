@@ -12,6 +12,7 @@ configFiles:
 
 settings:
   base:
+    PRODUCT_NAME: $(TARGET_NAME)
     MARKETING_VERSION: "2.2.3"
     CURRENT_PROJECT_VERSION: "42"
     SWIFT_VERSION: "5.0"
@@ -89,6 +90,7 @@ targets:
         product: PhoneNumberKitUI
     settings:
       base:
+        PRODUCT_NAME: Rosterra
         PRODUCT_BUNDLE_IDENTIFIER: com.surainvestments.roster
         INFOPLIST_FILE: Rosterra/Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: Rosterra/Resources/Rosterra.entitlements
@@ -132,6 +134,7 @@ targets:
       - sdk: WidgetKit.framework
     settings:
       base:
+        PRODUCT_NAME: RosterraLiveActivity
         PRODUCT_BUNDLE_IDENTIFIER: com.surainvestments.roster.liveactivity
         TARGETED_DEVICE_FAMILY: "1"
         SKIP_INSTALL: YES
@@ -148,5 +151,6 @@ targets:
       - target: Rosterra
     settings:
       base:
+        PRODUCT_NAME: RosterraTests
         PRODUCT_BUNDLE_IDENTIFIER: com.surainvestments.roster.tests
         GENERATE_INFOPLIST_FILE: YES
