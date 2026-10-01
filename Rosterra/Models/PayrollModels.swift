@@ -508,6 +508,21 @@ enum PayrollCalculator {
         return updated
     }
 
+    /// Replace hours using the same weekday/weekend buckets as draft generation.
+    /// Holiday/overtime allocations must be reviewed again after importing hours.
+    static func refreshingHours(for slip: Payslip, workedHoursByDate: [String: Double]) -> Payslip {
+        guard slip.status.isRegeneratable else { return slip }
+        let buckets = hoursBuckets(workedHoursByDate: workedHoursByDate)
+        var updated = slip
+        updated.ordinaryHours = round2(buckets.ordinary)
+        updated.weekendHours = round2(buckets.weekend)
+        updated.publicHolidayHours = 0
+        updated.overtimeHours = 0
+        guard updated != slip else { return slip }
+        updated.payClassificationReviewed = false
+        return recalculatingPAYGIfNeeded(for: updated, comparedTo: slip)
+    }
+
     /// Field-level diff between two payslip snapshots — one `PayslipAuditEntry`
     /// per manager-editable field that changed, `[]` if nothing did. Powers
     /// `RosterRepository.savePayslip`'s audit trail. Numeric fields are

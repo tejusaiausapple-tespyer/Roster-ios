@@ -82,14 +82,6 @@ final class RosterRepository {
     var payslips: [Payslip] = []
     private var payrollAutoGenAttempted = false
 
-    /// Staff payslips, month-keyed ("yyyy-MM"), for the Account → Payslips
-    /// filter. In-memory for the session; Firestore's persistent disk cache
-    /// (unlimited, see FirebaseBootstrap) backs it across launches.
-    private var staffPayslipMonthCache: [String: [Payslip]] = [:]
-    /// Months confirmed against the SERVER this session (freshness gate for
-    /// the current month; older months are immutable in practice).
-    private var staffPayslipMonthsRefreshed: Set<String> = []
-
     /// Live clock-in session for the signed-in staff member (device-local;
     /// see ClockSession for why this can't be written to Firestore live).
     var clockSession: ClockSession? {
@@ -150,6 +142,7 @@ final class RosterRepository {
         guard activeUID != uid else { return }
         stop()
         activeUID = uid
+        let sessionGeneration = refreshSessionGeneration
         loadClockSession(for: uid)
         isLoading = true
         loadError = nil
@@ -166,7 +159,9 @@ final class RosterRepository {
         // users/{uid}
         listeners.append(
             db.collection("users").document(uid).addSnapshotListener { [weak self] snap, error in
-                guard let self else { return }
+                guard let self,
+                      self.activeUID == uid,
+                      self.refreshSessionGeneration == sessionGeneration else { return }
                 if let error {
                     if (error as NSError).code == FirestoreErrorCode.permissionDenied.rawValue {
                         self.onSessionRevoked?()
@@ -549,8 +544,8 @@ final class RosterRepository {
 
             // 5. Payslips are deliberately NOT streamed for staff. The Account
             //    → Payslips screen fetches one month at a time on demand via
-            //    staffPayslips(monthKey:) — cache-first, so previously viewed
-            //    months cost zero Firestore reads (see that method).
+            //    staffPayslips(monthKey:) — revalidated on opening, including
+            //    older months that can receive newly published payslips.
         }
     }
 
@@ -669,8 +664,6 @@ final class RosterRepository {
         earningsLines = []
         staffWageProfiles = []
         payslips = []
-        staffPayslipMonthCache = [:]
-        staffPayslipMonthsRefreshed = []
         payrollAutoGenAttempted = false
         attendanceRecords = []
         roleListenersInitialized = false
@@ -2374,9 +2367,13 @@ final class RosterRepository {
             uniquingKeysWith: { first, _ in first })
         guard !periodShiftsById.isEmpty else { return [:] }
 
-        let timesheetsSnap = try await db.collection("timesheets")
-            .whereField("submittedAt", isGreaterThanOrEqualTo: BusinessRules.managerTimesheetCutoff())
-            .getDocuments(source: .server)
+        let periodStartDate = RosterCalendar.dateFromKey(periodStart) ?? Date()
+        let periodStartCutoff = RosterCalendar.addDays(-14, to: periodStartDate)
+        let cutoff = min(BusinessRules.managerTimesheetCutoff(), periodStartCutoff)
+
+        let query = db.collection("timesheets")
+            .whereField("submittedAt", isGreaterThanOrEqualTo: cutoff)
+        let timesheetsSnap = try await query.getDocuments(source: .server)
         let periodTimesheets = timesheetsSnap.documents.compactMap { Timesheet(id: $0.documentID, data: $0.data()) }
 
         var hoursByStaff: [String: [String: Double]] = [:]
@@ -2574,28 +2571,61 @@ final class RosterRepository {
     }
 
     /// Delete a DRAFT payslip (managers only; other statuses are kept for the
-    /// record — archive instead).
+    /// record — archive instead). Rechecks current server status in a transaction.
     func deleteDraftPayslip(_ slip: Payslip) async throws {
         guard slip.status == .draft || slip.status == .underReview else { return }
-        try await db.collection("payslips").document(slip.id).delete()
+        let ref = db.collection("payslips").document(slip.id)
+        _ = try await db.runTransaction { transaction, errorPointer -> Any? in
+            do {
+                let snapshot = try transaction.getDocument(ref)
+                guard let data = snapshot.data(),
+                      let current = Payslip(id: slip.id, data: data),
+                      current.status.isEditable else {
+                    errorPointer?.pointee = NSError(domain: "Rosterra", code: 409, userInfo: [NSLocalizedDescriptionKey: "This payslip changed or was published. Refresh before deleting it."])
+                    return nil
+                }
+                transaction.deleteDocument(ref)
+                return nil
+            } catch let error as NSError {
+                errorPointer?.pointee = error
+                return nil
+            }
+        }
         await writePayrollAuditLog(action: "payslip-draft-deleted",
                                    detail: "\(slip.staffName) · week \(slip.periodStart)")
     }
 
-    /// Bulk-delete DRAFT/UNDER-REVIEW payslips in one atomic batch — e.g. "Delete
+    /// Bulk-delete DRAFT/UNDER-REVIEW payslips in one atomic transaction — e.g. "Delete
     /// all drafts" after a batch generation the manager wants to redo. Silently
-    /// skips any approved/submitted/archived payslip passed in: those are
+    /// skips any approved/submitted/archived payslip on the server: those are
     /// official records, same protection as the single-delete above.
     func deleteDraftPayslips(_ slips: [Payslip]) async throws {
         let deletable = slips.filter { $0.status == .draft || $0.status == .underReview }
         guard !deletable.isEmpty else { return }
-        let batch = db.batch()
-        for slip in deletable {
-            batch.deleteDocument(db.collection("payslips").document(slip.id))
+        let count = try await db.runTransaction { transaction, errorPointer -> Any? in
+            do {
+                var deletedCount = 0
+                for slip in deletable {
+                    let ref = self.db.collection("payslips").document(slip.id)
+                    let snapshot = try transaction.getDocument(ref)
+                    if let data = snapshot.data(),
+                       let current = Payslip(id: slip.id, data: data),
+                       current.status.isEditable {
+                        transaction.deleteDocument(ref)
+                        deletedCount += 1
+                    }
+                }
+                return NSNumber(value: deletedCount)
+            } catch let error as NSError {
+                errorPointer?.pointee = error
+                return nil
+            }
         }
-        try await batch.commit()
-        await writePayrollAuditLog(action: "payslip-drafts-bulk-deleted",
-                                   detail: "\(deletable.count) draft payslip(s) · week \(deletable.first?.periodStart ?? "")")
+        let deleted = (count as? NSNumber)?.intValue ?? 0
+        if deleted > 0 {
+            await writePayrollAuditLog(action: "payslip-drafts-bulk-deleted",
+                                       detail: "\(deleted) draft payslip(s) · week \(deletable.first?.periodStart ?? "")")
+        }
     }
 
     /// Publish reviewed payslips in a transaction, re-reading review and status.
@@ -2651,6 +2681,45 @@ final class RosterRepository {
         return recipients.count
     }
 
+    /// Import approved server hours into one payslip, keeping its saved rates,
+    /// allowances and deductions. Recheck the edit baseline and status atomically.
+    func refreshPayslipHours(_ slip: Payslip) async throws -> Payslip {
+        guard slip.status.isRegeneratable, let manager = currentUser else {
+            throw AuthError.generic("Only draft and under-review payslips can refresh hours.")
+        }
+        let hoursByStaff = try await fetchApprovedWorkedHours(periodStart: slip.periodStart, periodEnd: slip.periodEnd)
+        let byDate = hoursByStaff[slip.staffId] ?? [:]
+        let ref = db.collection("payslips").document(slip.id)
+        let result = try await db.runTransaction { transaction, errorPointer -> Any? in
+            do {
+                let snapshot = try transaction.getDocument(ref)
+                guard let data = snapshot.data(), let current = Payslip(id: slip.id, data: data),
+                      current.status.isRegeneratable, current.matchesEditBaseline(slip) else {
+                    errorPointer?.pointee = NSError(domain: "Rosterra", code: 409, userInfo: [NSLocalizedDescriptionKey: "This payslip changed or is locked. Refresh before updating its hours."])
+                    return nil
+                }
+                var updated = PayrollCalculator.refreshingHours(for: current, workedHoursByDate: byDate)
+                if updated != current {
+                    updated.audit += PayrollCalculator.auditDiff(from: current, to: updated, editor: manager)
+                    updated.audit.append(PayslipAuditEntry(action: "hours-refreshed", userId: manager.id, userName: manager.fullName,
+                        detail: "Hours refreshed from latest approved timesheets; hour categories need review"))
+                    updated.updatedAt = Date()
+                    var payload = updated.asDictionary
+                    payload["updatedAt"] = FieldValue.serverTimestamp()
+                    transaction.setData(payload, forDocument: ref)
+                }
+                return updated.asDictionary
+            } catch let error as NSError {
+                errorPointer?.pointee = error
+                return nil
+            }
+        }
+        guard let data = result as? [String: Any], let updated = Payslip(id: slip.id, data: data) else {
+            throw AuthError.generic("Couldn’t refresh payslip hours. Try again.")
+        }
+        return updated
+    }
+
     /// Regenerate a draft/under-review payslip from current timesheet + wage
     /// data, REPLACING its amounts (explicit manager action; keeps the audit
     /// trail). Approved/submitted/archived records are immutable to generation.
@@ -2702,51 +2771,23 @@ final class RosterRepository {
         return (result as? NSNumber)?.boolValue ?? false
     }
 
-    // MARK: - Staff payslips (month-keyed, cache-first)
+    // MARK: - Staff payslips (month-keyed, revalidated on opening)
 
-    /// Staff-visible payslips for one "yyyy-MM" month, cheapest source first:
-    /// 1. session memory, 2. Firestore's on-disk cache (zero reads, works
-    /// offline), 3. the server. The server is consulted only for months never
-    /// fetched on this device, the current month (once per session — new
-    /// payslips land there), or `forceRefresh` (pull-to-refresh).
+    /// Revalidate the selected month whenever it is opened. Published payroll
+    /// records can arrive in any month, including a month previously cached as
+    /// empty. Firestore's default source checks the server and falls back to its
+    /// persistent cache offline; an explicit refresh requires the server.
     func staffPayslips(monthKey: String, forceRefresh: Bool = false) async throws -> [Payslip] {
         guard let uid = activeUID else { return [] }
         let session = refreshSessionGeneration
-        let isCurrentMonth = monthKey == RosterCalendar.monthKey()
-        let needsServer = forceRefresh
-            || (isCurrentMonth && !staffPayslipMonthsRefreshed.contains(monthKey))
-
-        if !needsServer, let cached = staffPayslipMonthCache[monthKey] {
-            return cached
-        }
-
         guard let query = staffPayslipMonthQuery(uid: uid, monthKey: monthKey) else { return [] }
-
-        if !needsServer {
-            // Firestore disk cache: instant and free. An empty result is only
-            // trustworthy if this device has downloaded the month before —
-            // otherwise the cache just doesn't have it yet.
-            if let snap = try? await query.getDocuments(source: .cache) {
-                guard activeUID == uid && refreshSessionGeneration == session else { throw CancellationError() }
-                let slips = parseStaffPayslips(snap)
-                if !slips.isEmpty || payslipMonthsDownloaded(uid: uid).contains(monthKey) {
-                    staffPayslipMonthCache[monthKey] = slips
-                    return slips
-                }
-            }
-        }
 
         // If this indexed month query fails, surface the error to the tab.
         // Falling back to an all-history query would turn a single-month
         // refresh into an unexpectedly expensive read.
-        let snap = try await query.getDocuments(source: .server)
+        let snap = try await query.getDocuments(source: forceRefresh ? .server : .default)
         guard activeUID == uid && refreshSessionGeneration == session else { throw CancellationError() }
-        let slips = parseStaffPayslips(snap)
-
-        staffPayslipMonthCache[monthKey] = slips
-        staffPayslipMonthsRefreshed.insert(monthKey)
-        markPayslipMonthDownloaded(monthKey, uid: uid)
-        return slips
+        return parseStaffPayslips(snap)
     }
 
     /// Equalities prove the payslips security rule (staffId == uid AND a
@@ -2769,19 +2810,6 @@ final class RosterRepository {
             .sorted { $0.periodStart > $1.periodStart }
     }
 
-    /// Months this device has downloaded at least once (per user) — lets an
-    /// EMPTY cache result be trusted instead of re-hitting the server.
-    private func payslipMonthsDownloaded(uid: String) -> Set<String> {
-        Set(UserDefaults.standard.stringArray(forKey: "payslipMonthsDownloaded.\(uid)") ?? [])
-    }
-
-    private func markPayslipMonthDownloaded(_ monthKey: String, uid: String) {
-        var months = payslipMonthsDownloaded(uid: uid)
-        guard !months.contains(monthKey) else { return }
-        months.insert(monthKey)
-        UserDefaults.standard.set(Array(months).sorted(), forKey: "payslipMonthsDownloaded.\(uid)")
-    }
-
     /// Display employee ID for a payslip: the generation snapshot, else the
     /// staff member's current manager-assigned ID (covers payslips generated
     /// before an ID existed). Empty when none is assigned.
@@ -2801,8 +2829,17 @@ final class RosterRepository {
     func createCorrectedPayslip(from slip: Payslip) async throws {
         guard let manager = currentUser else { return }
         let base = slip.id.components(separatedBy: "_c").first ?? slip.id
-        let existingCorrections = payslips.filter { $0.id.hasPrefix("\(base)_c") }.count
-        let newId = "\(base)_c\(existingCorrections + 2)"
+        let prefix = "\(base)_c"
+        var maxSuffix = 1
+        for existing in payslips {
+            if existing.id.hasPrefix(prefix) {
+                let suffixString = String(existing.id.dropFirst(prefix.count))
+                if let num = Int(suffixString), num > maxSuffix {
+                    maxSuffix = num
+                }
+            }
+        }
+        let newId = "\(base)_c\(maxSuffix + 1)"
 
         let corrected = Payslip(id: newId, staffId: slip.staffId, staffName: slip.staffName,
                             employeeId: slip.employeeId, tfnLast4: slip.tfnLast4,
@@ -2826,15 +2863,34 @@ final class RosterRepository {
                             audit: [PayslipAuditEntry(action: "generated", userId: manager.id,
                                                       userName: manager.fullName,
                                                       detail: "Corrected copy of \(slip.id)")])
-        try await db.collection("payslips").document(newId).setData(corrected.asDictionary)
 
-        var archived = slip
-        archived.status = .archived
-        archived.updatedAt = Date()
-        archived.audit.append(PayslipAuditEntry(action: "archived", userId: manager.id,
-                                                userName: manager.fullName,
-                                                detail: "Superseded by corrected copy \(newId)"))
-        try await db.collection("payslips").document(slip.id).setData(archived.asDictionary)
+        _ = try await db.runTransaction { transaction, errorPointer -> Any? in
+            do {
+                let originalRef = self.db.collection("payslips").document(slip.id)
+                let originalSnap = try transaction.getDocument(originalRef)
+                guard let origData = originalSnap.data(),
+                      let currentOrig = Payslip(id: slip.id, data: origData),
+                      currentOrig.status == .submitted || currentOrig.status == .archived else {
+                    errorPointer?.pointee = NSError(domain: "Rosterra", code: 409, userInfo: [NSLocalizedDescriptionKey: "Only published or archived payslips can be corrected."])
+                    return nil
+                }
+                let newRef = self.db.collection("payslips").document(newId)
+                transaction.setData(corrected.asDictionary, forDocument: newRef)
+
+                var archived = currentOrig
+                archived.status = .archived
+                archived.updatedAt = Date()
+                archived.audit.append(PayslipAuditEntry(action: "archived", userId: manager.id,
+                                                        userName: manager.fullName,
+                                                        detail: "Superseded by corrected copy \(newId)"))
+                transaction.setData(archived.asDictionary, forDocument: originalRef)
+                return nil
+            } catch let error as NSError {
+                errorPointer?.pointee = error
+                return nil
+            }
+        }
+
         await writePayrollAuditLog(action: "payslip-corrected",
                                    detail: "\(slip.staffName) · week \(slip.periodStart) → \(newId)")
     }

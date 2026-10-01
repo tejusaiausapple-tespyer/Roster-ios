@@ -2,13 +2,14 @@ import SwiftUI
 
 /// Staff → Payslips, one month at a time. A pill at the top shows
 /// the selected month; tapping it opens a month/year picker and the chevrons
-/// step a month either way. Data loads via the repository's cache-first
-/// month fetch — previously viewed months cost zero Firestore reads and are
-/// available offline; pull-to-refresh forces a server round-trip.
+/// step a month either way. Data loads via the repository's month-scoped
+/// month fetch — each opening checks for new publications, with offline cache
+/// fallback; pull-to-refresh forces a server round-trip.
 /// Visibility is enforced by the payslips Firestore rules (staff can only
 /// ever read their own submitted/archived documents).
 struct PayslipsView: View {
     @Environment(RosterRepository.self) private var repo
+    @Environment(\.scenePhase) private var scenePhase
 
     private enum ActiveSheet: Identifiable {
         case pdf(Payslip)
@@ -117,6 +118,9 @@ struct PayslipsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .screenTitlePill("Payslips", icon: "banknote", fraction: 0)
             .task { await load() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await load() } }
+            }
             .onChange(of: monthKey) { _, _ in
                 loadGeneration += 1
                 slips = []

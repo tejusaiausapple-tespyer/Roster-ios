@@ -1,15 +1,22 @@
 import XCTest
 @testable import Rosterra
 
-/// Covers the two pieces of `AuthViewModel`'s state machine that are safe to
-/// exercise directly in a fast, hermetic unit test — the gate-skip decision
-/// in `handleAuthState` and the background-relock timer in
-/// `handleScenePhase`. `login()` itself isn't covered here: it calls live
-/// Firebase Auth + Firestore with no injected seam, so a real test would
-/// either need a Firebase emulator harness or a dependency-injection
-/// refactor of the class — out of scope for this pass.
+/// Exercises auth callback ordering, credential commit, and background relock
+/// without making live Firebase credential requests.
 @MainActor
 final class AuthViewModelTests: XCTestCase {
+
+    func testRepeatedLoginDoesNotStartAnotherCredentialRequest() async {
+        let vm = AuthViewModel()
+        vm.isWorking = true
+        vm.errorMessage = "existing error"
+
+        await vm.login(email: "staff@example.com", password: "test-password")
+
+        XCTAssertTrue(vm.isWorking)
+        XCTAssertFalse(vm.isLoggingIn)
+        XCTAssertEqual(vm.errorMessage, "existing error")
+    }
 
     // MARK: - handleAuthState: fresh login vs restored session
 
@@ -28,18 +35,41 @@ final class AuthViewModelTests: XCTestCase {
         XCTAssertFalse(vm.deviceAuthVerified)
     }
 
-    /// A fresh, genuine credential login (isLoggingIn true, set by `login()`
-    /// for its duration) must skip the device-auth gate even if the account
-    /// has one enabled — the whole point of `isLoggingIn` existing.
-    func testFreshLoginSkipsDeviceAuthGate() {
+    func testAuthCallbackDuringLoginDoesNotRouteAwayFromForm() {
         let vm = AuthViewModel()
+        vm.isRestoring = false
         vm.isLoggingIn = true
-        vm.deviceAuthVerified = false
 
         vm.handleAuthState(uid: "staff-1")
 
+        XCTAssertNil(vm.uid)
+        XCTAssertFalse(vm.deviceAuthVerified)
+        XCTAssertFalse(vm.isRestoring)
+    }
+
+    func testSignOutCallbackDuringLoginDoesNotResetSession() {
+        let vm = AuthViewModel()
+        vm.uid = "staff-1"
+        vm.isLoggingIn = true
+        vm.deviceAuthVerified = true
+
+        vm.handleAuthState(uid: nil)
+
         XCTAssertEqual(vm.uid, "staff-1")
-        XCTAssertTrue(vm.deviceAuthVerified, "a fresh login must not be re-gated")
+        XCTAssertTrue(vm.deviceAuthVerified)
+    }
+
+    func testValidatedLoginCommitsWithoutWaitingForAnotherCallback() {
+        let vm = AuthViewModel()
+        vm.isLoggingIn = true
+
+        vm.completeCredentialLogin(uid: "staff-1", password: "test-password")
+
+        XCTAssertEqual(vm.uid, "staff-1")
+        XCTAssertFalse(vm.isLoggingIn)
+        XCTAssertFalse(vm.isRestoring)
+        XCTAssertTrue(vm.deviceAuthVerified)
+        XCTAssertEqual(vm.temporaryPassword, "test-password")
     }
 
     /// A restored session (app relaunch, isLoggingIn false) with the gate

@@ -283,7 +283,7 @@ struct LoginView: View {
     }
 
     private func submit() async {
-        guard !email.isEmpty, !password.isEmpty else { return }
+        guard !auth.isWorking, !email.isEmpty, !password.isEmpty else { return }
         focus = nil
         let attemptedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         let attemptedPassword = password

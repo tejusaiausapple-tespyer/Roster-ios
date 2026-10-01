@@ -252,7 +252,7 @@ struct ManagerPayrollView: View {
     }
 
     private var summarySection: some View {
-        let slips = periodSlips
+        let slips = periodSlips.filter { $0.status != .archived }
         let totals = slips.map(\.totals)
         let counts = Dictionary(grouping: slips, by: \.status).mapValues(\.count)
         return Section {

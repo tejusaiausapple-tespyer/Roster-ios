@@ -63,6 +63,52 @@ final class PayrollTests: XCTestCase {
 
     // MARK: - PayrollCalculator totals
 
+    func testRefreshHoursPreservesRatesAndOtherAdjustments() {
+        var slip = makeSlip(ordinaryHours: 20, baseRate: 37, weekendHours: 6, weekendRate: 49,
+                            publicHolidayHours: 3, publicHolidayRate: 85, overtimeHours: 2, overtimeRate: 56,
+                            extras: [PayslipEarning(id: "allowance", name: "Tools", amount: 20)],
+                            payg: 999, other: 12, sacrifice: 15, superRate: 10)
+        slip.status = .underReview
+        slip.payClassificationReviewed = true
+        let refreshed = PayrollCalculator.refreshingHours(for: slip, workedHoursByDate: ["2026-07-06": 8, "2026-07-11": 5.5])
+        XCTAssertEqual(refreshed.ordinaryHours, 8)
+        XCTAssertEqual(refreshed.weekendHours, 5.5)
+        XCTAssertEqual(refreshed.publicHolidayHours, 0)
+        XCTAssertEqual(refreshed.overtimeHours, 0)
+        XCTAssertFalse(refreshed.payClassificationReviewed)
+        XCTAssertEqual(refreshed.payg, PayrollCalculator.calculatedPAYG(for: refreshed))
+        var expected = slip
+        expected.ordinaryHours = 8
+        expected.weekendHours = 5.5
+        expected.publicHolidayHours = 0
+        expected.overtimeHours = 0
+        expected.payClassificationReviewed = false
+        expected.payg = refreshed.payg
+        XCTAssertEqual(refreshed, expected)
+    }
+
+    func testRefreshHoursRemovesHoursWhenNoApprovedTimesheetsRemain() {
+        let slip = makeSlip(ordinaryHours: 8, baseRate: 30, weekendHours: 4, weekendRate: 45)
+        let refreshed = PayrollCalculator.refreshingHours(for: slip, workedHoursByDate: [:])
+        XCTAssertEqual(refreshed.totals.totalHours, 0)
+        XCTAssertEqual(refreshed.totals.gross, 0)
+        XCTAssertEqual(refreshed.payg, 0)
+    }
+
+    func testRefreshUnchangedHoursKeepsReviewAndTaxOverride() {
+        var slip = makeSlip(ordinaryHours: 8, baseRate: 30, payg: 77)
+        slip.payClassificationReviewed = true
+        XCTAssertEqual(PayrollCalculator.refreshingHours(for: slip, workedHoursByDate: ["2026-07-06": 8]), slip)
+    }
+
+    func testRefreshHoursProtectsApprovedAndPublishedPayslips() {
+        for status in [PayslipStatus.approved, .submitted, .archived] {
+            var slip = makeSlip(ordinaryHours: 8, baseRate: 30)
+            slip.status = status
+            XCTAssertEqual(PayrollCalculator.refreshingHours(for: slip, workedHoursByDate: [:]), slip)
+        }
+    }
+
     private func makeSlip(
         ordinaryHours: Double = 0, baseRate: Double = 0,
         weekendHours: Double = 0, weekendRate: Double = 0,

@@ -294,6 +294,7 @@ struct MacStaffHistoryView: View {
 struct MacStaffPayslipsView: View {
     @Environment(RosterRepository.self) private var repo
     @Environment(MacToastCenter.self) private var toasts
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var selectedPayslip: StaffPayslip?
     @State private var exportingPDFData: Data?
@@ -302,6 +303,7 @@ struct MacStaffPayslipsView: View {
     @State private var myPayslips: [StaffPayslip] = []
     @State private var isLoading = true
     @State private var loadError: String?
+    @State private var loadRequestId: Int = 0
 
     init() {}
 
@@ -489,6 +491,9 @@ struct MacStaffPayslipsView: View {
             }
         }
         .task(id: monthKey) { await load() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await load() } }
+        }
         .fileExporter(
             isPresented: $isExporting,
             document: PDFDocumentFile(data: exportingPDFData ?? Data()),
@@ -511,6 +516,10 @@ struct MacStaffPayslipsView: View {
     }
 
     private func load(forceRefresh: Bool = false) async {
+        let currentMonth = monthKey
+        loadRequestId += 1
+        let thisRequestId = loadRequestId
+
         if !forceRefresh {
             isLoading = true
             myPayslips = []
@@ -518,7 +527,8 @@ struct MacStaffPayslipsView: View {
         }
         loadError = nil
         do {
-            let loaded = try await repo.staffPayslips(monthKey: monthKey, forceRefresh: forceRefresh)
+            let loaded = try await repo.staffPayslips(monthKey: currentMonth, forceRefresh: forceRefresh)
+            guard !Task.isCancelled, loadRequestId == thisRequestId, monthKey == currentMonth else { return }
             myPayslips = loaded
             if let selectedPayslip,
                let refreshed = loaded.first(where: { $0.id == selectedPayslip.id }) {
@@ -527,13 +537,16 @@ struct MacStaffPayslipsView: View {
                 selectedPayslip = loaded.first
             }
         } catch {
+            guard !Task.isCancelled, loadRequestId == thisRequestId, monthKey == currentMonth else { return }
             if myPayslips.isEmpty {
                 loadError = "Published payslips couldn’t be loaded. Check your connection and try again."
             } else {
                 toasts.show("Couldn’t refresh payslips. \(error.localizedDescription)", style: .error)
             }
         }
-        isLoading = false
+        if loadRequestId == thisRequestId {
+            isLoading = false
+        }
     }
 }
 

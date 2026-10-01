@@ -121,14 +121,28 @@ enum PayslipPDFService {
                              RosterFormat.money(extra.amount)))
             }
             if rows.isEmpty { rows.append(("No earnings recorded", "—", "—", RosterFormat.money(0))) }
+            let hasSuper = slip.superRate > 0
+            let contentMaxY = pageHeight - margin - 50
+
             for row in rows {
+                if y + rowHeight > contentMaxY {
+                    drawPayslipFooter(ctx, hasSuper: hasSuper, settings: settings)
+                    ctx.beginPage()
+                    y = drawPayslipContinuationHeader(ctx, slip: slip, settings: settings)
+                    y = sectionTitle(ctx, "EARNINGS (CONTINUED)", y: y)
+                    y = tableHeader(ctx, y: y)
+                }
                 y = tableRow(ctx, y: y, row: row)
+            }
+            if y + rowHeight > contentMaxY {
+                drawPayslipFooter(ctx, hasSuper: hasSuper, settings: settings)
+                ctx.beginPage()
+                y = drawPayslipContinuationHeader(ctx, slip: slip, settings: settings)
             }
             y = totalRow(ctx, y: y, label: "Gross earnings", amount: totals.gross)
             y += sectionGap
 
             // ── Tax & deductions
-            y = sectionTitle(ctx, "TAX & DEDUCTIONS", y: y)
             var deductionRows: [(String, String, String, String)] = [
                 ("PAYG withholding", "", "", RosterFormat.money(totals.tax)),
             ]
@@ -139,16 +153,38 @@ enum PayslipPDFService {
                 let label = slip.deductionNotes.isEmpty ? "Other deductions" : "Other — \(slip.deductionNotes)"
                 deductionRows.append((label, "", "", RosterFormat.money(slip.otherDeductions)))
             }
+            let taxBlockHeight: CGFloat = CGFloat(deductionRows.count + 2) * rowHeight + 40
+            if y + min(taxBlockHeight, 90) > contentMaxY {
+                drawPayslipFooter(ctx, hasSuper: hasSuper, settings: settings)
+                ctx.beginPage()
+                y = drawPayslipContinuationHeader(ctx, slip: slip, settings: settings)
+            }
+            y = sectionTitle(ctx, "TAX & DEDUCTIONS", y: y)
             for row in deductionRows {
+                if y + rowHeight > contentMaxY {
+                    drawPayslipFooter(ctx, hasSuper: hasSuper, settings: settings)
+                    ctx.beginPage()
+                    y = drawPayslipContinuationHeader(ctx, slip: slip, settings: settings)
+                    y = sectionTitle(ctx, "TAX & DEDUCTIONS (CONTINUED)", y: y)
+                }
                 y = tableRow(ctx, y: y, row: row)
+            }
+            if y + rowHeight > contentMaxY {
+                drawPayslipFooter(ctx, hasSuper: hasSuper, settings: settings)
+                ctx.beginPage()
+                y = drawPayslipContinuationHeader(ctx, slip: slip, settings: settings)
             }
             y = totalRow(ctx, y: y, label: "Total tax & deductions", amount: totals.tax + totals.deductions)
             y += sectionGap
 
             // ── Superannuation (omitted entirely when super is off — e.g.
             //    under-18 staff not entitled to SG)
-            let hasSuper = slip.superRate > 0
             if hasSuper {
+                if y + 60 > contentMaxY {
+                    drawPayslipFooter(ctx, hasSuper: hasSuper, settings: settings)
+                    ctx.beginPage()
+                    y = drawPayslipContinuationHeader(ctx, slip: slip, settings: settings)
+                }
                 y = sectionTitle(ctx, "SUPERANNUATION", y: y)
                 y = tableRow(ctx, y: y, row: (
                     "Employer contribution (SG \(String(format: "%g", slip.superRate))%)",
@@ -157,6 +193,11 @@ enum PayslipPDFService {
             }
 
             // ── Net pay: bordered panel, dark text — no colour fill
+            if y + 66 > contentMaxY {
+                drawPayslipFooter(ctx, hasSuper: hasSuper, settings: settings)
+                ctx.beginPage()
+                y = drawPayslipContinuationHeader(ctx, slip: slip, settings: settings)
+            }
             let panelRect = CGRect(x: margin, y: y, width: pageWidth - margin * 2, height: 46)
             let panelPath = UIBezierPath(roundedRect: panelRect, cornerRadius: 8)
             panel.setFill()
@@ -173,24 +214,63 @@ enum PayslipPDFService {
 
             // ── Notes
             if !slip.notes.isEmpty {
-                draw("Notes: \(slip.notes)", at: CGPoint(x: margin, y: y),
-                     width: pageWidth - margin * 2, font: .systemFont(ofSize: 9), color: secondary)
-                y += 28
+                let noteText = "Notes: \(slip.notes)"
+                let font = UIFont.systemFont(ofSize: 9)
+                let noteWidth = pageWidth - margin * 2
+                let noteHeight = (noteText as NSString).boundingRect(
+                    with: CGSize(width: noteWidth, height: .greatestFiniteMagnitude),
+                    options: [.usesLineFragmentOrigin, .usesFontLeading],
+                    attributes: [.font: font],
+                    context: nil
+                ).height + 10
+                if y + min(noteHeight, 60) > contentMaxY {
+                    drawPayslipFooter(ctx, hasSuper: hasSuper, settings: settings)
+                    ctx.beginPage()
+                    y = drawPayslipContinuationHeader(ctx, slip: slip, settings: settings)
+                }
+                draw(noteText, at: CGPoint(x: margin, y: y),
+                     width: noteWidth, font: font, color: secondary)
+                y += noteHeight + 10
             }
 
-            // ── Footer (pinned)
-            let footerY = pageHeight - margin - 30
-            hairline(ctx, y: footerY - 10)
-            let footerText = hasSuper
-                ? "Superannuation is paid by the employer to the employee's nominated fund and is not included in net pay. This payslip is issued in accordance with the Fair Work Act 2009 record-keeping requirements."
-                : "This payslip is issued in accordance with the Fair Work Act 2009 record-keeping requirements."
-            draw(footerText,
-                 at: CGPoint(x: margin, y: footerY),
-                 width: pageWidth - margin * 2, font: .systemFont(ofSize: 7.5), color: secondary)
-            draw("Generated by \(settings.companyName)",
-                 at: CGPoint(x: margin, y: footerY + 21),
-                 width: pageWidth - margin * 2, font: .systemFont(ofSize: 7.5), color: secondary)
+            // ── Footer (pinned on current page)
+            drawPayslipFooter(ctx, hasSuper: hasSuper, settings: settings)
         }
+    }
+
+    private static func drawPayslipFooter(
+        _ ctx: UIGraphicsPDFRendererContext,
+        hasSuper: Bool,
+        settings: AppSettings
+    ) {
+        let footerY = pageHeight - margin - 30
+        hairline(ctx, y: footerY - 10)
+        let footerText = hasSuper
+            ? "Superannuation is paid by the employer to the employee's nominated fund and is not included in net pay. This payslip is issued in accordance with the Fair Work Act 2009 record-keeping requirements."
+            : "This payslip is issued in accordance with the Fair Work Act 2009 record-keeping requirements."
+        draw(footerText,
+             at: CGPoint(x: margin, y: footerY),
+             width: pageWidth - margin * 2, font: .systemFont(ofSize: 7.5), color: secondary)
+        draw("Generated by \(settings.companyName)",
+             at: CGPoint(x: margin, y: footerY + 21),
+             width: pageWidth - margin * 2, font: .systemFont(ofSize: 7.5), color: secondary)
+    }
+
+    private static func drawPayslipContinuationHeader(
+        _ ctx: UIGraphicsPDFRendererContext,
+        slip: Payslip,
+        settings: AppSettings
+    ) -> CGFloat {
+        var y = margin
+        draw(settings.companyName, at: CGPoint(x: margin, y: y + 1),
+             font: .systemFont(ofSize: 14, weight: .bold), color: ink)
+        draw("PAYSLIP (CONTINUED) · \(slip.staffName) · \(RosterFormat.dateShort(slip.periodStart)) – \(RosterFormat.dateShort(slip.periodEnd))",
+             at: CGPoint(x: margin, y: y + 20),
+             font: .systemFont(ofSize: 8.5, weight: .semibold), color: secondary)
+        y += 40
+        hairline(ctx, y: y)
+        y += 18
+        return y
     }
 
     // MARK: - Pay run register PDF (manager)

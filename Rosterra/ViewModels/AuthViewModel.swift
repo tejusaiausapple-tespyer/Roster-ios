@@ -28,10 +28,8 @@ final class AuthViewModel {
     private var repository: RosterRepository?
     private var authListener: AuthStateDidChangeListenerHandle?
     private var backgroundedAt: Date?
-    /// Not `private` so tests can simulate the fresh-login path through
-    /// `handleAuthState` directly, without driving a real `login()` call
-    /// (which hits live Firebase Auth + Firestore — unsuitable for a fast,
-    /// hermetic unit test).
+    /// Credential validation owns auth transitions until it commits or fails.
+    /// Internal so tests can simulate listener delivery during that interval.
     var isLoggingIn = false
 
     // MARK: - Wiring
@@ -46,7 +44,12 @@ final class AuthViewModel {
             return
         }
         authListener = AuthService.shared.addStateListener { [weak self] uid in
-            Task { @MainActor in self?.handleAuthState(uid: uid) }
+            Task { @MainActor in
+                // A queued callback from a previous auth state must not undo a
+                // newer sign-in/sign-out after hopping to the main actor.
+                guard uid == AuthService.shared.currentUID else { return }
+                self?.handleAuthState(uid: uid)
+            }
         }
     }
 
@@ -54,15 +57,16 @@ final class AuthViewModel {
     /// `isLoggingIn`) — the gate-skip decision here is exactly what a past
     /// bug lived in, and it was previously untestable.
     func handleAuthState(uid: String?) {
+        // Firebase emits a signed-in event before profile validation finishes.
+        // Keep the login form mounted until the credential flow commits.
+        guard !isLoggingIn else { return }
         isRestoring = false
         self.uid = uid
         if let uid {
             deviceAuthEnabled = DeviceAuthService.shared.isEnabled(uid: uid)
             // On a restored session, require the gate again if enabled.
             // Fresh logins skip the gate.
-            if isLoggingIn {
-                deviceAuthVerified = true
-            } else if !deviceAuthVerified {
+            if !deviceAuthVerified {
                 deviceAuthVerified = !deviceAuthEnabled
             }
             repository?.start(uid: uid)
@@ -79,6 +83,7 @@ final class AuthViewModel {
     // MARK: - Login / logout
 
     func login(email: String, password: String) async {
+        guard !isWorking else { return }
         isLoggingIn = true
         errorMessage = nil
         forcedSignOutMessage = nil
@@ -105,9 +110,10 @@ final class AuthViewModel {
                 try? AuthService.shared.signOut()
                 throw AuthError.accountInactive
             }
-            // Fresh login skips the device-auth gate for this session.
-            deviceAuthVerified = true
-            temporaryPassword = password
+            guard AuthService.shared.currentUID == uid else {
+                throw AuthError.notAuthenticated
+            }
+            completeCredentialLogin(uid: uid, password: password)
             // ServerClock, not the device clock — lastLoginAt should reflect
             // trusted time the same way clock-in/out attendance does, not a
             // value a manipulated device clock could report arbitrarily.
@@ -122,8 +128,23 @@ final class AuthViewModel {
             NotificationService.shared.claimActiveDeviceOnLogin()
             Haptics.signIn()
         } catch {
+            // A validation/network failure after Firebase sign-in must not
+            // leave an unvalidated session waiting for a later callback.
+            try? AuthService.shared.signOut()
+            isLoggingIn = false
+            handleAuthState(uid: nil)
+            temporaryPassword = nil
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    /// Commits a validated credential login independently of callback timing.
+    /// Internal so regression tests can exercise the transition without Firebase.
+    func completeCredentialLogin(uid: String, password: String) {
+        isLoggingIn = false
+        deviceAuthVerified = true
+        temporaryPassword = password
+        handleAuthState(uid: uid)
     }
 
     func logout() {

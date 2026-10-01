@@ -11,19 +11,10 @@ struct RootView: View {
 
     @State private var versionCheck = AppVersionCheckViewModel()
     @State private var hasCheckedInitialVersion = false
-    @State private var isCheckingForegroundVersion = false
+    @State private var wasBackgrounded = false
 
     var body: some View {
         content
-            // Keep the mounted form (and its in-flight sign-in) alive when
-            // returning from password AutoFill, Face ID, or another app.
-            // Replacing it with the splash screen discards its @State fields.
-            .allowsHitTesting(!isCheckingForegroundVersion)
-            .overlay {
-                if isCheckingForegroundVersion {
-                    SplashView()
-                }
-            }
             .background(Theme.background.ignoresSafeArea())
             .animation(.easeInOut(duration: 0.28), value: route)
             // `onChange(scenePhase)` is not guaranteed to fire for the initial
@@ -40,17 +31,22 @@ struct RootView: View {
             .onChange(of: scenePhase) { _, newPhase in
                 switch newPhase {
                 case .active:
-                    isCheckingForegroundVersion = true
+                    // Relock immediately, before any network work. AutoFill and
+                    // system prompts only make the scene inactive; they should
+                    // not trigger a foreground policy fetch or cover the form.
+                    auth.handleScenePhase(.active)
+                    repo.refreshShiftLiveActivity()
+                    guard wasBackgrounded else { return }
+                    wasBackgrounded = false
                     Task {
                         await versionCheck.check()
-                        isCheckingForegroundVersion = false
                         guard !versionCheck.isAccessBlocked else { return }
                         NotificationService.shared.setVersionAccessAllowed(true)
-                        auth.handleScenePhase(.active)
-                        repo.refreshShiftLiveActivity()
                     }
                 case .inactive: auth.handleScenePhase(.inactive)
-                case .background: auth.handleScenePhase(.background)
+                case .background:
+                    wasBackgrounded = true
+                    auth.handleScenePhase(.background)
                 @unknown default: break
                 }
             }
@@ -136,9 +132,7 @@ struct RootView: View {
             SplashView()
         } else if versionCheck.isPolicyUnavailable {
             VersionPolicyUnavailableView {
-                isCheckingForegroundVersion = true
                 await versionCheck.check()
-                isCheckingForegroundVersion = false
             }
         } else {
             switch route {

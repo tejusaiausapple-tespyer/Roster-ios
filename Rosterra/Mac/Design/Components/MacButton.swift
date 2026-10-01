@@ -226,20 +226,36 @@ struct MacAsyncButton<Label: View>: View {
     }
 }
 
-/// Consistent icon-only refresh action for Mac toolbars. It deliberately uses
-/// the plain system button style so Catalyst does not add a glass/grey capsule.
+/// Consistent refresh action for Mac toolbars, with an optional text-only title.
+/// Text-only labels keep Catalyst from collapsing a named action to its icon.
+/// Named actions use a neutral button with black text; icon actions use plain styling.
 struct MacRefreshButton: View {
     let accessibilityLabel: String
+    let showsTitle: Bool
     let action: () async -> Void
 
     @State private var isRefreshing = false
 
-    init(_ accessibilityLabel: String = "Refresh", action: @escaping () async -> Void) {
+    init(_ accessibilityLabel: String = "Refresh", showsTitle: Bool = false, action: @escaping () async -> Void) {
         self.accessibilityLabel = accessibilityLabel
+        self.showsTitle = showsTitle
         self.action = action
     }
 
     var body: some View {
+        Group {
+            if showsTitle {
+                refreshButton.macNeutralPill(size: .small)
+            } else {
+                refreshButton.buttonStyle(.plain)
+            }
+        }
+        .disabled(isRefreshing)
+        .help(accessibilityLabel)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var refreshButton: some View {
         Button {
             guard !isRefreshing else { return }
             isRefreshing = true
@@ -248,17 +264,15 @@ struct MacRefreshButton: View {
                 isRefreshing = false
             }
         } label: {
-            if isRefreshing {
+            if showsTitle {
+                Text(isRefreshing ? "Reloading…" : accessibilityLabel)
+            } else if isRefreshing {
                 ProgressView()
                     .controlSize(.small)
             } else {
                 Image(systemName: "arrow.clockwise")
             }
         }
-        .buttonStyle(.plain)
-        .disabled(isRefreshing)
-        .help(accessibilityLabel)
-        .accessibilityLabel(accessibilityLabel)
     }
 }
 #endif

@@ -1724,6 +1724,7 @@ struct MacManagerPayrollView: View {
     @State private var originalPayslip: Payslip?
     @State private var inspectorTab: InspectorTab = .earnings
     @State private var isSavingPayslip = false
+    @State private var isRefreshingPayslipHours = false
     @State private var regenerationChanges: [PayslipRegenerationChange] = []
     @State private var showRegenerationPrompt = false
     @State private var showPayRunPDFSheet = false
@@ -1749,7 +1750,7 @@ struct MacManagerPayrollView: View {
     }
 
     private var totals: PayrollCalculator.Totals {
-        periodSlips.reduce(
+        periodSlips.filter { $0.status != .archived }.reduce(
             PayrollCalculator.Totals(
                 ordinaryAmount: 0, weekendAmount: 0, publicHolidayAmount: 0,
                 overtimeAmount: 0, extrasAmount: 0, gross: 0, tax: 0,
@@ -1813,25 +1814,17 @@ struct MacManagerPayrollView: View {
             title: "Payroll",
             subtitle: "Review, calculate and publish your weekly Australian pay run",
             actions: {
-                MacRefreshButton("Refresh selected payroll week") {
+                MacRefreshButton("Reload payroll", showsTitle: true) {
                     await repo.refreshFromServer(scope: .payroll(weekKey))
                 }
+                .help("Load the latest saved payroll and timesheets for this week.")
                 Button {
                     generateDrafts()
                 } label: {
-                    if isGenerating {
-                        HStack(spacing: MacSpace.sm) {
-                            ProgressView().controlSize(.small)
-                            Text("Generating…")
-                        }
-                    } else {
-                        Label(
-                            periodSlips.isEmpty ? "Generate Drafts" : "Refresh Pay Run",
-                            systemImage: periodSlips.isEmpty ? "wand.and.sparkles" : "arrow.clockwise"
-                        )
-                    }
+                    Text(isGenerating ? "Recalculating…" : (periodSlips.isEmpty ? "Generate drafts" : "Recalculate drafts"))
                 }
                 .disabled(isGenerating)
+                .help("Recalculate draft payslips from the latest approved timesheets and wage settings.")
                 .macButton(.bordered, size: .small)
 
                 if !publishableSlips.isEmpty {
@@ -1875,7 +1868,7 @@ struct MacManagerPayrollView: View {
                 }
             }
         }
-        .disabled(isGenerating)
+        .disabled(isGenerating || isRefreshingPayslipHours)
         .onAppear { syncSelectedPayslip(force: true) }
         .onChange(of: weekKey) { syncSelectedPayslip(force: true) }
         .onChange(of: repo.payslips) { syncSelectedPayslip(force: !payslipHasChanges) }
@@ -1965,7 +1958,7 @@ struct MacManagerPayrollView: View {
             MacStatCard(
                 title: "Gross Wages",
                 value: RosterFormat.money(totals.gross),
-                subtitle: "\(periodSlips.count) payslip\(periodSlips.count == 1 ? "" : "s") · \(String(format: "%.1f", totals.totalHours)) hours",
+                subtitle: "\(periodSlips.filter { $0.status != .archived }.count) payslip\(periodSlips.filter { $0.status != .archived }.count == 1 ? "" : "s") · \(String(format: "%.1f", totals.totalHours)) hours",
                 icon: "banknote.fill",
                 tint: MacColor.accent
             )
@@ -2204,7 +2197,27 @@ struct MacManagerPayrollView: View {
 
     private func earningsInspector(_ slip: Payslip) -> some View {
         VStack(alignment: .leading, spacing: MacSpace.md) {
-            inspectorSectionTitle("Hours and rates", detail: "Adjust this draft before approval")
+            HStack(alignment: .top, spacing: MacSpace.sm) {
+                inspectorSectionTitle("Hours and rates", detail: "Adjust this draft before approval")
+                Spacer(minLength: 0)
+                if slip.status.isRegeneratable {
+                    Button {
+                        refreshSelectedPayslipHours()
+                    } label: {
+                        if isRefreshingPayslipHours {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label("Refresh hours", systemImage: "arrow.clockwise")
+                        }
+                    }
+                    .macButton(.bordered, size: .small)
+                    .disabled(isSavingPayslip || isRefreshingPayslipHours || payslipHasChanges)
+                    .accessibilityLabel("Refresh \(slip.staffName)’s hours from approved timesheets")
+                    .help(payslipHasChanges
+                        ? "Save or discard your changes before refreshing hours."
+                        : "Replace this employee’s hours with latest approved timesheets. Holiday and overtime hours need review again.")
+                }
+            }
             inspectorPayRow("Ordinary", hours: numberBinding(\.ordinaryHours), rate: numberBinding(\.baseHourlyRate), editable: slip.status.isEditable)
             inspectorPayRow("Weekend", hours: numberBinding(\.weekendHours), rate: numberBinding(\.weekendRate), editable: slip.status.isEditable)
             inspectorPayRow("Public holiday", hours: numberBinding(\.publicHolidayHours), rate: numberBinding(\.publicHolidayRate), editable: slip.status.isEditable)
@@ -2630,6 +2643,27 @@ struct MacManagerPayrollView: View {
 
     private func resetWorkingPayslip() {
         workingPayslip = originalPayslip
+    }
+
+    private func refreshSelectedPayslipHours() {
+        guard let slip = workingPayslip, slip.status.isRegeneratable,
+              !isSavingPayslip, !isRefreshingPayslipHours, !isGenerating, !payslipHasChanges else { return }
+        isRefreshingPayslipHours = true
+        Task {
+            defer { isRefreshingPayslipHours = false }
+            do {
+                let updated = try await repo.refreshPayslipHours(slip)
+                if selectedPayslipID == slip.id {
+                    workingPayslip = updated
+                    originalPayslip = updated
+                }
+                toasts.show(updated == slip
+                    ? "\(slip.staffName)’s hours are up to date."
+                    : "Refreshed \(slip.staffName)’s hours. Review hour categories before approval.", style: .success)
+            } catch {
+                toasts.show("Couldn’t refresh hours. \(error.localizedDescription)", style: .error)
+            }
+        }
     }
 
     private func saveWorkingPayslip() {
