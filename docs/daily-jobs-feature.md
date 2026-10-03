@@ -44,6 +44,8 @@ templates never expire.
 
 ## Key files
 
+Legacy shifts without `dailyJobsCount` require a server count before toggling a job. That query must include both `shiftId` and `staffId`, so staff read rules can establish ownership. Build 43 omitted the staff filter and could receive `Missing or insufficient permissions`; the source fix adds it without changing the rules. See the PWA `Docs/15-Daily-Jobs-Staff-Permissions.md` for the reproduction and validation.
+
 - `Models/DailyJob.swift`, `Services/RosterRepository.swift` (listeners +
   addDailyJobTemplate / deleteDailyJobTemplate / setDailyJobs /
   setDailyJobCompleted / dailyJobs(forShift:))

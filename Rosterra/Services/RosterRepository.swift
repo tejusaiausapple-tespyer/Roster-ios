@@ -1895,6 +1895,9 @@ final class RosterRepository {
             fetchAuthoritativeServerCount: {
                 let countSnap = try await self.db.collection("daily_job_assignments")
                     .whereField("shiftId", isEqualTo: assignment.shiftId)
+                    // Rules must be able to prove every returned job belongs
+                    // to this staff member, even for a single-shift query.
+                    .whereField("staffId", isEqualTo: assignment.staffId)
                     .getDocuments(source: .server)
                 return countSnap.documents.count
             }
